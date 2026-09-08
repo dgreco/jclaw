@@ -55,10 +55,10 @@ The system in its environment: a human operator drives the agent over a CLI/REPL
 
 ```mermaid
 C4Context
-  Person(op, "Operator", "Runs jclaw from a terminal; approves gates; reads transcripts")
+  Person(op, "Operator", "Runs jclaw from a terminal, approves gates, reads transcripts")
   System_Boundary(host, "Operator machine") {
     System(jclaw, "jclaw", "Agent harness: one CLI binary, one JSONL state directory")
-    SystemDb(ws, "Workspace", "Directory the agent may read and write; every path confined")
+    SystemDb(ws, "Workspace", "Directory the agent may read and write, every path confined")
     SystemDb(state, "State directory", "~/.jclaw: events, transcript, approvals, checkpoints, runs, memory, routines, skills, mcp")
     System_Ext(cron, "cron / worker process", "Optional scheduler that fires due routines")
   }
@@ -72,7 +72,7 @@ C4Context
   Rel(jclaw, ws, "reads and writes files inside the workspace", "builtin file tools")
   Rel(jclaw, web, "GETs operator-relevant URLs", "builtin.http_fetch")
   Rel(jclaw, mcp, "JSON-RPC over stdio", "MCP adapter")
-  Rel(jclaw, state, "appends JSONL records; parks and resumes across processes", "storage adapters")
+  Rel(jclaw, state, "appends JSONL records, parks and resumes across processes", "storage adapters")
   Rel(cron, jclaw, "jclaw routines run-due", "exec")
 ```
 
@@ -135,17 +135,17 @@ Inside the executable, the modules *are* the components. Arrows are compile-time
 
 ```mermaid
 C4Component
-  Container(cli, "CLI commands (picocli)", "jclaw-app", "One class per verb; JclawApplication owns boot and arg-splitting")
-  Container(runtimesvc, "JclawRuntime", "jclaw-app", "submit/resume/validate; leases; the product surface")
-  Container(interp, "EffectInterpreter", "jclaw-loop", "Executes LoopDecision; mints no refs itself")
+  Container(cli, "CLI commands (picocli)", "jclaw-app", "One class per verb, JclawApplication owns boot and arg-splitting")
+  Container(runtimesvc, "JclawRuntime", "jclaw-app", "submit/resume/validate, leases, the product surface")
+  Container(interp, "EffectInterpreter", "jclaw-loop", "Executes LoopDecision, mints no refs itself")
   Container(tmachine, "TurnMachine", "jclaw-domain", "Pure (state, observation, policy, now) to (state, decision)")
   Container(gates, "Turn vocabulary", "jclaw-contracts", "Observation, LoopDecision, LoopExit, CheckpointKind, GateKind, refs")
   Container(hostc, "DefaultCapabilityHost", "jclaw-kernel", "Ordered authority pipeline")
   Container(policy, "CapabilityPolicy", "jclaw-kernel", "autoApproveCeiling, denied set, interactive flag")
-  Container(guards, "Workspace/Egress guards", "jclaw-kernel", "Path confinement; SSRF boundary")
+  Container(guards, "Workspace/Egress guards", "jclaw-kernel", "Path confinement, SSRF boundary")
   Container(provs, "Model adapters", "jclaw-providers", "mock / anthropic / openai-compatible / failover")
   Container(toolset, "Capability handlers", "jclaw-tools", "core, file, shell, http, memory, skill, trigger, subagent, mcp")
-  Container(stores, "JSONL stores", "jclaw-storage", "Every durable record; hand-written codecs")
+  Container(stores, "JSONL stores", "jclaw-storage", "Every durable record, hand-written codecs")
 
   Rel(cli, runtimesvc, "submit / resume")
   Rel(cli, stores, "read for status/memory/skills")
@@ -408,7 +408,7 @@ sequenceDiagram
         TM-->>IN: Finish(Blocked(gate, gateRef, BEFORE_BLOCK checkpoint))
         IN-->>RT: Blocked (interpreter also emitted RunFinished)
         RT->>CP: resolve(checkpointRef) must hold
-        RT->>RS: status BLOCKED_APPROVAL; release lease
+        RT->>RS: status BLOCKED_APPROVAL, release lease
         RT-->>CLI: TurnResult(BLOCKED_APPROVAL, gate id)
         CLI-->>Op: "parked - approve gate G-xxxx" (exit 2)
         Op->>CLI: jclaw approvals approve G-xxxx [--no-resume]
@@ -429,7 +429,7 @@ sequenceDiagram
     IN-->>RT: LoopExit (a claim)
     RT->>TS: resolve(last replyRef) - evidence must hold
     TS-->>RT: assistant message text
-    RT->>RS: status COMPLETED; release lease
+    RT->>RS: status COMPLETED, release lease
     RT->>EV: RunFinished (status, tokens, iterations)
     RT-->>CLI: TurnResult(COMPLETED, reply)
     CLI-->>Op: print reply (exit 0)

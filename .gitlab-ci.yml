@@ -1,0 +1,104 @@
+# GitLab CI for jclaw.
+#
+# Stages
+#   verify   source-integrity scan (no toolchain needed)
+#   build    compile + full test suite, publishes JUnit reports and the uber jar
+#   native   GraalVM native image; automatic on tags, manual elsewhere (needs a large runner)
+#
+# Assumes a Docker-executor runner. Maven's local repository is cached per branch so
+# a warm pipeline downloads nothing.
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never                      # one pipeline per change: the MR one wins
+    - if: $CI_COMMIT_BRANCH
+    - if: $CI_COMMIT_TAG
+
+stages: [verify, build, native]
+
+variables:
+  MAVEN_CLI_OPTS: "--batch-mode --no-transfer-progress --errors --fail-at-end -Dstyle.color=always"
+  MAVEN_OPTS: "-Dmaven.repo.local=$CI_PROJECT_DIR/.m2/repository -Djava.awt.headless=true"
+  MAVEN_VERSION: "3.9.11"
+  GIT_DEPTH: "20"
+
+default:
+  interruptible: true
+
+.maven-cache: &maven-cache
+  cache:
+    key:
+      files: [pom.xml, jclaw-app/pom.xml]
+      prefix: maven
+    paths: [.m2/repository]
+    policy: pull-push
+
+byte-verify:
+  stage: verify
+  image: debian:bookworm-slim
+  script:
+    - ./scripts/byte-verify.sh scan
+
+build-test:
+  stage: build
+  image: maven:3.9.11-eclipse-temurin-21
+  <<: *maven-cache
+  script:
+    - java -version && mvn -version
+    - mvn $MAVEN_CLI_OPTS verify
+  after_script:
+    # One-line summary in the job log. Counts <testcase> elements in the XML reports: the
+    # .txt files report 0 for classes whose tests live in @Nested classes, and the
+    # testsuite "tests" attribute can undercount them by one.
+    - |
+      if ls */target/surefire-reports/TEST-*.xml >/dev/null 2>&1; then
+        printf 'TOTAL testcases=%s failures=%s errors=%s skipped=%s\n' \
+          "$(grep -h -c '<testcase ' */target/surefire-reports/TEST-*.xml | awk '{s+=$1} END{print s}')" \
+          "$(grep -h -c '<failure' */target/surefire-reports/TEST-*.xml | awk '{s+=$1} END{print s}')" \
+          "$(grep -h -c '<error' */target/surefire-reports/TEST-*.xml | awk '{s+=$1} END{print s}')" \
+          "$(grep -h -c '<skipped' */target/surefire-reports/TEST-*.xml | awk '{s+=$1} END{print s}')"
+      fi
+  artifacts:
+    when: always
+    expire_in: 2 weeks
+    reports:
+      junit: "*/target/surefire-reports/TEST-*.xml"
+    paths:
+      - jclaw-app/target/jclaw-app-*.jar
+      - "*/target/surefire-reports/"
+
+native-image:
+  stage: native
+  image: ghcr.io/graalvm/native-image-community:25
+  needs: [build-test]
+  cache:
+    key:
+      files: [pom.xml, jclaw-app/pom.xml]
+      prefix: maven
+    paths: [.m2/repository]
+    policy: pull                       # never write the cache from the slow job
+  before_script:
+    - curl -fsSL "https://dlcdn.apache.org/maven/maven-3/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz" | tar xz -C /opt
+    - export PATH="/opt/apache-maven-${MAVEN_VERSION}/bin:$PATH"
+    - java -version && native-image --version && mvn -version
+  script:
+    - mvn $MAVEN_CLI_OPTS install -DskipTests
+    - mvn $MAVEN_CLI_OPTS -Pnative -pl jclaw-app package -DskipTests
+    - ls -la jclaw-app/target/jclaw
+    - ./jclaw-app/target/jclaw --version
+    - ./jclaw-app/target/jclaw run "smoke test"          # mock provider, no network
+    - ./jclaw-app/target/jclaw doctor || true            # informational in CI
+  artifacts:
+    expire_in: 4 weeks
+    paths: [jclaw-app/target/jclaw]
+  rules:
+    - if: $CI_COMMIT_TAG
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual
+      allow_failure: true
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      when: manual
+      allow_failure: true
+  timeout: 45m

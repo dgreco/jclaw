@@ -16,6 +16,7 @@ jclaw-domain/src/main/java/io/jclaw/domain/loop/TurnMachine.java ...
   - [Uber jar](#uber-jar)
   - [Native image](#native-image)
   - [Tests and source-integrity checks](#tests-and-source-integrity-checks)
+  - [Continuous integration](#continuous-integration)
 - [Configuration](#configuration)
   - [Where settings come from](#where-settings-come-from)
   - [All settings](#all-settings)
@@ -150,6 +151,18 @@ mvn test -Dtest='ApprovalResumeIntegrationTest#resumeWithoutDecisionParksAgain' 
 ```
 
 Test totals by module (verified on this checkout): contracts 8 · domain 62 · kernel 9 · providers 14 · app 36 = **129, 0 failures**. `DependencyLawTest` in `jclaw-app` machine-checks the layer ladder with ArchUnit; the rules were confirmed to fire by planting deliberate violations.
+
+### Continuous integration
+
+`.gitlab-ci.yml` defines three jobs for the GitLab remote:
+
+| Job | Stage | What it does |
+|---|---|---|
+| `byte-verify` | verify | `scripts/byte-verify.sh scan` — refuses stray control bytes in sources. |
+| `build-test` | build | `mvn verify` on Temurin 21; publishes JUnit reports to the merge-request widget and the uber jar as an artifact. Maven's local repository is cached per pom hash. |
+| `native-image` | native | Builds the GraalVM binary and smoke-tests it (`--version`, a mock-provider `run`). Automatic on tags, manual on `main` and merge requests, since it needs a runner with several GB of memory. |
+
+One pipeline per change: pushes to a branch with an open merge request run only the merge-request pipeline. The jobs assume a Docker-executor runner and pull public images (`maven:3.9.11-eclipse-temurin-21`, `ghcr.io/graalvm/native-image-community:25`).
 
 ---
 
