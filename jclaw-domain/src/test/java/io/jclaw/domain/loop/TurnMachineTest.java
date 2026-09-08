@@ -1,0 +1,337 @@
+package io.jclaw.domain.loop;
+
+import io.jclaw.contracts.capability.CapabilityOutcome;
+import io.jclaw.contracts.loop.CheckpointKind;
+import io.jclaw.contracts.loop.FailureKind;
+import io.jclaw.contracts.loop.GateKind;
+import io.jclaw.contracts.loop.LoopExit;
+import io.jclaw.contracts.model.ChatMessage;
+import io.jclaw.contracts.model.ContentBlock;
+import io.jclaw.contracts.model.ModelExchange.ModelResponse;
+import io.jclaw.contracts.model.ModelExchange.StopReason;
+import io.jclaw.contracts.model.ModelExchange.Usage;
+import io.jclaw.contracts.turn.CheckpointId;
+import io.jclaw.contracts.turn.GateId;
+import io.jclaw.contracts.turn.MessageId;
+import io.jclaw.contracts.turn.TurnRef.LoopCheckpointStateRef;
+import io.jclaw.contracts.turn.TurnRef.LoopMessageRef;
+import io.jclaw.contracts.turn.TurnRef.LoopResultRef;
+import io.jclaw.domain.budget.Budget;
+import io.jclaw.domain.loop.LoopExecutionState.Phase;
+import io.jclaw.domain.loop.TurnMachine.LoopStep;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Test;
+
+import java.time.Duration;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+/**
+ * The machine is a pure function, so these tests need no mocks, no clock, and no I/O — just
+ * values in and values out. That is the whole argument for the design.
+ */
+class TurnMachineTest {
+
+    private static final Instant T0 = Instant.parse("2026-01-01T00:00:00Z");
+    private static final LoopPolicy POLICY = LoopPolicy.of("test-model", "be helpful", List.of());
+
+    private static LoopExecutionState fresh() {
+        return LoopExecutionState.start(
+                List.of(ChatMessage.user("hello")), Budget.interactive(T0));
+    }
+
+    private static ModelResponse textReply(String text) {
+        return new ModelResponse(
+                ChatMessage.assistant(text), StopReason.END_TURN, Usage.of(10, 5), "test-model");
+    }
+
+    private static ModelResponse toolReply(String callId, String tool) {
+        ChatMessage message = new ChatMessage(
+                ChatMessage.Role.ASSISTANT,
+                List.of(new ContentBlock.ToolUse(callId, tool, Map.of("path", "README.md"))));
+        return new ModelResponse(message, StopReason.TOOL_USE, Usage.of(10, 5), "test-model");
+    }
+
+    private static LoopStep step(LoopExecutionState state, Observation observation) {
+        return TurnMachine.step(state, observation, POLICY, T0);
+    }
+
+    @Nested
+    @DisplayName("happy path")
+    class HappyPath {
+
+        @Test
+        @DisplayName("a plain reply runs checkpoint -> model -> persist -> complete")
+        void plainReplyCompletes() {
+            // START: the machine checkpoints before ever calling the model, so a lost lease
+            // here can always be resumed without repeating an effect.
+            LoopStep started = step(fresh(), new Observation.Start());
+            LoopDecision.Checkpoint checkpoint =
+                    assertInstanceOf(LoopDecision.Checkpoint.class, started.decision());
+            assertEquals(CheckpointKind.BEFORE_MODEL, checkpoint.kind());
+            assertEquals(Phase.AWAITING_CHECKPOINT, started.state().phase());
+
+            // The checkpoint lands; now the model call is issued.
+            LoopStep called = step(started.state(), checkpointed(CheckpointKind.BEFORE_MODEL));
+            LoopDecision.CallModel call = assertInstanceOf(LoopDecision.CallModel.class, called.decision());
+            assertEquals("test-model", call.request().model());
+            assertEquals("be helpful", call.request().system());
+            assertEquals(Phase.AWAITING_MODEL, called.state().phase());
+
+            // Model replies with prose: the machine asks the host to persist it.
+            LoopStep replied = step(called.state(), new Observation.ModelReplied(textReply("hi there")));
+            LoopDecision.PersistReply persist =
+                    assertInstanceOf(LoopDecision.PersistReply.class, replied.decision());
+            assertEquals("hi there", persist.message().displayText());
+            assertEquals(15, replied.state().budget().spent().total(), "usage is charged on reply");
+
+            // Only once the host mints a ref can the machine claim completion.
+            LoopStep done = step(replied.state(), new Observation.ReplyPersisted(messageRef("m1")));
+            LoopDecision.Finish finish = assertInstanceOf(LoopDecision.Finish.class, done.decision());
+            LoopExit.Completed completed = assertInstanceOf(LoopExit.Completed.class, finish.exit());
+            assertEquals(List.of(messageRef("m1")), completed.replyRefs());
+            assertEquals(Phase.DONE, done.state().phase());
+        }
+
+        @Test
+        @DisplayName("a tool call loops back through the model")
+        void toolCallLoops() {
+            LoopExecutionState awaitingModel = advanceToAwaitingModel(fresh());
+
+            LoopStep replied = step(awaitingModel, new Observation.ModelReplied(toolReply("c1", "builtin.read_file")));
+            LoopDecision.InvokeCapabilities invoke =
+                    assertInstanceOf(LoopDecision.InvokeCapabilities.class, replied.decision());
+            assertEquals(1, invoke.calls().size());
+            assertEquals("builtin.read_file", invoke.calls().get(0).name());
+
+            // Results come back; the machine records them and checkpoints before the next model call.
+            LoopStep afterTools = step(replied.state(), new Observation.CapabilitiesCompleted(List.of(
+                    new Observation.CallOutcome("c1",
+                            new CapabilityOutcome.Ok(new LoopResultRef("r1"), "file contents", false)))));
+
+            LoopDecision.Checkpoint checkpoint =
+                    assertInstanceOf(LoopDecision.Checkpoint.class, afterTools.decision());
+            assertEquals(CheckpointKind.BEFORE_MODEL, checkpoint.kind());
+            assertEquals(1, afterTools.state().iteration(), "a completed tool round advances the iteration");
+            assertEquals(List.of(new LoopResultRef("r1")), afterTools.state().resultRefs());
+
+            // The tool result was appended for the model to read.
+            ChatMessage last = afterTools.state().messages().get(afterTools.state().messages().size() - 1);
+            assertEquals(ChatMessage.Role.TOOL, last.role());
+        }
+    }
+
+    @Nested
+    @DisplayName("gates")
+    class Gates {
+
+        @Test
+        @DisplayName("an approval gate checkpoints then blocks, carrying both refs")
+        void approvalGateBlocks() {
+            LoopExecutionState awaitingCaps = advanceToAwaitingCapabilities();
+
+            LoopStep gated = step(awaitingCaps, new Observation.CapabilitiesCompleted(List.of(
+                    new Observation.CallOutcome("c1", new CapabilityOutcome.NeedsApproval(
+                            GateKind.APPROVAL, gateRef("g1"), "run rm -rf?")))));
+
+            LoopDecision.Checkpoint checkpoint =
+                    assertInstanceOf(LoopDecision.Checkpoint.class, gated.decision());
+            assertEquals(CheckpointKind.BEFORE_BLOCK, checkpoint.kind());
+
+            LoopStep blocked = step(gated.state(), checkpointed(CheckpointKind.BEFORE_BLOCK));
+            LoopDecision.Finish finish = assertInstanceOf(LoopDecision.Finish.class, blocked.decision());
+            LoopExit.Blocked exit = assertInstanceOf(LoopExit.Blocked.class, finish.exit());
+
+            assertEquals(GateKind.APPROVAL, exit.gate());
+            assertEquals(gateRef("g1"), exit.gateRef());
+            assertEquals(checkpointRef(), exit.checkpointRef());
+            assertTrue(!exit.claimedStatus().isTerminal(), "a blocked run keeps the active lock");
+        }
+
+        @Test
+        @DisplayName("a BEFORE_BLOCK checkpoint with no pending gate is a protocol violation")
+        void blockWithoutGateIsViolation() {
+            // Reaching AWAITING_CHECKPOINT without a gate, then claiming BEFORE_BLOCK, would let a
+            // buggy interpreter park a run with nothing for a human to resolve.
+            LoopStep started = step(fresh(), new Observation.Start());
+            LoopStep bogus = step(started.state(), checkpointed(CheckpointKind.BEFORE_BLOCK));
+
+            assertEquals(FailureKind.DRIVER_PROTOCOL_VIOLATION, failureOf(bogus));
+        }
+    }
+
+    @Nested
+    @DisplayName("budgets and failures")
+    class BudgetsAndFailures {
+
+        @Test
+        @DisplayName("an exhausted budget fails before any model call")
+        void exhaustedBudgetFailsClosed() {
+            Budget spent = Budget.of(100, 50, Duration.ofMinutes(10), T0).charge(Usage.of(60, 60));
+            LoopExecutionState state =
+                    LoopExecutionState.start(List.of(ChatMessage.user("hi")), spent);
+
+            LoopStep result = step(state, new Observation.Start());
+
+            assertEquals(FailureKind.BUDGET_EXHAUSTED, failureOf(result));
+            assertEquals(Phase.DONE, result.state().phase());
+        }
+
+        @Test
+        @DisplayName("wall-clock exhaustion uses the supplied clock, not the system clock")
+        void wallClockUsesSuppliedInstant() {
+            Budget budget = Budget.of(0, 0, Duration.ofMinutes(5), T0);
+            LoopExecutionState state = LoopExecutionState.start(List.of(ChatMessage.user("hi")), budget);
+
+            LoopStep inTime = TurnMachine.step(state, new Observation.Start(), POLICY, T0.plusSeconds(60));
+            assertInstanceOf(LoopDecision.Checkpoint.class, inTime.decision());
+
+            LoopStep tooLate = TurnMachine.step(state, new Observation.Start(), POLICY, T0.plusSeconds(600));
+            assertEquals(FailureKind.BUDGET_EXHAUSTED, failureOf(tooLate));
+        }
+
+        @Test
+        @DisplayName("a retryable model failure retries, then gives up at the policy limit")
+        void retriesThenGivesUp() {
+            LoopExecutionState state = advanceToAwaitingModel(fresh());
+
+            // POLICY allows 2 consecutive failures, so the first two retry. A retry re-enters
+            // AWAITING_CHECKPOINT, so the way back to AWAITING_MODEL is to deliver the
+            // checkpoint — not to replay Start, which would itself be a protocol violation.
+            for (int attempt = 1; attempt <= 2; attempt++) {
+                LoopStep retry = step(state, new Observation.ModelFailed(FailureKind.PROVIDER_ERROR, true));
+                assertInstanceOf(LoopDecision.Checkpoint.class, retry.decision(),
+                        "attempt " + attempt + " should retry");
+                state = step(retry.state(), checkpointed(CheckpointKind.BEFORE_MODEL)).state();
+                assertEquals(Phase.AWAITING_MODEL, state.phase());
+            }
+
+            LoopStep exhausted = step(state, new Observation.ModelFailed(FailureKind.PROVIDER_ERROR, true));
+            assertEquals(FailureKind.PROVIDER_ERROR, failureOf(exhausted));
+        }
+
+        @Test
+        @DisplayName("a non-retryable model failure gives up immediately")
+        void nonRetryableFailsAtOnce() {
+            LoopExecutionState state = advanceToAwaitingModel(fresh());
+
+            LoopStep result = step(state, new Observation.ModelFailed(FailureKind.PROVIDER_UNAVAILABLE, false));
+
+            assertEquals(FailureKind.PROVIDER_UNAVAILABLE, failureOf(result));
+        }
+    }
+
+    @Nested
+    @DisplayName("protocol discipline")
+    class ProtocolDiscipline {
+
+        @Test
+        @DisplayName("cancellation is honoured from any phase")
+        void cancellationFromAnyPhase() {
+            List<LoopExecutionState> phases = List.of(
+                    fresh(),
+                    advanceToAwaitingModel(fresh()),
+                    advanceToAwaitingCapabilities());
+
+            for (LoopExecutionState state : phases) {
+                LoopStep result = step(state, new Observation.CancelRequested());
+                LoopDecision.Finish finish = assertInstanceOf(LoopDecision.Finish.class, result.decision());
+                assertInstanceOf(LoopExit.Cancelled.class, finish.exit(),
+                        "cancel should stop the machine in phase " + state.phase());
+            }
+        }
+
+        @Test
+        @DisplayName("an out-of-order observation is a protocol violation, not a silent no-op")
+        void outOfOrderObservationFails() {
+            // The machine is waiting for a checkpoint; a model reply cannot legitimately arrive.
+            LoopStep started = step(fresh(), new Observation.Start());
+            LoopStep confused = step(started.state(), new Observation.ModelReplied(textReply("surprise")));
+
+            assertEquals(FailureKind.DRIVER_PROTOCOL_VIOLATION, failureOf(confused));
+        }
+
+        @Test
+        @DisplayName("observations after termination are rejected")
+        void observationAfterDoneRejected() {
+            LoopExecutionState done = fresh().withPhase(Phase.DONE);
+
+            LoopStep result = step(done, new Observation.Start());
+
+            assertEquals(FailureKind.DRIVER_PROTOCOL_VIOLATION, failureOf(result));
+        }
+    }
+
+    @Test
+    @DisplayName("replaying the same observations reproduces the same decisions")
+    void deterministicReplay() {
+        List<Observation> script = List.of(
+                new Observation.Start(),
+                checkpointed(CheckpointKind.BEFORE_MODEL),
+                new Observation.ModelReplied(textReply("deterministic")),
+                new Observation.ReplyPersisted(messageRef("m1")));
+
+        List<String> first = run(script);
+        List<String> second = run(script);
+
+        assertEquals(first, second, "same inputs must produce the same decision sequence");
+        assertEquals(
+                List.of("Checkpoint", "CallModel", "PersistReply", "Finish"),
+                first,
+                "and that sequence is the documented pipeline");
+    }
+
+    /** Drives the machine through a script, returning the simple name of each decision. */
+    private static List<String> run(List<Observation> script) {
+        LoopExecutionState state = fresh();
+        List<String> decisions = new ArrayList<>();
+        for (Observation observation : script) {
+            LoopStep next = step(state, observation);
+            decisions.add(next.decision().getClass().getSimpleName());
+            state = next.state();
+        }
+        return decisions;
+    }
+
+    // --- fixtures ---
+
+    private static LoopExecutionState advanceToAwaitingModel(LoopExecutionState from) {
+        LoopStep started = step(from, new Observation.Start());
+        return step(started.state(), checkpointed(CheckpointKind.BEFORE_MODEL)).state();
+    }
+
+    private static LoopExecutionState advanceToAwaitingCapabilities() {
+        LoopExecutionState awaitingModel = advanceToAwaitingModel(fresh());
+        return step(awaitingModel, new Observation.ModelReplied(toolReply("c1", "builtin.shell"))).state();
+    }
+
+    private static Observation.Checkpointed checkpointed(CheckpointKind kind) {
+        return new Observation.Checkpointed(checkpointRef(), kind);
+    }
+
+    private static LoopCheckpointStateRef checkpointRef() {
+        return LoopCheckpointStateRef.of(new CheckpointId("ckpt_1"));
+    }
+
+    private static LoopMessageRef messageRef(String id) {
+        return LoopMessageRef.of(new MessageId(id));
+    }
+
+    private static io.jclaw.contracts.turn.TurnRef.LoopGateRef gateRef(String id) {
+        return io.jclaw.contracts.turn.TurnRef.LoopGateRef.of(new GateId(id));
+    }
+
+    private static FailureKind failureOf(LoopStep step) {
+        LoopDecision.Finish finish = assertInstanceOf(LoopDecision.Finish.class, step.decision());
+        LoopExit.Failed failed = assertInstanceOf(LoopExit.Failed.class, finish.exit());
+        return failed.kind();
+    }
+}

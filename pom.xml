@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-model-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-parent</artifactId>
+    <version>4.1.1</version>
+    <relativePath/>
+  </parent>
+
+  <groupId>io.jclaw</groupId>
+  <artifactId>jclaw-parent</artifactId>
+  <version>0.1.0-SNAPSHOT</version>
+  <packaging>pom</packaging>
+
+  <name>jclaw</name>
+  <description>Java/Spring Boot clone of the IronClaw harness: hexagonal agent OS, pure functional core.</description>
+
+  <properties>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+    <maven.compiler.release>21</maven.compiler.release>
+    <picocli.version>4.7.7</picocli.version>
+    <anthropic.sdk.version>2.61.0</anthropic.sdk.version>
+    <archunit.version>1.5.0</archunit.version>
+    <jline.version>4.4.3</jline.version>
+    <!-- Native image: the GraalVM toolchain is JDK 25+, while we target release 21 bytecode. -->
+    <native.maven.plugin.imageName>jclaw</native.maven.plugin.imageName>
+  </properties>
+
+  <modules>
+    <module>jclaw-contracts</module>
+    <module>jclaw-domain</module>
+    <module>jclaw-kernel</module>
+    <module>jclaw-loop</module>
+    <module>jclaw-providers</module>
+    <module>jclaw-tools</module>
+    <module>jclaw-storage</module>
+    <module>jclaw-app</module>
+  </modules>
+
+  <dependencyManagement>
+    <dependencies>
+      <!-- jclaw modules -->
+      <dependency><groupId>io.jclaw</groupId><artifactId>jclaw-contracts</artifactId><version>${project.version}</version></dependency>
+      <dependency><groupId>io.jclaw</groupId><artifactId>jclaw-domain</artifactId><version>${project.version}</version></dependency>
+      <dependency><groupId>io.jclaw</groupId><artifactId>jclaw-kernel</artifactId><version>${project.version}</version></dependency>
+      <dependency><groupId>io.jclaw</groupId><artifactId>jclaw-loop</artifactId><version>${project.version}</version></dependency>
+      <dependency><groupId>io.jclaw</groupId><artifactId>jclaw-providers</artifactId><version>${project.version}</version></dependency>
+      <dependency><groupId>io.jclaw</groupId><artifactId>jclaw-tools</artifactId><version>${project.version}</version></dependency>
+      <dependency><groupId>io.jclaw</groupId><artifactId>jclaw-storage</artifactId><version>${project.version}</version></dependency>
+
+      <!-- third-party not covered by the Boot BOM -->
+      <dependency>
+        <groupId>info.picocli</groupId>
+        <artifactId>picocli</artifactId>
+        <version>${picocli.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>info.picocli</groupId>
+        <artifactId>picocli-spring-boot-starter</artifactId>
+        <version>${picocli.version}</version>
+      </dependency>
+      <!-- Official Anthropic SDK. Confined to the anthropic adapter in jclaw-providers so the
+           rest of the harness stays free of any provider's types. -->
+      <dependency>
+        <groupId>com.anthropic</groupId>
+        <artifactId>anthropic-java</artifactId>
+        <version>${anthropic.sdk.version}</version>
+      </dependency>
+      <!-- Terminal line editing for the REPL. The focused artifacts, not the 'jline' uber jar,
+           which drags in sshd and a chardet library the harness has no use for. -->
+      <dependency>
+        <groupId>org.jline</groupId>
+        <artifactId>jline-reader</artifactId>
+        <version>${jline.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.jline</groupId>
+        <artifactId>jline-terminal-jni</artifactId>
+        <version>${jline.version}</version>
+        <scope>runtime</scope>
+      </dependency>
+      <!-- Machine-checks the layer matrix the package-info files describe. Test scope only. -->
+      <dependency>
+        <groupId>com.tngtech.archunit</groupId>
+        <artifactId>archunit-junit5</artifactId>
+        <version>${archunit.version}</version>
+        <scope>test</scope>
+      </dependency>
+      <!-- Annotation processor: emits GraalVM reflect/resource config for @Command types. -->
+      <dependency>
+        <groupId>info.picocli</groupId>
+        <artifactId>picocli-codegen</artifactId>
+        <version>${picocli.version}</version>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
+  <build>
+    <pluginManagement>
+      <plugins>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-compiler-plugin</artifactId>
+          <configuration>
+            <compilerArgs>
+              <!-- Records + sealed hierarchies are the vocabulary here; keep parameter
+                   names so Jackson and Spring can bind without extra annotations. -->
+              <arg>-parameters</arg>
+            </compilerArgs>
+          </configuration>
+        </plugin>
+      </plugins>
+    </pluginManagement>
+  </build>
+</project>

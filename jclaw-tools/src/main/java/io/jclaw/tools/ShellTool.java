@@ -1,0 +1,135 @@
+package io.jclaw.tools;
+
+import io.jclaw.contracts.Result;
+import io.jclaw.contracts.capability.CapabilityDescriptor;
+import io.jclaw.contracts.capability.CapabilityHandler;
+import io.jclaw.contracts.capability.CapabilityInvocation;
+import io.jclaw.contracts.capability.EffectClass;
+import io.jclaw.contracts.capability.HandlerError;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.TimeUnit;
+
+/**
+ * Runs a shell command inside the workspace.
+ *
+ * <p>The most dangerous capability in the harness, and deliberately the least clever. It does
+ * <em>not</em> try to parse commands, detect dangerous ones, or maintain a denylist of binaries —
+ * that arms race is unwinnable, and a partial denylist is worse than none because it implies a
+ * safety that is not there. Instead the containment is structural:
+ *
+ * <ul>
+ *   <li>declared {@link EffectClass#PROCESS}, so under the default policy it always raises an
+ *       approval gate showing the exact command;</li>
+ *   <li>the working directory is the workspace root;</li>
+ *   <li>the environment is scrubbed — the child inherits a minimal allowlist, so an
+ *       {@code ANTHROPIC_API_KEY} in the parent process is not readable by anything it spawns;</li>
+ *   <li>a hard timeout, with the process tree destroyed on expiry;</li>
+ *   <li>bounded output.</li>
+ * </ul>
+ *
+ * <p>The environment scrub matters more than it looks. Without it, {@code env} is a credential
+ * exfiltration tool and every other guard is decoration.
+ */
+public final class ShellTool implements CapabilityHandler {
+
+    private static final int MAX_OUTPUT_BYTES = 64 * 1024;
+    private static final int DEFAULT_TIMEOUT_SECONDS = 30;
+    private static final int MAX_TIMEOUT_SECONDS = 300;
+
+    /**
+     * Environment variables a child process may inherit. Everything else is dropped, including
+     * every credential the harness itself uses.
+     */
+    private static final Set<String> ENV_ALLOWLIST = Set.of(
+            "PATH", "HOME", "LANG", "LC_ALL", "TZ", "TERM", "SHELL", "USER", "TMPDIR");
+
+    private static final CapabilityDescriptor DESCRIPTOR = CapabilityDescriptor.builtin(
+            "shell",
+            "Run a shell command in the workspace directory and return its combined output. "
+                    + "The environment is scrubbed and the command runs under a timeout.",
+            EffectClass.PROCESS,
+            Schemas.object(
+                    Schemas.properties(
+                            "command", Schemas.string("Shell command to execute."),
+                            "timeoutSeconds", Schemas.integer(
+                                    "Seconds before the command is killed.", 1, MAX_TIMEOUT_SECONDS)),
+                    List.of("command")));
+
+    @Override
+    public CapabilityDescriptor descriptor() {
+        return DESCRIPTOR;
+    }
+
+    @Override
+    public Result<String, HandlerError> execute(CapabilityInvocation invocation, HandlerContext context) {
+        String command = invocation.stringArg("command", "");
+        if (command.isBlank()) {
+            return Result.err(HandlerError.failed("command_required"));
+        }
+        int timeoutSeconds = Math.clamp(
+                invocation.intArg("timeoutSeconds", DEFAULT_TIMEOUT_SECONDS), 1, MAX_TIMEOUT_SECONDS);
+
+        return context.resolvePath(".").mapErr(HandlerError::denied).flatMap(workdir -> run(command, workdir, timeoutSeconds));
+    }
+
+    private Result<String, HandlerError> run(String command, Path workdir, int timeoutSeconds) {
+        ProcessBuilder builder = new ProcessBuilder("/bin/sh", "-c", command);
+        builder.directory(workdir.toFile());
+        builder.redirectErrorStream(true); // interleaved, as a human would see it
+
+        Map<String, String> environment = builder.environment();
+        environment.keySet().removeIf(key -> !ENV_ALLOWLIST.contains(key));
+
+        Process process = null;
+        try {
+            process = builder.start();
+            // Close stdin so a command waiting for input fails fast instead of hanging to timeout.
+            process.getOutputStream().close();
+
+            String output = readBounded(process.getInputStream());
+            boolean finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
+            if (!finished) {
+                process.descendants().forEach(ProcessHandle::destroyForcibly);
+                process.destroyForcibly();
+                return Result.err(HandlerError.failed("timed_out"));
+            }
+            int exitCode = process.exitValue();
+            String body = output.isBlank() ? "(no output)" : output;
+            return Result.ok(exitCode == 0
+                    ? body
+                    : "exit status " + exitCode + "\n" + body);
+
+        } catch (IOException e) {
+            return Result.err(HandlerError.failed("spawn_failed"));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return Result.err(HandlerError.failed("interrupted"));
+        } finally {
+            if (process != null && process.isAlive()) {
+                process.descendants().forEach(ProcessHandle::destroyForcibly);
+                process.destroyForcibly();
+            }
+        }
+    }
+
+    /**
+     * Reads at most {@link #MAX_OUTPUT_BYTES}. Bounding here rather than after the fact means a
+     * command producing unbounded output cannot exhaust memory before anyone truncates it.
+     */
+    private static String readBounded(InputStream stream) throws IOException {
+        byte[] buffer = new byte[8192];
+        java.io.ByteArrayOutputStream collected = new java.io.ByteArrayOutputStream();
+        int read;
+        while (collected.size() < MAX_OUTPUT_BYTES && (read = stream.read(buffer)) != -1) {
+            collected.write(buffer, 0, Math.min(read, MAX_OUTPUT_BYTES - collected.size()));
+        }
+        return collected.toString(StandardCharsets.UTF_8);
+    }
+}

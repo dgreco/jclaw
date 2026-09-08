@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemalocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-model-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>io.jclaw</groupId>
+    <artifactId>jclaw-parent</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+    <relativePath>../</relativePath>
+  </parent>
+  <artifactId>jclaw-domain</artifactId>
+  <name>jclaw-domain</name>
+  <description>Pure functional core: turn machine, prompt assembly, RRF fusion, redaction, budget, cron math. No Spring, no JDBC, no HTTP, no ObjectMapper.</description>
+  <dependencies>
+    <dependency>
+      <groupId>io.jclaw</groupId>
+      <artifactId>jclaw-contracts</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+</project>

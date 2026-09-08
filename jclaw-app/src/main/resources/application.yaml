@@ -1,0 +1,54 @@
+# jclaw defaults. Every value is overridable by environment variable
+# (JCLAW_PROVIDER, JCLAW_APPROVAL_MODE, ...) or a --jclaw.* system property.
+jclaw:
+  # Workspace the agent may read and write. Every tool path is confined to it.
+  workspace: .
+  # Transcripts and the append-only event log live here.
+  state-dir: ${user.home}/.jclaw
+  # 'mock' needs no credentials and no network, so the harness runs out of the box.
+  # 'local' talks to any OpenAI-compatible inference server (LM Studio, vLLM, llama.cpp,
+  # LocalAI); it requires local-base-url, and honours LOCAL_API_KEY when the server checks one.
+  provider: mock
+  model: claude-opus-5
+  # Required for provider 'local'; when set it also joins the failover chain before ollama.
+  # e.g. http://localhost:1234/v1 (LM Studio) or http://localhost:8000/v1 (vLLM).
+  local-base-url: ""
+  # read-only | interactive | trusted
+  approval-mode: interactive
+  # Leave false outside local development: true re-opens the SSRF surface.
+  allow-private-networks: false
+  max-iterations: 25
+  max-tokens: 500000
+
+spring:
+  config:
+    # User-level config, written by 'jclaw onboard'. Optional, so a fresh install starts fine
+    # without it. Uses spring.config.import rather than additional-location because import is
+    # the documented mechanism for pulling in a file from within application.yaml.
+    import: "optional:file:${user.home}/.jclaw/jclaw.yaml"
+  main:
+    # This is a CLI: no web server, and nothing may print to stdout before the command does.
+    web-application-type: none
+    banner-mode: off
+
+logging:
+  level:
+    root: WARN
+    # Quiet by default: the CLI's stdout is the product, log lines are diagnostics. Raise with
+    # `--debug` (DEBUG: every pipeline step) or `--trace` (TRACE: steps plus payloads), or
+    # target it precisely with --logging.level.io.jclaw=TRACE / JCLAW-namespaced env vars.
+    io.jclaw: INFO
+    # Spring logs a full bean-creation trace before rethrowing a startup failure. For a CLI that
+    # buries the one line describing the actual misconfiguration, so the trace is suppressed and
+    # JclawApplication.main prints the root message instead.
+    # Restore it while debugging with:
+    #   --logging.level.org.springframework.boot.SpringApplication=ERROR
+    org.springframework.boot.SpringApplication: "OFF"
+    # AbstractApplicationContext logs through the *concrete* context class, so the annotation
+    # context is the one that actually emits the refresh-failure warning.
+    org.springframework.context.annotation.AnnotationConfigApplicationContext: "OFF"
+    # JLine warns when it falls back to a dumb terminal. That is the expected, correct
+    # behaviour for piped input, so the warning is noise rather than information.
+    org.jline: "ERROR"
+  pattern:
+    console: "%msg%n"

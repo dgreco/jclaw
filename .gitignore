@@ -1,0 +1,66 @@
+# --- Maven build output ---
+target/
+pom.xml.tag
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+pom.xml.next
+release.properties
+dependency-reduced-pom.xml
+buildNumber.properties
+.mvn/timing.properties
+.mvn/wrapper/maven-wrapper.jar
+
+# --- GraalVM native image ---
+# The captured Anthropic SDK metadata under src/main/resources/META-INF/native-image is
+# deliberately versioned; only build artefacts are ignored.
+*.build_artifacts.txt
+jclaw-app/jclaw
+jclaw-app/*.dylib
+jclaw-app/*.so
+
+# --- Java ---
+*.class
+*.log
+*.jar
+!.mvn/wrapper/maven-wrapper.jar
+*.war
+*.nar
+*.ear
+*.zip
+*.tar.gz
+*.rar
+hs_err_pid*
+replay_pid*
+
+# --- IDEs ---
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.settings/
+.project
+.classpath
+.factorypath
+*.swp
+*~
+
+# --- OS ---
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+Desktop.ini
+
+# --- Local tooling state ---
+# Claude Code: personal permission overrides are local; project settings would be settings.json.
+.claude/settings.local.json
+# byte-verify manifest is machine-local state
+.byte-manifest
+
+# --- Secrets and runtime state (never commit) ---
+.env
+.env.*
+*.pem
+*.key
+.jclaw/
