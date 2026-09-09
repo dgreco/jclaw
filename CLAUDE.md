@@ -20,7 +20,7 @@ jclaw is a Java/Spring Boot reimplementation of the **architecture** of
 untrusted-`LoopExit` trust model, and the `CapabilityHost` authority boundary are faithful; the
 feature surface is a fraction of IronClaw's. See **Not built yet** for the honest list.
 
-268 tests pass across 9 modules, including 14 machine-checked architecture rules.
+274 tests pass across 9 modules, including 14 machine-checked architecture rules.
 
 ## Commands
 
@@ -216,7 +216,9 @@ app         →  all of the above          Spring wiring, picocli CLI, JclawRunt
 ### The five ideas worth preserving
 
 **1. The loop is a pure function.** `TurnMachine.step(state, observation, policy, now)` returns
-`(nextState, decision)` and performs no I/O — no sockets, no clock reads, no ports.
+`(nextState, decision)` and performs no I/O — no sockets, no clock reads, no ports. A `LoopFamily`
+is another such function over the same state and decisions (`reflective` reviews a draft before
+persisting it); `LoopHook`s narrow or veto effects at the interpreter, never widen them.
 `EffectInterpreter` is the single component that executes decisions. The agent's entire control
 flow is testable with plain values and no mocks, replay is exact, and the complete set of effects
 an agent can cause is five constructors in `LoopDecision`.
@@ -431,7 +433,9 @@ architecture and most runtime mechanisms are equivalent, the breadth is not. PAR
   signatures, and `VERIFIED`/`COMMUNITY` trust decided at install, but they are local
   directories: no remote registry, no versioned upgrades, no profiles, and the only extension
   kinds are skills and MCP servers (no WASM tools, no channel packages).
-- **Loop hooks and loop families** — one machine, no pre/post model or tool hooks.
+- **Pluggable pipeline stages** — hooks cover pre/post model and capability, and two families
+  exist (`canonical`, `reflective`); there is no hook on prompt assembly or gate raising, and a
+  new family is Java code, not configuration.
 - **Observability substrate** — SLF4J and the event log only; no OpenTelemetry, no metrics.
 - **Triggers beyond cron** — no event, webhook, or heartbeat triggers; the ingress does not route
   webhooks to routines.

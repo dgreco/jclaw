@@ -61,7 +61,7 @@ jclaw reimplements the **architecture** of IronClaw — the seven-layer ladder, 
 
 Everything is durable JSONL under `~/.jclaw`: a run can park in one process, be approved in a second, and resume in a third. There is no database, and no server unless you start one (`jclaw serve`).
 
-**Status.** Milestones M0–M7 plus subagents (synchronous or asynchronous), MCP, streaming on every provider, lease-based crash recovery, a per-thread run lock, context compaction with model summaries, vector memory, configurable denials and egress lists, per-tool rate limits, injection heuristics, auth and process gates with expiry, a scheduler with `submit` and `worker`, an HTTP surface with run projections, event streams, and per-user tenants, attachments, store retention, an encrypted secret vault with host-side credential injection, a container sandbox for the shell lane, a SQL storage backend (embedded H2 or PostgreSQL) with schema migrations, and signed extension packages. 268 tests pass across the modules, including 14 machine-checked architecture rules (ArchUnit). Both the uber jar and the native image are verified end to end, including subprocess spawning for MCP servers and shell tools. [PARITY.md](PARITY.md) lists what IronClaw still has that jclaw does not.
+**Status.** Milestones M0–M7 plus subagents (synchronous or asynchronous), MCP, streaming on every provider, lease-based crash recovery, a per-thread run lock, context compaction with model summaries, vector memory, configurable denials and egress lists, per-tool rate limits, injection heuristics, auth and process gates with expiry, a scheduler with `submit` and `worker`, an HTTP surface with run projections, event streams, and per-user tenants, attachments, store retention, an encrypted secret vault with host-side credential injection, a container sandbox for the shell lane, a SQL storage backend (embedded H2 or PostgreSQL) with schema migrations, signed extension packages, execution-stage hooks, and a second loop family. 274 tests pass across the modules, including 14 machine-checked architecture rules (ArchUnit). Both the uber jar and the native image are verified end to end, including subprocess spawning for MCP servers and shell tools. [PARITY.md](PARITY.md) lists what IronClaw still has that jclaw does not.
 
 ---
 
@@ -236,6 +236,8 @@ jclaw:
 | `mcp-backend` | `host` | `host` runs MCP server processes directly; `docker` runs each one inside the sandbox contract (see [MCP servers](#mcp-servers-mcp)). |
 | `mcp-sandbox-image` / `mcp-sandbox-network` | *(blank)* | Overrides for MCP servers under `mcp-backend: docker`; blank inherits `sandbox-image` / `sandbox-network`. Servers usually need a runtime image (`node:22-alpine`) and, when their tool exists to reach an API, `bridge`. |
 | `storage` | `jsonl` | Where durable rows live: `jsonl` files under the state directory, or `sql` (every store in one database; see [The state directory](#the-state-directory)). Skills and thread locks stay on the filesystem either way. |
+| `hooks` | `budget-notice` | Built-in execution-stage hooks to enable, by id. `budget-notice` tells the model, once most of the run's token budget is spent, to finish rather than start new work. Blank disables all built-ins. |
+| `loop-family` | `canonical` | The loop strategy. `reflective` has the model review its draft reply once, without tools and without streaming, before it is persisted; one extra model call per turn. |
 | `trusted-publishers` | *(none)* | Extension publishers whose signatures make an install `VERIFIED`, as a map of publisher name to base64 Ed25519 public key (`jclaw.trusted-publishers.acme=<key>`, printed by `extensions keygen`). |
 | `datasource-url` / `datasource-username` | *(blank)* / `sa` | For `storage: sql`. Blank URL means an embedded H2 file under the state directory; a `jdbc:postgresql://…` URL is the hosted option. The password comes only from `JCLAW_DATASOURCE_PASSWORD`. |
 
@@ -589,6 +591,14 @@ The command is stored as argv (never re-parsed through a shell). Enabled servers
 The model can call `builtin.spawn_subagent` with a `prompt` (and optional `description`) to delegate a task. The child is an ordinary run on the **same** machinery — same turn machine, same interpreter, same capability host and approval policy — on a fresh thread derived from the parent's (`<parent>~sub1-…`), so it inherits none of the parent's conversation and only its conclusion travels back. Nesting depth is derived from the thread id rather than passed by the model, and is capped at 3. Spawning is `PROCESS`-class, so it is gated in `interactive`.
 
 By default the child runs inside the parent's tool call. With `subagents-async: true` the child is **queued** instead: the parent parks `WAITING_PROCESS` on a process gate that names the child run, a `worker` or `serve` executes the child under the concurrency cap, and when it finishes the scheduler requeues the parent, which re-dispatches the same call and receives the child's conclusion as the tool result. Several children of one parent therefore run in parallel. Without a worker the parent would wait indefinitely, which is why the synchronous mode is the default.
+
+### Hooks and loop families
+
+Two seams let host code change how a run behaves without touching the machine.
+
+**Hooks** run before and after every model call and capability dispatch. A hook may narrow a model request (amend the system prompt, drop tools) or veto it, and may rewrite a capability's arguments or veto the call; it may not widen a request, change a call's identity, or bypass the kernel, which still checks whatever a hook hands back. A rewrite or veto is recorded as a `hook.fired` audit event. Built-in hooks are enabled by id in `hooks`; any Spring bean implementing `LoopHook` is picked up as well, which is the seam a plugin uses.
+
+**Loop families** are strategies over the same state, decisions, and checkpoints. `canonical` is the machine described in [ARCH.md](ARCH.md). `reflective` intercepts the moment the canonical machine would persist a reply and first asks the model to review the draft against the conversation and return the reply it stands behind; the revision replaces the draft, the review call is charged to the budget, is skipped when the budget is exhausted, and falls back to the draft if it fails. A family cannot invent a new kind of effect: the decision type is sealed and the interpreter is the only executor.
 
 ### Streaming
 

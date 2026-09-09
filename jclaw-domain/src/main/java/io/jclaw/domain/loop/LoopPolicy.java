@@ -31,9 +31,14 @@ public record LoopPolicy(
         List<ToolSpec> tools,
         int maxOutputTokens,
         int maxConsecutiveModelFailures,
-        ContextPolicy context) {
+        ContextPolicy context,
+        String family) {
 
     public LoopPolicy {
+        Objects.requireNonNull(family, "family");
+        if (LoopFamilies.byId(family).isEmpty()) {
+            throw new IllegalArgumentException("unknown loop family '" + family + "'");
+        }
         Objects.requireNonNull(model, "model");
         Objects.requireNonNull(systemPrompt, "systemPrompt");
         tools = List.copyOf(Objects.requireNonNull(tools, "tools"));
@@ -57,22 +62,42 @@ public record LoopPolicy(
                 ContextPolicy.DEFAULT);
     }
 
+    public LoopPolicy(
+            String model,
+            String systemPrompt,
+            List<ToolSpec> tools,
+            int maxOutputTokens,
+            int maxConsecutiveModelFailures,
+            ContextPolicy context) {
+        this(model, systemPrompt, tools, maxOutputTokens, maxConsecutiveModelFailures, context, "canonical");
+    }
+
+    /** The strategy driving this run; see {@link LoopFamilies}. */
+    public LoopFamily loopFamily() {
+        return LoopFamilies.byId(family).orElseThrow();
+    }
+
+    public LoopPolicy withFamily(String family) {
+        return new LoopPolicy(model, systemPrompt, tools, maxOutputTokens,
+                maxConsecutiveModelFailures, context, family);
+    }
+
     public static LoopPolicy of(String model, String systemPrompt, List<ToolSpec> tools) {
         return new LoopPolicy(model, systemPrompt, tools, 4096, 2);
     }
 
     public LoopPolicy withTools(List<ToolSpec> tools) {
         return new LoopPolicy(model, systemPrompt, tools, maxOutputTokens,
-                maxConsecutiveModelFailures, context);
+                maxConsecutiveModelFailures, context, family);
     }
 
     public LoopPolicy withSystemPrompt(String systemPrompt) {
         return new LoopPolicy(model, systemPrompt, tools, maxOutputTokens,
-                maxConsecutiveModelFailures, context);
+                maxConsecutiveModelFailures, context, family);
     }
 
     public LoopPolicy withContext(ContextPolicy context) {
         return new LoopPolicy(model, systemPrompt, tools, maxOutputTokens,
-                maxConsecutiveModelFailures, context);
+                maxConsecutiveModelFailures, context, family);
     }
 }

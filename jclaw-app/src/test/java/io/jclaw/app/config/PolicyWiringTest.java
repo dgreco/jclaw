@@ -80,7 +80,9 @@ class PolicyWiringTest {
                 "jsonl",
                 "",
                 "sa",
-                java.util.Map.of());
+                java.util.Map.of(),
+                java.util.List.of(),
+                "canonical");
     }
 
     @Test

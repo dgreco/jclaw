@@ -90,6 +90,11 @@ import java.util.Map;
  *                             for a hosted deployment
  * @param datasourceUsername   database user; the password comes only from
  *                             {@code JCLAW_DATASOURCE_PASSWORD}
+ * @param hooks                built-in execution-stage hooks to enable, by id. {@code budget-notice}
+ *                             tells the model when most of its token budget is spent
+ * @param loopFamily           the loop strategy: {@code canonical}, or {@code reflective} (the
+ *                             model reviews its draft reply once, without tools, before it is
+ *                             persisted; costs a second model call per turn)
  * @param trustedPublishers    extension publishers whose signatures make an install
  *                             {@code VERIFIED}: publisher name to base64 Ed25519 public key, as
  *                             printed by {@code jclaw extensions keygen}
@@ -218,7 +223,11 @@ public record JclawProperties(
 
         @DefaultValue("sa") String datasourceUsername,
 
-        Map<String, String> trustedPublishers) {
+        Map<String, String> trustedPublishers,
+
+        @DefaultValue("budget-notice") List<String> hooks,
+
+        @DefaultValue("canonical") String loopFamily) {
 
     public JclawProperties {
         // Constructor binding leaves an absent map null; an absent map means no limits.
@@ -285,7 +294,9 @@ public record JclawProperties(
                 "jsonl",
                 "",
                 "sa",
-                Map.of());
+                Map.of(),
+                List.of("budget-notice"),
+                "canonical");
     }
 
     /** The JDBC URL {@code storage: sql} uses: the configured one, else an embedded H2 file. */

@@ -115,6 +115,23 @@ public sealed interface JclawEvent {
     }
 
     /**
+     * A hook changed or stopped an effect.
+     *
+     * @param hook   the hook's id
+     * @param stage  {@code before-model} or {@code before-capability}
+     * @param action {@code rewrote} or {@code vetoed}
+     */
+    record HookFired(Instant at, TurnRunId run, String hook, String stage, String action) implements JclawEvent {
+        public HookFired {
+            Objects.requireNonNull(at, "at");
+            Objects.requireNonNull(run, "run");
+            Objects.requireNonNull(hook, "hook");
+            Objects.requireNonNull(stage, "stage");
+            Objects.requireNonNull(action, "action");
+        }
+    }
+
+    /**
      * A vault secret was handed to a capability for one call.
      *
      * <p>The name is the audit trail: which credential went to which tool. The value, and the
@@ -212,6 +229,7 @@ public sealed interface JclawEvent {
             case CapabilityInvoked ignored -> "capability.invoked";
             case InjectionDetected ignored -> "injection.detected";
             case SecretInjected ignored -> "secret.injected";
+            case HookFired ignored -> "hook.fired";
             case GateRaised ignored -> "gate.raised";
             case GateResolved ignored -> "gate.resolved";
             case CheckpointWritten ignored -> "checkpoint.written";

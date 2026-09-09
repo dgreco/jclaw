@@ -11,6 +11,8 @@ import io.jclaw.contracts.loop.CheckpointStore;
 import io.jclaw.contracts.loop.FailureKind;
 import io.jclaw.contracts.loop.GateKind;
 import io.jclaw.contracts.loop.LoopExit;
+import io.jclaw.contracts.model.ModelExchange.ModelRequest;
+import io.jclaw.contracts.loop.LoopHook;
 import io.jclaw.contracts.model.ChatMessage;
 import io.jclaw.contracts.model.ContentBlock;
 import io.jclaw.contracts.model.ModelExchange.ModelResponse;
@@ -121,6 +123,7 @@ public final class EffectInterpreter {
     private final CheckpointStore checkpoints;
     private final EventLog events;
     private final LoopStateCodec codec;
+    private final List<LoopHook> loopHooks;
     private final Clock clock;
 
     public EffectInterpreter(
@@ -132,6 +135,21 @@ public final class EffectInterpreter {
             EventLog events,
             LoopStateCodec codec,
             Clock clock) {
+        this(provider, capabilities, gates, threads, checkpoints, events, codec, List.of(), clock);
+    }
+
+    /** @param loopHooks execution-stage hooks, applied in order before and after each effect */
+    public EffectInterpreter(
+            ModelProvider provider,
+            CapabilityHost capabilities,
+            ApprovalStore gates,
+            ThreadService threads,
+            CheckpointStore checkpoints,
+            EventLog events,
+            LoopStateCodec codec,
+            List<LoopHook> loopHooks,
+            Clock clock) {
+        this.loopHooks = List.copyOf(Objects.requireNonNull(loopHooks, "loopHooks"));
         this.provider = Objects.requireNonNull(provider, "provider");
         this.capabilities = Objects.requireNonNull(capabilities, "capabilities");
         this.gates = Objects.requireNonNull(gates, "gates");
@@ -231,7 +249,7 @@ public final class EffectInterpreter {
                 return LoopExit.Failed.of(FailureKind.LEASE_EXPIRED, "lease lost during execution");
             }
 
-            TurnMachine.LoopStep step = TurnMachine.step(state, observation, policy, clock.instant());
+            TurnMachine.LoopStep step = policy.loopFamily().step(state, observation, policy, clock.instant());
             log.debug("run {}: step {} | phase {} + observation {} -> decision {} | next phase {} (iteration {})",
                     run.value(), steps, state.phase(), observation.type(),
                     describe(step.decision()), step.state().phase(), step.state().iteration());
@@ -258,8 +276,8 @@ public final class EffectInterpreter {
             LoopDecision decision, RunHooks hooks) {
 
         return switch (decision) {
-            case LoopDecision.CallModel call -> callModel(run, scope, call, hooks);
-            case LoopDecision.InvokeCapabilities invoke -> invokeCapabilities(run, scope, invoke);
+            case LoopDecision.CallModel call -> callModel(run, scope, state, call, hooks);
+            case LoopDecision.InvokeCapabilities invoke -> invokeCapabilities(run, scope, state, invoke);
             case LoopDecision.PersistReply persist -> persistReply(scope, persist);
             case LoopDecision.Checkpoint checkpoint -> writeCheckpoint(run, state, checkpoint);
             case LoopDecision.Finish ignored ->
@@ -268,7 +286,34 @@ public final class EffectInterpreter {
     }
 
     private Observation callModel(
-            TurnRunId run, TurnScope scope, LoopDecision.CallModel call, RunHooks hooks) {
+            TurnRunId run, TurnScope scope, LoopExecutionState state, LoopDecision.CallModel original, RunHooks hooks) {
+        // Hooks first. A hook may narrow the request or stop it; it may not widen it, and a hook
+        // that tries is a host bug the run fails on rather than a request the model gets.
+        LoopHook.HookContext context = hookContext(run, scope, state);
+        ModelRequest request = original.request();
+        for (LoopHook hook : loopHooks) {
+            LoopHook.Outcome<ModelRequest> outcome = hook.beforeModel(context, request);
+            if (outcome instanceof LoopHook.Outcome.Veto<ModelRequest> veto) {
+                events.append(new JclawEvent.HookFired(clock.instant(), run, hook.id(), "before-model", "vetoed"));
+                log.debug("run {}: hook {} vetoed the model call ({})", run.value(), hook.id(), veto.reason());
+                return new Observation.ModelFailed(FailureKind.POLICY_DENIED, false,
+                        Optional.of("hook " + hook.id() + ": " + veto.reason()));
+            }
+            ModelRequest rewritten = ((LoopHook.Outcome.Proceed<ModelRequest>) outcome).value();
+            if (rewritten != request) {
+                if (!rewritten.model().equals(request.model())
+                        || !request.tools().containsAll(rewritten.tools())
+                        || !rewritten.messages().equals(request.messages())) {
+                    log.debug("run {}: hook {} widened the model request; refusing", run.value(), hook.id());
+                    return new Observation.ModelFailed(FailureKind.INTERNAL, false,
+                            Optional.of("hook " + hook.id() + " widened the model request"));
+                }
+                events.append(new JclawEvent.HookFired(clock.instant(), run, hook.id(), "before-model", "rewrote"));
+                request = rewritten;
+            }
+        }
+        LoopDecision.CallModel call = new LoopDecision.CallModel(request, original.userFacing());
+
         log.debug("run {}: calling model {} via provider '{}' ({} messages, {} tools, maxTokens {}, streaming {})",
                 run.value(), call.request().model(), provider.id(), call.request().messages().size(),
                 call.request().tools().size(), call.request().maxTokens(), hooks.streamSink().isPresent());
@@ -291,11 +336,13 @@ public final class EffectInterpreter {
                 .orElseGet(() -> provider.complete(call.request()));
         long elapsed = clock.millis() - startedAt;
 
+        final ModelRequest sent = request;
         return result.fold(
                 response -> {
                     events.append(new JclawEvent.ModelCalled(
                             clock.instant(), run, provider.id(), response.modelId(),
                             response.usage(), elapsed));
+                    loopHooks.forEach(hook -> hook.afterModel(context, sent, response));
                     log.debug("run {}: model '{}' replied in {} ms: stop={}, {} tool use(s), "
                                     + "tokens in={} out={} cacheRead={} cacheWrite={}",
                             run.value(), response.modelId(), elapsed, response.stopReason(),
@@ -338,16 +385,17 @@ public final class EffectInterpreter {
     }
 
     private Observation invokeCapabilities(
-            TurnRunId run, TurnScope scope, LoopDecision.InvokeCapabilities invoke) {
+            TurnRunId run, TurnScope scope, LoopExecutionState state, LoopDecision.InvokeCapabilities invoke) {
 
         log.debug("run {}: dispatching {} capability call(s)", run.value(), invoke.calls().size());
 
+        LoopHook.HookContext context = hookContext(run, scope, state);
         List<Observation.CallOutcome> outcomes = new ArrayList<>();
         for (ContentBlock.ToolUse call : invoke.calls()) {
             log.debug("run {}: -> capability {} (callId {})", run.value(), call.name(), call.callId());
             log.trace("run {}: -> arguments: {}", run.value(),
                     boundForTrace(Redaction.redact(String.valueOf(call.input()))));
-            CapabilityOutcome outcome = invokeOne(run, scope, call);
+            CapabilityOutcome outcome = invokeOne(run, scope, context, call);
             log.debug("run {}: <- capability {} (callId {}): {}",
                     run.value(), call.name(), call.callId(), describe(outcome));
             outcomes.add(new Observation.CallOutcome(call.callId(), outcome));
@@ -364,7 +412,8 @@ public final class EffectInterpreter {
         return new Observation.CapabilitiesCompleted(outcomes);
     }
 
-    private CapabilityOutcome invokeOne(TurnRunId run, TurnScope scope, ContentBlock.ToolUse call) {
+    private CapabilityOutcome invokeOne(
+            TurnRunId run, TurnScope scope, LoopHook.HookContext context, ContentBlock.ToolUse call) {
         CapabilityId id;
         try {
             id = CapabilityId.of(call.name());
@@ -372,8 +421,38 @@ public final class EffectInterpreter {
             // A model can invent a syntactically invalid tool name. Ordinary, and a denial.
             return CapabilityOutcome.Denied.of("capability_name_invalid", call.name());
         }
-        return capabilities.invoke(
-                new CapabilityInvocation(id, call.callId(), call.input(), scope, run));
+        CapabilityInvocation invocation = new CapabilityInvocation(id, call.callId(), call.input(), scope, run);
+        // Hooks may rewrite the arguments or veto the call; the kernel still checks whatever
+        // they hand back, so a hook can narrow what happens but never bypass authority.
+        for (LoopHook hook : loopHooks) {
+            LoopHook.Outcome<CapabilityInvocation> outcome = hook.beforeCapability(context, invocation);
+            if (outcome instanceof LoopHook.Outcome.Veto<CapabilityInvocation> veto) {
+                events.append(new JclawEvent.HookFired(clock.instant(), run, hook.id(), "before-capability", "vetoed"));
+                log.debug("run {}: hook {} vetoed {} ({})", run.value(), hook.id(), id.value(), veto.reason());
+                return CapabilityOutcome.Denied.of("hook_vetoed", hook.id() + ": " + veto.reason());
+            }
+            CapabilityInvocation rewritten = ((LoopHook.Outcome.Proceed<CapabilityInvocation>) outcome).value();
+            if (rewritten != invocation) {
+                if (!rewritten.capability().equals(id) || !rewritten.callId().equals(call.callId())
+                        || !rewritten.run().equals(run) || !rewritten.scope().equals(scope)) {
+                    log.debug("run {}: hook {} changed the identity of {}; refusing", run.value(), hook.id(), id.value());
+                    return CapabilityOutcome.Denied.of("hook_invalid", hook.id() + " changed the call's identity");
+                }
+                events.append(new JclawEvent.HookFired(clock.instant(), run, hook.id(), "before-capability", "rewrote"));
+                invocation = rewritten;
+            }
+        }
+        CapabilityOutcome outcome = capabilities.invoke(invocation);
+        for (LoopHook hook : loopHooks) {
+            hook.afterCapability(context, invocation, outcome);
+        }
+        return outcome;
+    }
+
+    private static LoopHook.HookContext hookContext(TurnRunId run, TurnScope scope, LoopExecutionState state) {
+        long max = state.budget().maxTokens();
+        double used = max <= 0 ? 0 : Math.min(1.0, (double) state.budget().spent().total() / max);
+        return new LoopHook.HookContext(run, scope, state.iteration(), used);
     }
 
     private Observation persistReply(TurnScope scope, LoopDecision.PersistReply persist) {

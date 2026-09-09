@@ -45,6 +45,8 @@ import io.jclaw.storage.result.JsonlCapabilityResultStore;
 import io.jclaw.storage.routine.JsonlRoutineStore;
 import io.jclaw.storage.run.JsonlRunStore;
 import io.jclaw.storage.extension.FilesystemExtensionRegistry;
+import io.jclaw.contracts.loop.LoopHook;
+import io.jclaw.app.runtime.BudgetNoticeHook;
 import io.jclaw.contracts.extension.ExtensionRegistry;
 import io.jclaw.storage.rows.RowStore;
 import io.jclaw.storage.sql.SqlSchema;
@@ -561,11 +563,31 @@ public class JclawConfiguration {
             CheckpointStore checkpointStore,
             EventLog eventLog,
             LoopStateCodec loopStateCodec,
-            Clock clock) {
+            Clock clock,
+            List<LoopHook> loopHooks) {
 
         return new EffectInterpreter(
                 modelProvider, capabilityHost, approvalStore, threadService,
-                checkpointStore, eventLog, loopStateCodec, clock);
+                checkpointStore, eventLog, loopStateCodec, loopHooks, clock);
+    }
+
+    /**
+     * The hooks that run before and after every model call and capability dispatch: the built-in
+     * ones named in {@code jclaw.hooks}, then any {@link LoopHook} bean the application defines,
+     * which is the seam a plugin uses.
+     */
+    @Bean
+    public List<LoopHook> loopHooks(JclawProperties properties, java.util.Optional<List<LoopHook>> extraHooks) {
+        List<LoopHook> hooks = new ArrayList<>();
+        for (String id : JclawProperties.nonBlank(properties.hooks())) {
+            switch (id) {
+                case BudgetNoticeHook.ID -> hooks.add(new BudgetNoticeHook());
+                default -> throw new IllegalArgumentException(
+                        "unknown hook '" + id + "' in jclaw.hooks; known: " + BudgetNoticeHook.ID);
+            }
+        }
+        extraHooks.ifPresent(hooks::addAll);
+        return List.copyOf(hooks);
     }
 
     /**

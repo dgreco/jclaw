@@ -576,7 +576,7 @@ public class JclawRuntime {
         List<ToolSpec> tools = capabilities.visibleSurface(scope).stream()
                 .map(CapabilityDescriptor::toToolSpec)
                 .toList();
-        return new LoopPolicy(model, systemPrompt, tools, 8192, 2, contextPolicy());
+        return new LoopPolicy(model, systemPrompt, tools, 8192, 2, contextPolicy(), properties.loopFamily());
     }
 
     /**

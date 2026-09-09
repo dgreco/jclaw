@@ -78,6 +78,7 @@ public final class TurnMachine {
             case AWAITING_CHECKPOINT -> onCheckpointed(state, observation, policy);
             case AWAITING_MODEL -> onModel(state, observation, policy, now);
             case AWAITING_SUMMARY -> onSummary(state, observation, policy);
+            case AWAITING_REFLECTION -> protocolViolation(state, "reflection belongs to the reflective family");
             case AWAITING_CAPABILITIES -> onCapabilities(state, observation, now);
             case AWAITING_REPLY_PERSIST -> onReplyPersisted(state, observation);
             case DONE -> protocolViolation(state, "observation after terminal state");

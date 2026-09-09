@@ -122,6 +122,7 @@ public final class RunProjection {
                         e.capability().value(), e.effect().name(), e.outcome(), e.latencyMillis()));
                 case JclawEvent.InjectionDetected e -> injections += e.findings();
                 case JclawEvent.SecretInjected ignored -> { }
+                case JclawEvent.HookFired ignored -> { }
                 case JclawEvent.GateRaised e -> {
                     gates.add(new Gate(e.gate(), e.gateId(), Optional.empty()));
                     status = Optional.of(e.gate().blockedStatus());

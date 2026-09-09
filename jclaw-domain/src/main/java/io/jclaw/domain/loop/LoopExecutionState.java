@@ -47,6 +47,11 @@ public record LoopExecutionState(
          * joining it, and the real model call follows.
          */
         AWAITING_SUMMARY,
+        /**
+         * A review of the draft reply is in flight, for a family that reflects before replying.
+         * The canonical machine never enters it.
+         */
+        AWAITING_REFLECTION,
         /** Capability invocations are in flight. */
         AWAITING_CAPABILITIES,
         /** The final assistant message is being written to the transcript. */

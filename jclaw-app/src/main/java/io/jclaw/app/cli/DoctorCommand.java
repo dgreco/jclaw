@@ -103,6 +103,9 @@ public class DoctorCommand implements Callable<Integer> {
                 ? "docker (" + properties.sandboxImage() + ", network " + properties.sandboxNetwork()
                         + ", " + properties.sandboxMemory() + ", " + properties.sandboxCpus() + " cpu)"
                 : "host (no sandbox)"));
+        System.out.println("  loop family          " + properties.loopFamily()
+                + (JclawProperties.nonBlank(properties.hooks()).isEmpty() ? ", no hooks"
+                        : ", hooks " + String.join(", ", JclawProperties.nonBlank(properties.hooks()))));
         System.out.println("  extensions           " + extensions.list().size() + " installed ("
                 + extensions.list().stream().filter(e -> e.trust() == io.jclaw.contracts.capability.TrustClass.VERIFIED).count()
                 + " verified), " + properties.trustedPublishers().size() + " trusted publisher(s)");
