@@ -85,7 +85,7 @@ At parity on the trust model; missing the multi-tenant, multi-process, and resou
 |---|---|---|
 | Trust classification of sources and extensions (`ironclaw_trust`) | ✅ | ✅ `TrustClass` (SYSTEM, FIRST_PARTY, VERIFIED, COMMUNITY, UNTRUSTED) with per-class ceilings; policy may only tighten |
 | Exact-invocation grants (`ironclaw_authorization`) | ✅ | ✅ SHA-256 fingerprint over id + sorted arguments; scope-keyed |
-| Approval gates with **leases** (`ironclaw_approvals`) | ✅ gates expire / are re-leased | 🟡 gates are durable but never expire |
+| Approval gates with **leases** (`ironclaw_approvals`) | ✅ gates expire / are re-leased | ✅ gates carry `expiresAt` (`jclaw.approval-ttl`, 24h): an unexpired open gate re-parks a resumed run on the same question, an expired one is asked afresh and can no longer be answered; decisions never expire |
 | Auth gates (`GateKind::Auth`, `BLOCKED_AUTH`) — run parks until the user authenticates | ✅ | ✅ a provider `AUTH` failure raises a durable auth gate naming the missing credential; the run parks `BLOCKED_AUTH` at a replay-safe checkpoint and `resume` re-attempts the model call |
 | Process gates (`WAITING_PROCESS`) — run waits on an external process / child | ✅ | 🟡 enum value exists; subagents run synchronously inside the parent's turn instead |
 | Budget reservation and process ownership (`ironclaw_resources`) | ✅ | 🟡 `Budget` (tokens, iterations, 10-min wall clock) per run; no reservation, no per-user or per-tenant accounting |
@@ -95,8 +95,8 @@ At parity on the trust model; missing the multi-tenant, multi-process, and resou
 | `TurnScope` as tenant / agent / project / thread isolation key | ✅ | 🟡 `TurnScope.local(project, thread)` — no tenant, no agent id; single user assumed |
 | "One active run per canonical thread" enforced before side effects | ✅ | ✅ `ThreadLock` (OS file lock per canonical scope) taken in `JclawRuntime.submit`/`resume` before the inbound message is written; refusal is `THREAD_BUSY` with nothing recorded. Single-host, like the JSONL stores |
 | Capability manifest publishing (`ironclaw_capabilities`) | ✅ | 🟡 descriptors are compiled in; `visibleSurface` publishes them; no manifests |
-| Per-tool rate limiting | ✅ | ❌ |
-| Endpoint allowlisting per tool / extension | ✅ | 🟡 `jclaw.egress-allowlist` / `egress-denylist` (exact hosts or `*.suffix`) bind into `EgressGuard` for every tool; not per tool or per extension |
+| Per-tool rate limiting | ✅ | ✅ `jclaw.tool-rate-limits` (`N/window` per capability), a sliding window checked before approval and counted at dispatch; per process |
+| Endpoint allowlisting per tool / extension | ✅ | ✅ host-wide `jclaw.egress-allowlist` / `egress-denylist`, plus `jclaw.tool-egress` per capability, applied by a scoped handler context after the host checks so it can only narrow; MCP servers make their own connections and are not covered |
 
 ---
 
@@ -110,7 +110,7 @@ At parity on the trust model; missing the multi-tenant, multi-process, and resou
 | `CanonicalAgentLoopExecutor` tick pipeline with input / prompt / model / capability / gate / stop stages | ✅ | 🟡 same stages, fixed; no pluggable stage |
 | Execution-stage hooks (`ironclaw_hooks`) — pre/post model, pre/post tool | ✅ | ❌ |
 | Prompt envelope contract (`prompt_envelope`) with context policy | ✅ | 🟡 `PromptAssembly` (base + workspace + skill summaries) plus `ContextPolicy` on `LoopPolicy`; no envelope contract type — the system prompt and the message window are assembled separately |
-| Context management: compaction / summarisation / truncation policy | ✅ *(via context policy in `ResolvedRunProfile`)* | 🟡 `ContextPolicy` (message cap + estimated token budget) on `LoopPolicy`; pure `ContextCompaction` applied at admission and by `TurnMachine` before every model call — boundary-safe truncation with an omission notice, idempotent. No summarisation |
+| Context management: compaction / summarisation / truncation policy | ✅ *(via context policy in `ResolvedRunProfile`)* | ✅ `ContextPolicy` (message cap + estimated token budget, summarise on/off) on `LoopPolicy`; pure `ContextCompaction` truncates at safe boundaries with an omission notice; with summarisation on, `TurnMachine` first asks the model to summarise the dropped span (a non-streamed `CallModel`) and folds the answer into the notice, falling back to truncation if that call fails |
 | `RunProfileResolver`: driver, checkpoint schema, model profile, capability surface, context policy, budget, scheduling class | ✅ | 🟡 `LoopPolicy` + `RunRecord` capture model, prompt, tools, budget, context policy; the context policy is resolved from current config on resume rather than stored on the run (it bounds the model's view, not the run's authority); no scheduling class, one schema version |
 | Model gateway abstraction with per-profile routing | ✅ | 🟡 one `ModelProvider` per process, chosen at boot; `failover` is the only composite |
 | Attachments (`ironclaw_attachments`) and extractors (`ironclaw_extractors`) — images, files, documents into the prompt | ✅ | ❌ — text-only `ContentBlock`s; `Thinking` is parsed but there is no image block |
@@ -169,7 +169,7 @@ At parity on the trust model; missing the multi-tenant, multi-process, and resou
 | Policy rules with severities (Block / Warn / Review / Sanitize) | ✅ | 🟡 `jclaw.injection-policy`: `off`, `warn`, `sanitize` (default), `block` (withholds HIGH findings); no per-rule policy, no review queue |
 | Leak detection on outbound requests and responses | ✅ | 🟡 redaction only; no scan of *outbound* model requests for secrets that arrived via a tool |
 | Credential injection at the host boundary (tools never see the raw secret) | ✅ | 🟡 tools cannot obtain secrets (no method exists) but there is also no way for a tool to *use* one — e.g. an authenticated `http_fetch` is impossible |
-| Endpoint allowlisting | ✅ | ✅ `jclaw.egress-allowlist` / `egress-denylist`; the lists can only narrow — private-network and metadata denials still apply to allowed hosts |
+| Endpoint allowlisting | ✅ | ✅ host-wide and per-tool lists; each can only narrow — private-network and metadata denials still apply to allowed hosts |
 | Audit log of all tool executions | ✅ | ✅ `CapabilityInvoked` events |
 
 ---
@@ -222,7 +222,7 @@ At parity on the trust model; missing the multi-tenant, multi-process, and resou
 | Structured tracing / metrics substrate (`ironclaw_observability`, `trace_commons`) | ✅ | ❌ — SLF4J/logback with `--debug`/`--trace`; no OpenTelemetry, no metrics |
 | Latency harness (`harness/latency/`) | ✅ | ❌ |
 | Deployment assets (`deploy/`, `docker/`, `infra/runner/`) | ✅ | ❌ — one jar or one binary, no Dockerfile |
-| Test tooling (`test-tools/`, `tests/` integration suites) | ✅ | 🟡 201 unit + integration tests, including a child-JVM test for cross-process thread locking; no end-to-end suite against a live provider |
+| Test tooling (`test-tools/`, `tests/` integration suites) | ✅ | 🟡 217 unit + integration tests, including a child-JVM test for cross-process thread locking; no end-to-end suite against a live provider |
 | `doctor`-style preflight | *(unverified)* | ➕ `jclaw doctor` |
 
 ---
@@ -256,6 +256,8 @@ Listed so the comparison is not read as one-directional:
 - A failover chain that knows not to retry a stream once the user has seen output from it.
 - A queued run is seeded with the conversation as of its own submission: later turns queued on the same thread are excluded, and its own message is the current turn.
 - Injection heuristics never alter the audit record: the stored payload is what the tool returned; only the model-facing copy is framed or withheld.
+- A context summary is a model call the machine decides on like any other effect, never streamed as if the agent were speaking, and its failure degrades to truncation rather than failing the run.
+- An open approval gate is one question: resuming an undecided run parks it on the same gate, so a human never finds duplicates; only an expired question is asked again.
 - Thread exclusivity as an OS file lock that dies with its process — no TTL, no reconciliation, proven with a second JVM in the test suite.
 - Context compaction that is pure, idempotent, and structurally safe (never opens a request with a tool result or a bare assistant turn; never splits a tool call from its results; reports the running total omitted).
 - Vector ranking that cannot mis-rank across embedding models: every stored vector carries its model id and only same-space vectors are compared.
@@ -268,12 +270,14 @@ Ranked by leverage relative to effort, given the existing seams. Closed in Septe
 order: the one-active-run-per-thread lock (§4), the context compaction policy (§5), vector ranking
 as a third list into `RrfFusion` (§8), streaming for the OpenAI-compatible adapter (§14), the
 configurable denied set and egress lists (§4, §9), the durable `CapabilityResultStore` (§11), the
-`TurnRunScheduler` with `submit` and a draining `worker` (§6), auth gates (§4, §10), and
-prompt-injection heuristics with a sanitise/block policy (§9). What remains:
+`TurnRunScheduler` with `submit` and a draining `worker` (§6), auth gates (§4, §10),
+prompt-injection heuristics with a sanitise/block policy (§9), context summarisation as an effect
+(§5), per-tool egress allowlists and rate limits (§4, §9), and approval-gate expiry (§4). What
+remains:
 
-1. **Context summarisation as an effect** (§5) — `ContextCompaction` truncates; a summarising step would feed its output back as ordinary history.
-2. **Per-tool egress and rate limits** (§4) — the global lists exist; per-capability scoping needs the descriptor to carry them.
-3. **Approval-gate expiry** (§4) — gates are durable but never lapse; a lease on the gate is the missing piece.
-4. **Durable `CapabilityResultStore` retention** (§11) — `results.jsonl` grows without bound; a retention sweep belongs in `recover`.
-5. **A second product surface** (§2) — the scheduler and `submit` are the enabling step; an HTTP ingress that enqueues and a stream that follows the event log would be the first non-CLI surface.
+1. **Durable store retention** (§11) — `results.jsonl`, `events.jsonl`, and `transcript.jsonl` grow without bound; a retention sweep belongs in `recover`.
+2. **A second product surface** (§2) — the scheduler and `submit` are the enabling step; an HTTP ingress that enqueues and a stream that follows the event log would be the first non-CLI surface.
+3. **Event projections and streams** (§11) — `status` tails the raw log; a read model per run and a live subscription are what a UI needs.
+4. **Process gates for asynchronous subagents** (§4, §5) — `WAITING_PROCESS` exists; a child run that parks the parent instead of blocking its tool call would let subagents run in parallel under the scheduler.
+5. **Attachments** (§5) — image and file content blocks into the prompt.
 6. **A sandboxed process lane** (§3) — the largest gap, and the one that changes the threat model most.

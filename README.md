@@ -58,7 +58,7 @@ jclaw reimplements the **architecture** of IronClaw — the seven-layer ladder, 
 
 Everything is durable JSONL under `~/.jclaw`: a run can park in one process, be approved in a second, and resume in a third. There is no server and no database.
 
-**Status.** Milestones M0–M7 plus subagents, MCP, streaming, and lease-based crash recovery are complete. 201 tests pass across the modules, including 13 machine-checked architecture rules (ArchUnit). Both the uber jar and the native image are verified end to end, including subprocess spawning for MCP servers and shell tools.
+**Status.** Milestones M0–M7 plus subagents, MCP, streaming, and lease-based crash recovery are complete. 217 tests pass across the modules, including 13 machine-checked architecture rules (ArchUnit). Both the uber jar and the native image are verified end to end, including subprocess spawning for MCP servers and shell tools.
 
 ---
 
@@ -150,7 +150,7 @@ mvn test -Dtest='ApprovalResumeIntegrationTest#resumeWithoutDecisionParksAgain' 
 ./scripts/byte-verify.sh install && ./scripts/byte-verify.sh validate   # manifest drift check
 ```
 
-Test totals by module (verified on this checkout): contracts 8 · domain 95 · kernel 14 · providers 23 · storage 11 · app 50 = **201, 0 failures**. `DependencyLawTest` in `jclaw-app` machine-checks the layer ladder with ArchUnit; the rules were confirmed to fire by planting deliberate violations.
+Test totals by module (verified on this checkout): contracts 8 · domain 106 · kernel 14 · providers 23 · storage 11 · app 55 = **217, 0 failures**. `DependencyLawTest` in `jclaw-app` machine-checks the layer ladder with ArchUnit; the rules were confirmed to fire by planting deliberate violations.
 
 ### Continuous integration
 
@@ -204,6 +204,9 @@ jclaw:
 | `max-tokens` | `500000` | Token budget per run (input + output); `0` = unlimited. A fixed 10-minute wall-clock cap also applies. |
 | `context-max-messages` | `200` | Most recent transcript messages a model request may carry. See [Context window](#context-window). |
 | `context-max-tokens` | `100000` | Estimated token budget (4 chars/token) for those messages; the tighter of the two limits binds. Lower it for local models with small context windows. |
+| `context-summarise` | `true` | When the window drops history, ask the model to summarise the dropped span first (one extra, non-streamed call) and carry the summary instead of a bare count. `false` truncates only. |
+| `context-summary-max-tokens` | `1024` | Output cap for the summary call. |
+| `approval-ttl` | `24h` | How long an unanswered approval or auth gate stays answerable. After that a resume asks afresh and the stale gate refuses a decision. Decisions never expire. |
 | `system-prompt` | *"You are jclaw, a helpful agent operating inside a bounded workspace…"* | Operator instructions; jclaw appends a workspace section and skill summaries. |
 | `allow-private-networks` | `false` | Lets `http_fetch` reach loopback / RFC1918 / link-local addresses. **Development only** — re-opens the SSRF surface the egress guard closes. `doctor` warns when set. |
 | `openai-base-url` | `https://api.openai.com/v1` | Endpoint for `openai`; override for a compatible gateway. |
@@ -217,6 +220,8 @@ jclaw:
 | `denied-capabilities` | *(empty)* | Capability ids refused outright in every approval mode and hidden from the model, e.g. `builtin.shell,builtin.http_fetch`. A malformed id fails startup. |
 | `egress-allowlist` | *(empty)* | When set, tools may only reach these hosts: exact names or `*.suffix` wildcards. Private-network and cloud-metadata denials still apply to allowed hosts; the list can only narrow. |
 | `egress-denylist` | *(empty)* | Hosts tools may never reach, on top of the built-in metadata hosts. Wins over the allowlist. |
+| `tool-egress` | *(empty)* | Per-capability egress allowlists on top of the host lists: `tool-egress: {"[builtin.http_fetch]": "api.github.com,*.example.com"}` in YAML, or `--jclaw.tool-egress.[builtin.http_fetch]=…` on the command line. Applied after the host checks, so a tool list can only narrow. |
+| `tool-rate-limits` | *(empty)* | Per-capability caps as `N/window` (`5/1m`, `100/1h`, `2/30s`), keyed the same way. A sliding window per process; a call past the cap is denied `rate_limited` without bothering a human. |
 | `injection-policy` | `sanitize` | What the kernel does with tool output that looks like a prompt injection: `off`, `warn` (audit event only), `sanitize` (fence it, defuse chat-template tokens, tell the model it is data), `block` (withhold HIGH-severity findings from the model). The stored payload is never altered. |
 | `embedding-model` | *(provider default)* | `text-embedding-3-small` (openai), `openai/text-embedding-3-small` (openrouter), `nomic-embed-text` (ollama); **required for `local`**. Vectors carry their model id, so switching models means `jclaw memory reindex`. |
 
@@ -300,7 +305,7 @@ The system prompt the model sees is: your configured `system-prompt`, then a wor
 
 #### Context window
 
-A thread's whole history is kept in the transcript, but a model request carries only what `context-max-messages` and `context-max-tokens` admit. Compaction keeps the newest messages that fit, cuts only where a request may legally begin (a user message, or an assistant message behind a short synthetic user notice), never separates a tool call from its results, and always keeps the message you just typed. When anything is dropped the model is told how many messages were omitted since the start of the thread. The same policy is applied before **every** model call, so a long tool-heavy run is bounded too, not just a long thread. There is no summarisation: the dropped span is gone from the model's view, not condensed.
+A thread's whole history is kept in the transcript, but a model request carries only what `context-max-messages` and `context-max-tokens` admit. Compaction keeps the newest messages that fit, cuts only where a request may legally begin (a user message, or an assistant message behind a short synthetic user notice), never separates a tool call from its results, and always keeps the message you just typed. When anything is dropped the model is told how many messages were omitted since the start of the thread, and, with `context-summarise` on (the default), what they contained: before the real call the machine asks the model to summarise the dropped span in one extra, non-streamed call, and the summary rides in the same notice. Summaries compose: a later pass that drops the notice hands it to the next summary. If the summary call fails the turn continues with the bare count. The same policy is applied before **every** model call, so a long tool-heavy run is bounded too, not just a long thread.
 
 ### Interactive sessions: `repl`
 
@@ -350,7 +355,9 @@ $ jclaw approvals deny gate-… --resume     # deny and resume: the model is tol
 $ jclaw resume <run-id>                    # resume any parked run by id (shown by `status`)
 ```
 
-What happens on resume is the point of the design: the run rehydrates its checkpoint and **re-dispatches** the gated call through the kernel, which consults the approval store for that exact invocation. Approved → the tool runs. Denied → the model receives a denial result and continues. Still undecided → the run parks again. Nothing is ever assumed from the fact that you typed `resume`.
+What happens on resume is the point of the design: the run rehydrates its checkpoint and **re-dispatches** the gated call through the kernel, which consults the approval store for that exact invocation. Approved → the tool runs. Denied → the model receives a denial result and continues. Still undecided → the run parks again **on the same gate**, so you never find duplicates. Nothing is ever assumed from the fact that you typed `resume`.
+
+**Gates expire.** An unanswered gate lapses after `approval-ttl` (24 hours by default). `approvals list` hides lapsed gates (`--all` shows them), `approve`/`deny` refuse them, and resuming the run raises a fresh gate with the current arguments in front of you. A decision, once made, never expires.
 
 `resume` reports like `run`: 0 completed, 2 parked again, 1 failed. `approvals approve/deny` exit 1 for an unknown or already-decided gate.
 

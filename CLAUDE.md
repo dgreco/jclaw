@@ -16,7 +16,7 @@ jclaw is a Java/Spring Boot reimplementation of the **architecture** of
 untrusted-`LoopExit` trust model, and the `CapabilityHost` authority boundary are faithful; the
 feature surface is a fraction of IronClaw's. See **Not built yet** for the honest list.
 
-201 tests pass across 9 modules, including 13 machine-checked architecture rules.
+217 tests pass across 9 modules, including 13 machine-checked architecture rules.
 
 ## Commands
 
@@ -279,6 +279,21 @@ the Anthropic SDK, and tool lanes may not read the process environment.
   the tool returned; only the model-facing summary is fenced, defused, or, under `block`, withheld
   as a `Denied` outcome. The authority gate above it is still what stops an injected instruction
   from becoming an effect.
+- **Summarisation is an effect the machine decides on.** With `ContextPolicy.summarise()`, the
+  `BEFORE_MODEL` checkpoint is followed by a `CallModel(request, userFacing=false)` built by the
+  pure `ContextSummary` from the span `ContextCompaction` would drop; the reply rewrites the
+  state's messages (`AWAITING_SUMMARY`) and the real call follows. The interpreter never streams
+  a non-user-facing call. A failed summary degrades to truncation; the effect vocabulary is
+  still five constructors.
+- **Per-tool limits narrow, never widen.** `CapabilityPolicy.toolEgress` is applied by
+  `ToolScopedContext` after the host context's own check; `CapabilityPolicy.rateLimits` is a
+  sliding window per process, checked before approval (so a loop cannot flood a human with gates)
+  and counted at dispatch (so a parked call spends no permit).
+- **A gate is one question.** `ApprovalStore.findGrant` returns the latest gate decided or not:
+  a decision applies, an unexpired open gate re-parks the run on the same gate, an expired one is
+  asked afresh. `Gate.isExpiredAt` is true only for undecided gates; grants never lapse.
+- **Tests must pin what `~/.jclaw/jclaw.yaml` could change.** The app imports the user config
+  file in tests too, so a test that depends on the approval mode or provider sets it explicitly.
 - **The context policy is a view, not a truth.** `ContextCompaction` derives what the model sees
   from the full history under `LoopPolicy.context()`; the loop state and transcript keep
   everything. It is applied at admission (bounding the checkpoint) and by `TurnMachine` before
@@ -355,10 +370,8 @@ architecture is equivalent, the feature surface is not.
   or as ordinary child processes. There is no sandbox.
 - **MCP transports** — stdio only. HTTP/SSE MCP servers are not supported, and there is no OAuth
   flow for authenticated servers.
-- **Context summarisation** — `ContextCompaction` truncates at structurally valid boundaries and
-  tells the model how much was omitted; it does not summarise the dropped span, because that needs
-  a model call and the policy is pure. A summarisation effect would feed its output back in as
-  ordinary history.
+- **Retention** — every JSONL store is append-only and unbounded: results, events, transcripts.
+  A sweep in `recover` is the natural home for it.
 - **Embedding providers beyond the OpenAI-compatible shape** — Voyage, Cohere, and the like need
   their own adapter behind `EmbeddingProvider`; today one adapter covers OpenAI, OpenRouter,
   Ollama, LM Studio, vLLM.
@@ -374,7 +387,7 @@ architecture is equivalent, the feature surface is not.
   same runtime. jclaw has one product surface.
 - **`repl` does not resolve gates inline.** It reports the blocked status and prints the exact
   `jclaw approvals approve <gate>` command, but resolving still requires another shell.
-- **Per-tool egress scoping.** `jclaw.egress-allowlist` / `egress-denylist` apply to every tool;
-  IronClaw scopes endpoints per extension. The lists would need to live on the descriptor.
+- **Egress for MCP servers** — `jclaw.tool-egress` scopes jclaw's own `http_fetch`; an MCP
+  server process opens its own sockets and nothing here mediates them.
 - **OpenRouter routing preferences are not exposed.** Provider ordering, fallbacks, and
   transforms are OpenRouter-specific body fields the adapter does not send.
