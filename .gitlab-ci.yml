@@ -119,6 +119,22 @@ native-image:
     # its shell-detection script to native-image as arguments and the job dies before the
     # first script line with "Unrecognized option(s)" (exit code 20).
     entrypoint: [""]
+  # A real PostgreSQL for the binary to talk to. A plain GitLab service, not dind: the daemon is
+  # only needed to *start* a database, and a service already is one, reachable on the job network.
+  #
+  # This is the combination nothing else covers. PostgresStorageIntegrationTest is a
+  # @SpringBootTest, so it proves the schema and the stores work on the JVM; the smoke steps
+  # below proved the binary works, but against embedded H2. The interesting failure lives in the
+  # gap: a JDBC driver is resolved reflectively from the URL, and `--no-fallback` turns a missing
+  # registration into a crash rather than a degradation. Only the native binary pointed at
+  # PostgreSQL can show that it does not.
+  services:
+    - name: postgres:17-alpine
+      alias: postgres
+  variables:
+    POSTGRES_DB: jclaw
+    POSTGRES_USER: jclaw
+    POSTGRES_PASSWORD: jclaw-ci-password
   needs: [build-test]
   cache:
     key:
@@ -188,6 +204,21 @@ native-image:
     # and the projection a finished run wrote reads back through the pooled connection.
     # The thread lock is a row under sql, so schema 4 and its table must be there: a missing
     # lock table would silently mean no exclusion at all between two hosts.
+    # The same binary against a real PostgreSQL, which is where a reflectively loaded driver
+    # would actually fail. Everything above this line used embedded H2.
+    - 'timeout 60 bash -c "until (echo > /dev/tcp/postgres/5432) 2>/dev/null; do sleep 1; done" && echo "postgres reachable"'
+    - export PGDIR=$(mktemp -d)
+    - export JCPG="./jclaw-app/target/jclaw --jclaw.workspace=$PGDIR --jclaw.state-dir=$PGDIR/state --jclaw.provider=mock --jclaw.approval-mode=trusted --jclaw.storage=sql --jclaw.datasource-url=jdbc:postgresql://postgres:5432/jclaw --jclaw.datasource-username=jclaw"
+    - export JCLAW_DATASOURCE_PASSWORD=jclaw-ci-password
+    # A turn proves the driver loads, every migration applies, and writes land.
+    - $JCPG run "native on postgres" --jclaw.mock-script=text:pg-ok | grep -q pg-ok
+    # Reads come back out of PostgreSQL, not out of a cache in the same process.
+    - $JCPG status -n 5 | grep -q "run.finished"
+    - export PGRUN=$($JCPG status -n 20 | grep -o 'run_[0-9a-f]*' | head -1)
+    - $JCPG status --run $PGRUN --spans | grep -q COMPLETED
+    # The vault over SQL: AES-GCM through a different JDBC driver than the H2 run above.
+    - printf 'pg-secret-value-0123456789' | $JCPG secrets set pg --capability builtin.http_fetch --host api.example.com
+    - $JCPG secrets list | grep -q api.example.com
     - ./jclaw-app/target/jclaw doctor --jclaw.workspace=$SMOKE --jclaw.state-dir=$SMOKE/sql --jclaw.provider=mock --jclaw.storage=sql || true
     - export SQLRUN=$(./jclaw-app/target/jclaw status -n 20 --jclaw.workspace=$SMOKE --jclaw.state-dir=$SMOKE/sql --jclaw.provider=mock --jclaw.storage=sql | grep -o 'run_[0-9a-f]*' | head -1)
     - ./jclaw-app/target/jclaw status --run $SQLRUN --spans --jclaw.workspace=$SMOKE --jclaw.state-dir=$SMOKE/sql --jclaw.provider=mock --jclaw.storage=sql | grep -q COMPLETED

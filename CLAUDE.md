@@ -47,12 +47,21 @@ docker compose run --rm jclaw run "hello"                      # the same thing 
 docker compose -f docker-compose.native.yml run --rm jclaw run "hello"   # the native image
 ```
 
-**The native image talks to PostgreSQL.** That had never been checked: the binary was verified
-against embedded H2 only, and the PostgreSQL driver has no captured native-image metadata of its
-own. It turns out not to need any — Boot's AOT processing registers the driver Spring resolves
-from the configured URL — and `docker-compose.native.yml` is what proves it, applying all four
-migrations to a real server and materialising a projection. Startup measured in the same
-container shape: 61 ms native against 1.48 s for the jar.
+**The native image talks to PostgreSQL**, and CI checks it. The binary had been verified against
+embedded H2 only, and the PostgreSQL driver has no captured native-image metadata of its own. It
+turns out not to need any — Boot's AOT processing registers the driver Spring resolves from the
+configured URL — but that is exactly the kind of thing `--no-fallback` turns from a degradation
+into a crash, so it is worth a guard rather than a one-off check.
+
+Three layers cover it, and they cover different things:
+
+| | runs on | database |
+|---|---|---|
+| `PostgresStorageIntegrationTest` | JVM (`@SpringBootTest`) | PostgreSQL under Testcontainers |
+| `native-image` job smoke steps | the native binary | H2, then PostgreSQL as a CI service |
+| `docker-compose.native.yml` | the native binary | PostgreSQL, by hand |
+
+Startup measured in the same container shape: 61 ms native against 1.48 s for the jar.
 
 The test is `@Testcontainers(disabledWithoutDocker = true)`: without a daemon it skips rather
 than fails, so a developer with Docker stopped does not see a red suite for an environment
