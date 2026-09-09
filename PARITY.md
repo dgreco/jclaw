@@ -17,7 +17,7 @@ Legend: ✅ at parity · 🟡 partial · ❌ missing · ➕ jclaw-only
 | Pure agent loop, checkpoints, resumable state | `ironclaw_agent_loop`, `ironclaw_loop_host`, `ironclaw_turn_runner` | `TurnMachine` + `EffectInterpreter` + `JclawRuntime` | ✅ (one loop family) |
 | Loop hooks | `ironclaw_hooks` | none | ❌ |
 | Kernel: trust, authorization, approvals, capabilities, turns | `ironclaw_trust`, `_authorization`, `_approvals`, `_capabilities`, `_turns`, `_host_runtime` | `DefaultCapabilityHost`, `CapabilityPolicy`, `TrustClass`, `ApprovalStore`, `JclawRuntime.validate` | ✅ (single-tenant) |
-| Kernel: resources, runtime policy, processes | `ironclaw_resources`, `ironclaw_runtime_policy`, `ironclaw_processes` | `Budget`; `RunStore` with leases; no process journal / process trees / deployment modes | 🟡 |
+| Kernel: resources, runtime policy, processes | `ironclaw_resources`, `ironclaw_runtime_policy`, `ironclaw_processes` | `Budget`; `CapabilityPolicy` postures + configurable hard denials; `RunStore` with leases and a per-thread `ThreadLock`; no process journal / process trees / deployment modes | 🟡 |
 | Scheduler with bounded concurrency | `TurnRunScheduler`, `RebornTurnRunExecutor` | leases + heartbeats + reconciliation exist; nothing runs more than one worker | 🟡 |
 | WASM lane | `ironclaw_wasm`, `ironclaw_wasm_limiter` | none | ❌ |
 | Script / container sandbox lane | `ironclaw_sandbox` (Docker orchestrator/worker) | `builtin.shell` as an unsandboxed child process | ❌ |
@@ -26,7 +26,7 @@ Legend: ✅ at parity · 🟡 partial · ❌ missing · ➕ jclaw-only
 | Products | `ironclaw_cli`, `_webui`, `_assistant`, `_operator`, `_openai_compat`, `_host_ingress`, Slack/Telegram channel packages | CLI + REPL only | ❌ |
 | Substrates: filesystem, network | `ironclaw_filesystem`, `ironclaw_network` | `WorkspaceGuard`, `EgressGuard` | ✅ |
 | Substrates: secrets | `ironclaw_secrets` (AES-256-GCM vault, leased handoff) | environment variables only; redaction of known values | ❌ |
-| Substrates: safety | `ironclaw_safety` (injection detection, sanitization, leak detection, policy severities) | `Redaction` only | 🟡 |
+| Substrates: safety | `ironclaw_safety` (injection detection, sanitization, leak detection, policy severities) | `Redaction`, `EgressGuard` with configurable allow/deny lists; no injection detection or sanitisation | 🟡 |
 | Substrates: documents, libsql/Postgres, observability | `ironclaw_documents`, `ironclaw_libsql_runtime`, `ironclaw_observability` | JSONL files; SLF4J logs | ❌ |
 | Events | `event_log`, `event_store`, `event_projections`, `event_streams` | `JsonlEventLog` (append + tail); no projections, no streams | 🟡 |
 | Domains: threads, memory, skills, triggers, llm | `ironclaw_threads`, `_memory`, `_skills`, `_triggers`, `_llm` | `ThreadService`, `MemoryStore` + `EmbeddingProvider`, `SkillCatalog`, `RoutineStore`, `ModelProvider` | 🟡 |
