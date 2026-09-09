@@ -3,6 +3,7 @@ package io.jclaw.app.runtime;
 import io.jclaw.app.config.JclawProperties;
 import io.jclaw.contracts.capability.CapabilityDescriptor;
 import io.jclaw.contracts.capability.CapabilityHost;
+import io.jclaw.contracts.capability.CapabilityResultStore;
 import io.jclaw.contracts.event.EventLog;
 import io.jclaw.contracts.event.JclawEvent;
 import io.jclaw.contracts.loop.CheckpointStore;
@@ -62,6 +63,7 @@ public class JclawRuntime {
     private final EffectInterpreter interpreter;
     private final ThreadService threads;
     private final CapabilityHost capabilities;
+    private final CapabilityResultStore results;
     private final CheckpointStore checkpoints;
     private final RunStore runs;
     private final ThreadLock threadLocks;
@@ -88,6 +90,7 @@ public class JclawRuntime {
             EffectInterpreter interpreter,
             ThreadService threads,
             CapabilityHost capabilities,
+            CapabilityResultStore results,
             CheckpointStore checkpoints,
             RunStore runs,
             ThreadLock threadLocks,
@@ -100,6 +103,7 @@ public class JclawRuntime {
         this.interpreter = Objects.requireNonNull(interpreter, "interpreter");
         this.threads = Objects.requireNonNull(threads, "threads");
         this.capabilities = Objects.requireNonNull(capabilities, "capabilities");
+        this.results = Objects.requireNonNull(results, "results");
         this.checkpoints = Objects.requireNonNull(checkpoints, "checkpoints");
         this.runs = Objects.requireNonNull(runs, "runs");
         this.threadLocks = Objects.requireNonNull(threadLocks, "threadLocks");
@@ -311,14 +315,24 @@ public class JclawRuntime {
                 if (reply.isEmpty()) {
                     log.debug("run {}: reply ref did not resolve -> DRIVER_PROTOCOL_VIOLATION",
                             run.value());
-                } else {
-                    log.debug("run {}: reply ref resolved against the transcript ({} chars)",
-                            run.value(), reply.get().length());
+                    yield failed(run, FailureKind.DRIVER_PROTOCOL_VIOLATION);
                 }
-                yield reply.isEmpty()
-                        ? failed(run, FailureKind.DRIVER_PROTOCOL_VIOLATION)
-                        : new TurnResult(run, TurnStatus.COMPLETED, reply, Optional.empty(),
-                                Optional.empty(), Optional.empty(), 0, 0);
+                // Every result ref is a claim too. The store that minted it is durable, so a ref
+                // minted before a park still resolves after a resume in another process; one
+                // that does not resolve was never minted by this host.
+                long unresolved = completed.resultRefs().stream()
+                        .filter(ref -> results.resolve(ref).isEmpty())
+                        .count();
+                if (unresolved > 0) {
+                    log.debug("run {}: {} result ref(s) did not resolve -> DRIVER_PROTOCOL_VIOLATION",
+                            run.value(), unresolved);
+                    yield failed(run, FailureKind.DRIVER_PROTOCOL_VIOLATION);
+                }
+                log.debug("run {}: reply ref resolved against the transcript ({} chars), "
+                                + "{} result ref(s) resolved against the result store",
+                        run.value(), reply.get().length(), completed.resultRefs().size());
+                yield new TurnResult(run, TurnStatus.COMPLETED, reply, Optional.empty(),
+                        Optional.empty(), Optional.empty(), 0, 0);
             }
 
             case LoopExit.Blocked blocked -> {

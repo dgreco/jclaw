@@ -16,7 +16,7 @@ jclaw is a Java/Spring Boot reimplementation of the **architecture** of
 untrusted-`LoopExit` trust model, and the `CapabilityHost` authority boundary are faithful; the
 feature surface is a fraction of IronClaw's. See **Not built yet** for the honest list.
 
-167 tests pass across 9 modules, including 13 machine-checked architecture rules.
+182 tests pass across 9 modules, including 13 machine-checked architecture rules.
 
 ## Commands
 
@@ -59,9 +59,13 @@ The `native` profile lives in `jclaw-app/pom.xml`. The Boot parent contributes o
 | `status` | recent activity from the event log |
 | `doctor` | config + security posture; non-zero on real problems |
 
-`run --stream` prints model output as it arrives. Streaming is presentation only — the machine
-sees the same response either way, so a streamed run and a buffered one produce identical
-decisions and transcripts.
+`run --stream` prints model output as it arrives, over the Anthropic SDK's event stream or the
+OpenAI-compatible SSE path (OpenAI, OpenRouter, Ollama, `local`). Streaming is presentation only —
+the machine sees the same response either way, so a streamed run and a buffered one produce
+identical decisions and transcripts. Tool-call arguments stream as JSON fragments, so the sink is
+told a call started and gets the complete call in the final response. The `failover` chain
+streams through the first provider that accepts the model and will not fail over once prose has
+been shown: a second provider would start a second answer on top of the first.
 
 ### Tracing a turn
 
@@ -255,6 +259,10 @@ the Anthropic SDK, and tool lanes may not read the process environment.
   file lock per canonical scope, `FileThreadLock`) before the inbound message is written, so a
   refused submission leaves no trace and two processes can never interleave one transcript. The
   lock dies with its process; there is no TTL to reason about. Refusal is `THREAD_BUSY`.
+- **Configuration can only tighten policy.** `jclaw.denied-capabilities` adds hard denials on top
+  of the approval-mode posture and removes the tool from the published surface; the egress lists
+  narrow `EgressGuard` and never bypass its private-network or metadata checks. Both are
+  validated at startup so a typo fails loudly instead of denying nothing.
 - **The context policy is a view, not a truth.** `ContextCompaction` derives what the model sees
   from the full history under `LoopPolicy.context()`; the loop state and transcript keep
   everything. It is applied at admission (bounding the checkpoint) and by `TurnMachine` before
@@ -316,8 +324,9 @@ the Anthropic SDK, and tool lanes may not read the process environment.
   URLs reaching internal addresses; a base URL is operator configuration, and pointing it at
   `localhost:11434` for Ollama is the intended use. This is documented in
   `OpenAiCompatibleModelProvider`.
-- `CapabilityResultStore` is still in-memory (per-run working data). Every other store is durable
-  JSONL under `jclaw.state-dir`.
+- **Every store is durable JSONL under `jclaw.state-dir`**, including `results.jsonl` for full
+  capability payloads. Result refs are evidence: `JclawRuntime.validate` re-resolves each one in a
+  `Completed` exit, and a run resumed in a second process completes with refs the first minted.
 - Git: initialized on `main` (September 2026). `.gitignore` excludes `target/`, IDE files, `.claude/settings.local.json`, and `.byte-manifest`; the captured native-image metadata is versioned on purpose.
 
 ## Not built yet
@@ -348,8 +357,7 @@ architecture is equivalent, the feature surface is not.
   same runtime. jclaw has one product surface.
 - **`repl` does not resolve gates inline.** It reports the blocked status and prints the exact
   `jclaw approvals approve <gate>` command, but resolving still requires another shell.
-- **Streaming is Anthropic-only.** The OpenAI-compatible provider — and therefore OpenAI,
-  OpenRouter, and Ollama — uses the inherited default that degrades to a single chunk; its SSE
-  path is not implemented.
+- **Per-tool egress scoping.** `jclaw.egress-allowlist` / `egress-denylist` apply to every tool;
+  IronClaw scopes endpoints per extension. The lists would need to live on the descriptor.
 - **OpenRouter routing preferences are not exposed.** Provider ordering, fallbacks, and
   transforms are OpenRouter-specific body fields the adapter does not send.

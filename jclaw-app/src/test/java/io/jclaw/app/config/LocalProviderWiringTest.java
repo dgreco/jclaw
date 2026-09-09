@@ -45,7 +45,10 @@ class LocalProviderWiringTest {
                 "system",
                 List.of(),
                 "none",
-                "");
+                "",
+                List.of(),
+                List.of(),
+                List.of());
     }
 
     @Test

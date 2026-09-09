@@ -77,6 +77,13 @@ public class DoctorCommand implements Callable<Integer> {
         System.out.println("  interactive gates    " + (policy.interactive() ? "enabled" : "disabled"));
         System.out.println("  private networks     "
                 + (egress.privateNetworksAllowed() ? "ALLOWED" : "blocked"));
+        System.out.println("  denied capabilities  " + (policy.denied().isEmpty() ? "none"
+                : policy.denied().stream().map(id -> id.value()).sorted()
+                        .collect(java.util.stream.Collectors.joining(", "))));
+        System.out.println("  egress allowlist     " + (egress.allowlistedHosts().isEmpty()
+                ? "none (any public host)" : String.join(", ", egress.allowlistedHosts())));
+        System.out.println("  egress denylist      " + (egress.denylistedHosts().isEmpty()
+                ? "metadata hosts only" : String.join(", ", egress.denylistedHosts())));
 
         if (egress.privateNetworksAllowed()) {
             warnings.add("private networks are reachable by tools; this re-opens the SSRF surface "

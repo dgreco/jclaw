@@ -3,6 +3,7 @@ package io.jclaw.app.config;
 import io.jclaw.contracts.capability.ApprovalStore;
 import io.jclaw.contracts.capability.CapabilityHandler;
 import io.jclaw.contracts.capability.CapabilityHost;
+import io.jclaw.contracts.capability.CapabilityId;
 import io.jclaw.contracts.capability.CapabilityResultStore;
 import io.jclaw.contracts.capability.EffectClass;
 import io.jclaw.contracts.event.EventLog;
@@ -39,7 +40,7 @@ import io.jclaw.storage.lock.FileThreadLock;
 import io.jclaw.storage.mcp.JsonlMcpServerStore;
 import io.jclaw.storage.memory.JsonlMemoryStore;
 import io.jclaw.storage.skill.FilesystemSkillCatalog;
-import io.jclaw.storage.result.InMemoryCapabilityResultStore;
+import io.jclaw.storage.result.JsonlCapabilityResultStore;
 import io.jclaw.storage.routine.JsonlRoutineStore;
 import io.jclaw.storage.run.JsonlRunStore;
 import io.jclaw.storage.thread.JsonlThreadService;
@@ -93,9 +94,14 @@ public class JclawConfiguration {
     @Bean
     public EgressGuard egressGuard(JclawProperties properties) {
         // Private networks stay closed unless explicitly enabled: this is the SSRF boundary.
-        return properties.allowPrivateNetworks()
+        EgressGuard guard = properties.allowPrivateNetworks()
                 ? EgressGuard.allowingPrivateNetworks()
                 : EgressGuard.publicOnly();
+        // Lists from configuration can only narrow the posture: an allowlist restricts, a
+        // denylist adds, and neither touches the address-family or metadata checks.
+        return guard
+                .withAllowlist(Set.copyOf(JclawProperties.nonBlank(properties.egressAllowlist())))
+                .withDenylist(Set.copyOf(JclawProperties.nonBlank(properties.egressDenylist())));
     }
 
     @Bean
@@ -203,7 +209,7 @@ public class JclawConfiguration {
 
     @Bean
     public CapabilityPolicy capabilityPolicy(JclawProperties properties) {
-        return switch (properties.approvalMode()) {
+        CapabilityPolicy posture = switch (properties.approvalMode()) {
             case "read-only" -> CapabilityPolicy.unattended();
             case "trusted" -> CapabilityPolicy.trustedLocal();
             case "interactive" -> CapabilityPolicy.interactiveDefault();
@@ -211,6 +217,19 @@ public class JclawConfiguration {
                     "unknown jclaw.approval-mode '" + properties.approvalMode()
                             + "'; expected read-only, interactive, or trusted");
         };
+        // Hard denials from configuration. Validated at startup: a typo here must fail loudly
+        // rather than silently deny nothing.
+        Set<CapabilityId> denied = new java.util.LinkedHashSet<>();
+        for (String id : JclawProperties.nonBlank(properties.deniedCapabilities())) {
+            try {
+                denied.add(CapabilityId.of(id));
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException(
+                        "jclaw.denied-capabilities entry '" + id + "' is not a capability id "
+                                + "(expected e.g. builtin.shell)", e);
+            }
+        }
+        return posture.withDenied(denied);
     }
 
     @Bean
@@ -238,9 +257,13 @@ public class JclawConfiguration {
         return new JsonlApprovalStore(new JsonlFile(properties.approvalsPath()), clock);
     }
 
+    /**
+     * Durable, because result refs are evidence the runtime re-resolves before trusting an exit,
+     * and a run resumed in a second process completes with refs the first process minted.
+     */
     @Bean
-    public CapabilityResultStore capabilityResultStore(Clock clock) {
-        return new InMemoryCapabilityResultStore(clock);
+    public CapabilityResultStore capabilityResultStore(JclawProperties properties, Clock clock) {
+        return new JsonlCapabilityResultStore(new JsonlFile(properties.resultsPath()), clock);
     }
 
     /** Durable for the same reason: a parked run is resumed by a different process. */

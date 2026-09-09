@@ -89,14 +89,14 @@ At parity on the trust model; missing the multi-tenant, multi-process, and resou
 | Auth gates (`GateKind::Auth`, `BLOCKED_AUTH`) — run parks until the user authenticates | ✅ | 🟡 enum values exist; nothing raises an auth gate. A missing key is a failed turn, not a park |
 | Process gates (`WAITING_PROCESS`) — run waits on an external process / child | ✅ | 🟡 enum value exists; subagents run synchronously inside the parent's turn instead |
 | Budget reservation and process ownership (`ironclaw_resources`) | ✅ | 🟡 `Budget` (tokens, iterations, 10-min wall clock) per run; no reservation, no per-user or per-tenant accounting |
-| Deployment modes / runtime policy / safety context (`ironclaw_runtime_policy`) | ✅ | 🟡 three fixed `approval-mode` postures; the `denied` set in `CapabilityPolicy` is never populated from config |
+| Deployment modes / runtime policy / safety context (`ironclaw_runtime_policy`) | ✅ | 🟡 three fixed `approval-mode` postures plus `jclaw.denied-capabilities`, hard denials that hold in every mode and drop the tool from the published surface; no deployment modes or safety contexts |
 | Neutral process journal, lifecycle transitions, suspension, **process trees** (`ironclaw_processes`, `JournaledProcessSnapshot`) | ✅ | 🟡 `RunStore` records status + lease; no journal cursor, no suspension, no parent/child tree (subagent lineage lives only in the thread id) |
 | Turn admission and coordinator API (`ironclaw_turns`) | ✅ | ✅ `JclawRuntime.submit` |
 | `TurnScope` as tenant / agent / project / thread isolation key | ✅ | 🟡 `TurnScope.local(project, thread)` — no tenant, no agent id; single user assumed |
 | "One active run per canonical thread" enforced before side effects | ✅ | ✅ `ThreadLock` (OS file lock per canonical scope) taken in `JclawRuntime.submit`/`resume` before the inbound message is written; refusal is `THREAD_BUSY` with nothing recorded. Single-host, like the JSONL stores |
 | Capability manifest publishing (`ironclaw_capabilities`) | ✅ | 🟡 descriptors are compiled in; `visibleSurface` publishes them; no manifests |
 | Per-tool rate limiting | ✅ | ❌ |
-| Endpoint allowlisting per tool / extension | ✅ | 🟡 `EgressGuard` supports allow/deny lists in code, but nothing wires them from configuration; only the metadata-host denylist is active |
+| Endpoint allowlisting per tool / extension | ✅ | 🟡 `jclaw.egress-allowlist` / `egress-denylist` (exact hosts or `*.suffix`) bind into `EgressGuard` for every tool; not per tool or per extension |
 
 ---
 
@@ -169,7 +169,7 @@ At parity on the trust model; missing the multi-tenant, multi-process, and resou
 | Policy rules with severities (Block / Warn / Review / Sanitize) | ✅ | ❌ |
 | Leak detection on outbound requests and responses | ✅ | 🟡 redaction only; no scan of *outbound* model requests for secrets that arrived via a tool |
 | Credential injection at the host boundary (tools never see the raw secret) | ✅ | 🟡 tools cannot obtain secrets (no method exists) but there is also no way for a tool to *use* one — e.g. an authenticated `http_fetch` is impossible |
-| Endpoint allowlisting | ✅ | 🟡 supported by `EgressGuard`, not configurable |
+| Endpoint allowlisting | ✅ | ✅ `jclaw.egress-allowlist` / `egress-denylist`; the lists can only narrow — private-network and metadata denials still apply to allowed hosts |
 | Audit log of all tool executions | ✅ | ✅ `CapabilityInvoked` events |
 
 ---
@@ -195,7 +195,7 @@ At parity on the trust model; missing the multi-tenant, multi-process, and resou
 | Event log | ✅ `event_log` | ✅ `JsonlEventLog` |
 | Event store with read models / projections (`event_projections`) | ✅ | ❌ — `status` tails the raw log |
 | Event streams (live subscription; feeds SSE/WebSocket UIs) | ✅ `event_streams` | ❌ |
-| Durable capability results | ✅ | 🟡 `CapabilityResultStore` is in-memory (per-run); result refs do not survive the process |
+| Durable capability results | ✅ | ✅ `JsonlCapabilityResultStore` (`results.jsonl`); `JclawRuntime.validate` re-resolves every result ref in a `Completed` exit, so a run resumed in another process still proves its evidence |
 | Transcript with drafts vs finals | ✅ | 🟡 `appendAssistant(…, draft)` flag exists; nothing writes drafts |
 | Checkpoint schema versioning + migration | ✅ | 🟡 schema version recorded (v1); an unreadable version fails closed; no migration |
 | Thread history compaction / archival | ✅ *(unverified)* | ❌ — `transcript.jsonl` grows forever. The *model's view* of a thread is bounded by `ContextCompaction` (§5); the file itself is never compacted or archived |
@@ -222,7 +222,7 @@ At parity on the trust model; missing the multi-tenant, multi-process, and resou
 | Structured tracing / metrics substrate (`ironclaw_observability`, `trace_commons`) | ✅ | ❌ — SLF4J/logback with `--debug`/`--trace`; no OpenTelemetry, no metrics |
 | Latency harness (`harness/latency/`) | ✅ | ❌ |
 | Deployment assets (`deploy/`, `docker/`, `infra/runner/`) | ✅ | ❌ — one jar or one binary, no Dockerfile |
-| Test tooling (`test-tools/`, `tests/` integration suites) | ✅ | 🟡 167 unit + integration tests, including a child-JVM test for cross-process thread locking; no end-to-end suite against a live provider |
+| Test tooling (`test-tools/`, `tests/` integration suites) | ✅ | 🟡 182 unit + integration tests, including a child-JVM test for cross-process thread locking; no end-to-end suite against a live provider |
 | `doctor`-style preflight | *(unverified)* | ➕ `jclaw doctor` |
 
 ---
@@ -235,7 +235,7 @@ At parity on the trust model; missing the multi-tenant, multi-process, and resou
 | Anthropic native (adaptive thinking, native tool shape, streaming) | ✅ *(unverified which SDK)* | ✅ official SDK |
 | OpenAI, OpenRouter, Ollama, local OpenAI-compatible servers | ✅ *(set unverified)* | ✅ + ➕ `local` with base-URL requirement |
 | Failover chain | *(unverified)* | ➕ `failover` |
-| Streaming for OpenAI-compatible providers | ✅ | ❌ — SSE path not implemented; degrades to one chunk |
+| Streaming for OpenAI-compatible providers | ✅ | ✅ SSE with fragment-assembled tool calls and the usage trailer; `failover` streams too and will not fail over once prose has been shown |
 | OpenRouter routing preferences (provider order, fallbacks, transforms) | *(unverified)* | ❌ |
 | Per-run model profile selection | ✅ | 🟡 one model per process; recorded per run for resume fidelity |
 | Multimodal input | ✅ | ❌ |
@@ -253,6 +253,7 @@ Listed so the comparison is not read as one-directional:
 - Native image with captured SDK metadata, verified including subprocess spawning.
 - REPL slash commands and dual-mode arrow-key bindings.
 - `doctor` as a CI preflight; `recover --dry-run` explaining every decision.
+- A failover chain that knows not to retry a stream once the user has seen output from it.
 - Thread exclusivity as an OS file lock that dies with its process — no TTL, no reconciliation, proven with a second JVM in the test suite.
 - Context compaction that is pure, idempotent, and structurally safe (never opens a request with a tool result or a bare assistant turn; never splits a tool call from its results; reports the running total omitted).
 - Vector ranking that cannot mis-rank across embedding models: every stored vector carries its model id and only same-space vectors are compared.
@@ -261,15 +262,15 @@ Listed so the comparison is not read as one-directional:
 
 ## 16. Suggested order if closing gaps
 
-Ranked by leverage relative to effort, given the existing seams. The first three items of the
-original list were closed in September 2026: the one-active-run-per-thread lock (§4), the context
-compaction policy (§5), and vector ranking as a third list into `RrfFusion` (§8). What remains:
+Ranked by leverage relative to effort, given the existing seams. Closed in September 2026, in
+order: the one-active-run-per-thread lock (§4), the context compaction policy (§5), vector ranking
+as a third list into `RrfFusion` (§8), streaming for the OpenAI-compatible adapter (§14), the
+configurable denied set and egress lists (§4, §9), and the durable `CapabilityResultStore` (§11).
+What remains:
 
-1. **Streaming for the OpenAI-compatible adapter** (§14).
-2. **Configurable `denied` set and egress allow/deny lists** (§4, §9) — the code paths exist; only binding from `JclawProperties` is missing.
-3. **Durable `CapabilityResultStore`** (§11) — makes result refs survive a resume.
-4. **A `TurnRunScheduler`** over the existing lease primitives (§6) — the enabling step for a WebUI or channel adapters.
-5. **Auth gates** (§4, §10) — the enum and status already exist.
-6. **Prompt-injection heuristics and sanitisation** on tool results (§9).
-7. **Context summarisation as an effect** (§5) — `ContextCompaction` truncates; a summarising step would feed its output back as ordinary history.
-8. **A sandboxed process lane** (§3) — the largest gap, and the one that changes the threat model most.
+1. **A `TurnRunScheduler`** over the existing lease primitives (§6) — the enabling step for a WebUI or channel adapters.
+2. **Auth gates** (§4, §10) — the enum and status already exist.
+3. **Prompt-injection heuristics and sanitisation** on tool results (§9).
+4. **Context summarisation as an effect** (§5) — `ContextCompaction` truncates; a summarising step would feed its output back as ordinary history.
+5. **Per-tool egress and rate limits** (§4) — the global lists exist; per-capability scoping needs the descriptor to carry them.
+6. **A sandboxed process lane** (§3) — the largest gap, and the one that changes the threat model most.

@@ -31,6 +31,12 @@ import java.util.List;
  *                             retrieval. Credentials come from the same environment variables as
  *                             the chat providers
  * @param embeddingModel       embedding model id; blank picks the provider's default
+ * @param deniedCapabilities   capability ids the kernel refuses outright in every mode, e.g.
+ *                             {@code builtin.shell}; they also disappear from the surface the
+ *                             model sees
+ * @param egressAllowlist      when non-empty, tools may only reach these hosts (exact or
+ *                             {@code *.suffix}); private-network and metadata denials still apply
+ * @param egressDenylist       hosts tools may never reach, on top of the built-in metadata hosts
  */
 @ConfigurationProperties(prefix = "jclaw")
 public record JclawProperties(
@@ -98,7 +104,13 @@ public record JclawProperties(
 
         @DefaultValue("none") String embeddingProvider,
 
-        @DefaultValue("") String embeddingModel) {
+        @DefaultValue("") String embeddingModel,
+
+        @DefaultValue("") List<String> deniedCapabilities,
+
+        @DefaultValue("") List<String> egressAllowlist,
+
+        @DefaultValue("") List<String> egressDenylist) {
 
     /**
      * Properties with every default applied, for programmatic construction.
@@ -128,7 +140,21 @@ public record JclawProperties(
                 "You are jclaw, a helpful agent operating inside a bounded workspace.",
                 List.of(),
                 "none",
-                "");
+                "",
+                List.of(),
+                List.of(),
+                List.of());
+    }
+
+    /**
+     * A list property with blanks removed.
+     *
+     * <p>Spring binds an absent list property to a single blank element rather than an empty
+     * list, so every list here has to be read through this or a default would deny the
+     * capability named "".
+     */
+    public static List<String> nonBlank(List<String> values) {
+        return values.stream().map(String::trim).filter(value -> !value.isEmpty()).toList();
     }
 
     /**
@@ -186,6 +212,11 @@ public record JclawProperties(
     /** Durable memories. */
     public Path memoryPath() {
         return stateDir.resolve("memory.jsonl");
+    }
+
+    /** Full capability result payloads, the evidence behind result refs. */
+    public Path resultsPath() {
+        return stateDir.resolve("results.jsonl");
     }
 
     /** Directory holding skill packages, one subdirectory each. */

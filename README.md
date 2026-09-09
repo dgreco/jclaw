@@ -58,7 +58,7 @@ jclaw reimplements the **architecture** of IronClaw — the seven-layer ladder, 
 
 Everything is durable JSONL under `~/.jclaw`: a run can park in one process, be approved in a second, and resume in a third. There is no server and no database.
 
-**Status.** Milestones M0–M7 plus subagents, MCP, streaming, and lease-based crash recovery are complete. 167 tests pass across the modules, including 13 machine-checked architecture rules (ArchUnit). Both the uber jar and the native image are verified end to end, including subprocess spawning for MCP servers and shell tools.
+**Status.** Milestones M0–M7 plus subagents, MCP, streaming, and lease-based crash recovery are complete. 182 tests pass across the modules, including 13 machine-checked architecture rules (ArchUnit). Both the uber jar and the native image are verified end to end, including subprocess spawning for MCP servers and shell tools.
 
 ---
 
@@ -150,7 +150,7 @@ mvn test -Dtest='ApprovalResumeIntegrationTest#resumeWithoutDecisionParksAgain' 
 ./scripts/byte-verify.sh install && ./scripts/byte-verify.sh validate   # manifest drift check
 ```
 
-Test totals by module (verified on this checkout): contracts 8 · domain 83 · kernel 9 · providers 19 · storage 9 · app 39 = **167, 0 failures**. `DependencyLawTest` in `jclaw-app` machine-checks the layer ladder with ArchUnit; the rules were confirmed to fire by planting deliberate violations.
+Test totals by module (verified on this checkout): contracts 8 · domain 83 · kernel 14 · providers 23 · storage 11 · app 43 = **182, 0 failures**. `DependencyLawTest` in `jclaw-app` machine-checks the layer ladder with ArchUnit; the rules were confirmed to fire by planting deliberate violations.
 
 ### Continuous integration
 
@@ -214,6 +214,9 @@ jclaw:
 | `local-base-url` | *(blank)* | **Required for `local`**: any OpenAI-compatible server — `http://localhost:1234/v1` (LM Studio), `http://localhost:8000/v1` (vLLM), llama.cpp server, LocalAI. When set it also joins the `failover` chain. |
 | `mock-script` | *(empty)* | Scripted turns for `mock`, in order: `text:<reply>` or `tool:<capability>:<k=v,k=v>`. Lets the whole CLI, including tool calls and the approval flow, run with no key and no network. |
 | `embedding-provider` | `none` | `none` · `openai` · `openrouter` · `ollama` · `local` — adds vector similarity to memory retrieval (see [Durable memory](#durable-memory-memory)). Credentials come from the same environment variables as the chat providers. |
+| `denied-capabilities` | *(empty)* | Capability ids refused outright in every approval mode and hidden from the model, e.g. `builtin.shell,builtin.http_fetch`. A malformed id fails startup. |
+| `egress-allowlist` | *(empty)* | When set, tools may only reach these hosts: exact names or `*.suffix` wildcards. Private-network and cloud-metadata denials still apply to allowed hosts; the list can only narrow. |
+| `egress-denylist` | *(empty)* | Hosts tools may never reach, on top of the built-in metadata hosts. Wins over the allowlist. |
 | `embedding-model` | *(provider default)* | `text-embedding-3-small` (openai), `openai/text-embedding-3-small` (openrouter), `nomic-embed-text` (ollama); **required for `local`**. Vectors carry their model id, so switching models means `jclaw memory reindex`. |
 
 Logging is controlled through standard Spring properties (`--logging.level.io.jclaw=TRACE`) or the `--debug` / `--trace` shortcuts described under [Tracing a turn](#tracing-a-turn).
@@ -466,7 +469,7 @@ The model can call `builtin.spawn_subagent` with a `prompt` (and optional `descr
 
 ### Streaming
 
-`run --stream`, `repl --stream`, and `/stream on` print model prose as it arrives. Streaming is presentation only: the machine receives the same complete response either way, so a streamed run and a buffered one produce identical decisions and transcripts. True incremental output is implemented for the Anthropic provider; OpenAI-compatible providers currently degrade to a single chunk.
+`run --stream`, `repl --stream`, and `/stream on` print model prose as it arrives. Streaming is presentation only: the machine receives the same complete response either way, so a streamed run and a buffered one produce identical decisions and transcripts. True incremental output is implemented for the Anthropic provider (SDK event stream) and for every OpenAI-compatible provider (server-sent events: OpenAI, OpenRouter, Ollama, `local`). Tool-call arguments arrive as JSON fragments, so they are assembled and delivered whole in the final response rather than streamed. The `failover` chain streams through the first provider that accepts the model and will not fail over once prose has been shown, since a second provider would start a second answer on top of the first.
 
 ### Crash recovery: `recover`
 

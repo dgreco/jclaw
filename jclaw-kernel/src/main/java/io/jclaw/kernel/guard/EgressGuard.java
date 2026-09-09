@@ -78,8 +78,39 @@ public final class EgressGuard {
         return new EgressGuard(true, Set.of(), Set.of());
     }
 
+    /**
+     * Restricts egress to these hosts on top of the current posture. Entries are exact hosts or
+     * {@code *.suffix} wildcards, matched case-insensitively; the private-network and metadata
+     * checks still apply to whatever is allowed, so an allowlist can only narrow, never widen.
+     */
+    public EgressGuard withAllowlist(Set<String> hosts) {
+        return new EgressGuard(allowPrivateNetworks, normalize(hosts), hostDenylist);
+    }
+
     public EgressGuard withDenylist(Set<String> hosts) {
-        return new EgressGuard(allowPrivateNetworks, hostAllowlist, hosts);
+        return new EgressGuard(allowPrivateNetworks, hostAllowlist, normalize(hosts));
+    }
+
+    private static Set<String> normalize(Set<String> hosts) {
+        Objects.requireNonNull(hosts, "hosts");
+        return hosts.stream()
+                .map(host -> host.trim().toLowerCase(Locale.ROOT))
+                .filter(host -> !host.isEmpty())
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+    }
+
+    /** Exact match, or a {@code *.suffix} entry matching any host below that suffix. */
+    private static boolean matches(Set<String> entries, String host) {
+        if (entries.contains(host)) {
+            return true;
+        }
+        for (String entry : entries) {
+            if (entry.startsWith("*.") && host.endsWith(entry.substring(1))
+                    && host.length() > entry.length() - 1) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -111,10 +142,10 @@ public final class EgressGuard {
         }
         String normalizedHost = host.toLowerCase(Locale.ROOT);
 
-        if (BLOCKED_HOSTS.contains(normalizedHost) || hostDenylist.contains(normalizedHost)) {
+        if (BLOCKED_HOSTS.contains(normalizedHost) || matches(hostDenylist, normalizedHost)) {
             return Result.err("host_denied");
         }
-        if (!hostAllowlist.isEmpty() && !hostAllowlist.contains(normalizedHost)) {
+        if (!hostAllowlist.isEmpty() && !matches(hostAllowlist, normalizedHost)) {
             return Result.err("host_not_in_allowlist");
         }
 
@@ -185,6 +216,11 @@ public final class EgressGuard {
     /** Hosts explicitly permitted, empty when the guard is not in allowlist mode. */
     public List<String> allowlistedHosts() {
         return List.copyOf(hostAllowlist);
+    }
+
+    /** Hosts explicitly denied beyond the built-in metadata endpoints. */
+    public List<String> denylistedHosts() {
+        return List.copyOf(hostDenylist);
     }
 
     public boolean privateNetworksAllowed() {
