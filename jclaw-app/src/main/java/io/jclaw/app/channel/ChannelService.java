@@ -9,7 +9,10 @@ import io.jclaw.contracts.channel.ChannelBindingStore;
 import io.jclaw.contracts.channel.ReplyTarget;
 import io.jclaw.contracts.event.EventLog;
 import io.jclaw.contracts.event.JclawEvent;
+import io.jclaw.contracts.inbound.InboundReviewStore;
 import io.jclaw.contracts.model.ChatMessage;
+import io.jclaw.domain.safety.InboundPolicy;
+import io.jclaw.domain.safety.InboundScreening;
 import io.jclaw.contracts.secret.SecretVault;
 import io.jclaw.contracts.thread.ThreadService;
 import io.jclaw.contracts.turn.RunStore;
@@ -61,10 +64,14 @@ public final class ChannelService {
     private final SecretVault vault;
     private final EgressGuard egress;
 
+    private InboundReviewStore review;
+    private InboundPolicy policy;
+
     public ChannelService(
             java.util.List<ChannelAdapter> adapters, Map<String, Credentials> credentials,
             ChannelBindingStore bindings, JclawRuntime runtime, ThreadService threads, RunStore runs,
-            SecretVault vault, EgressGuard egress, EventLog events) {
+            SecretVault vault, EgressGuard egress, EventLog events,
+            InboundReviewStore review, InboundPolicy policy) {
 
         Objects.requireNonNull(adapters, "adapters").forEach(adapter -> this.adapters.put(adapter.id(), adapter));
         this.credentials = Map.copyOf(Objects.requireNonNull(credentials, "credentials"));
@@ -74,6 +81,8 @@ public final class ChannelService {
         this.runs = Objects.requireNonNull(runs, "runs");
         this.vault = Objects.requireNonNull(vault, "vault");
         this.egress = Objects.requireNonNull(egress, "egress");
+        this.review = Objects.requireNonNull(review, "review");
+        this.policy = Objects.requireNonNull(policy, "policy");
         if (events instanceof ObservedEventLog observed) {
             observed.addListener(this::onEvent);
         } else if (!this.adapters.isEmpty()) {
@@ -98,6 +107,8 @@ public final class ChannelService {
         record Ignored(String why) implements Handled { }
         record Handshake(String body) implements Handled { }
         record Refused(String reason) implements Handled { }
+        /** Screened as suspicious and queued for a person; no turn started. */
+        record Held(String id) implements Handled { }
     }
 
     /**
@@ -133,10 +144,34 @@ public final class ChannelService {
     private Handled accept(ChannelAdapter.Inbound inbound) {
         ThreadId thread = new ThreadId(inbound.replyTo().threadName());
         bindings.bind(thread, inbound.replyTo());
-        var run = runtime.enqueue(thread, ChatMessage.user(inbound.text()));
-        log.debug("channels: {} enqueued {} on {} for {}", inbound.replyTo().adapter(),
-                run.value(), thread.value(), inbound.author());
-        return new Handled.Accepted(run.value(), thread.value());
+
+        // A platform message is written by whoever is in the channel, which is the definition of
+        // foreign. This is the boundary that knows that, so this is where it is screened — the
+        // runtime cannot tell a stranger's words from the operator's own.
+        String source = inbound.replyTo().adapter();
+        var screened = InboundScreening.screen(inbound.text(), source, policy);
+        if (!screened.assessment().clean()) {
+            log.debug("channels: {} message scored {} ({})",
+                    source, screened.severity(), screened.assessment().rules());
+        }
+        return switch (screened.decision()) {
+            case REFUSED -> {
+                log.debug("channels: {} message refused by inbound policy", source);
+                yield new Handled.Refused("refused by inbound policy");
+            }
+            case HELD -> {
+                var held = review.hold(source, runtime.scopeFor(thread), thread, inbound.text(),
+                        screened.severity(), screened.assessment().rules());
+                log.debug("channels: {} message held for review as {}", source, held.id());
+                yield new Handled.Held(held.id());
+            }
+            case ALLOWED, FENCED -> {
+                var run = runtime.enqueue(thread, ChatMessage.user(screened.text()));
+                log.debug("channels: {} enqueued {} on {} for {}", source,
+                        run.value(), thread.value(), inbound.author());
+                yield new Handled.Accepted(run.value(), thread.value());
+            }
+        };
     }
 
     /**

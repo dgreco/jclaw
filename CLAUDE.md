@@ -23,7 +23,7 @@ jclaw is a Java/Spring Boot reimplementation of the **architecture** of
 untrusted-`LoopExit` trust model, and the `CapabilityHost` authority boundary are faithful; the
 feature surface is a fraction of IronClaw's. See **Not built yet** for the honest list.
 
-402 tests pass across 9 modules, including 15 machine-checked architecture rules.
+416 tests pass across 9 modules, including 15 machine-checked architecture rules.
 
 ## Commands
 
@@ -66,6 +66,7 @@ The `native` profile lives in `jclaw-app/pom.xml`. The Boot parent contributes o
 | `mcp add\|list\|remove\|toggle\|test\|refresh` | external MCP tool servers over stdio or streamable HTTP; tools, resources, and prompts; started on first use from a cached surface |
 | `recover` | reconcile runs whose worker died |
 | `retain [--dry-run]` | drop old rows of finished runs from results, events, checkpoints |
+| `inbound list\|approve\|discard` | foreign messages the inbound policy held for review; approving enqueues the message fenced, discarding starts nothing |
 | `secrets set\|list\|remove` | encrypted vault of credentials tools use by `{{secret:NAME}}` reference, bound to one capability and either a host list or `--subprocess` (staged into a child's environment, never an argument); one vault per tenant |
 | `tools` | capability surface with effect/trust/unattended |
 | `status [--run id [--spans]]` | recent activity from the event log, or one run's projection, or its spans. Not `--trace`: that name is claimed process-wide for verbosity and never reaches picocli |
@@ -509,12 +510,13 @@ architecture and most runtime mechanisms are equivalent, the breadth is not. PAR
   go stale until `mcp refresh`; dynamic client registration; and host-mediated per-host egress
   for a stdio server, whose network is all-or-nothing unless containerised. The interactive
   authorization-code flow is deliberate — an agent has nobody at a keyboard to consent.
-- **Inbound content is never scanned** — `InjectionHeuristics` runs in exactly one place,
-  `DefaultCapabilityHost.succeed`, on capability *output*. A user's message, a Slack message
-  routed by a channel adapter, and a webhook body all reach the prompt unexamined, and there is
-  no review queue. This was defensible while the only way in was a local terminal; channel
-  adapters and login are what made it reachable by strangers, so it went up the list rather than
-  down when they landed.
+- **Inbound screening breadth** — platform messages and webhook bodies are screened by
+  `InboundScreening` under `jclaw.inbound-policy`, fenced by default, and `review` holds a `HIGH`
+  finding in a queue worked with `jclaw inbound`. What is not screened, by design, is the
+  operator's own input and a signed-in user's own turn: they instruct what they own. What is
+  missing is breadth of signal — the heuristics are the same regex set the capability path uses,
+  there is no per-source policy (one setting covers every adapter and every webhook), and a held
+  message has no expiry, so an unattended queue grows.
 - **Smaller items** — OpenRouter routing preferences are not sent; embedding providers beyond
   the OpenAI-compatible shape (Voyage, Cohere) need their own adapter, so vector memory is
   unavailable to a deployment standardised on either; PDFs and other documents are refused as

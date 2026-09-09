@@ -68,6 +68,7 @@ public class ServeCommand implements Callable<Integer> {
     private final io.jclaw.app.identity.LoginProvider oidcLogin;
     private final io.jclaw.contracts.secret.SecretVault vault;
     private final io.jclaw.storage.projection.RunProjectionCache projections;
+    private final io.jclaw.contracts.inbound.InboundReviewStore inboundReview;
     private final Clock clock;
 
     @Option(names = "--host", description = "Interface to bind. Default 127.0.0.1.")
@@ -93,12 +94,14 @@ public class ServeCommand implements Callable<Integer> {
             io.jclaw.contracts.identity.SessionStore sessionStore,
             io.jclaw.app.identity.LoginProvider oidcLogin,
             io.jclaw.contracts.secret.SecretVault vault,
-            io.jclaw.storage.projection.RunProjectionCache projections, Clock clock) {
+            io.jclaw.storage.projection.RunProjectionCache projections,
+            io.jclaw.contracts.inbound.InboundReviewStore inboundReview, Clock clock) {
         this.channelService = channelService;
         this.sessionStore = sessionStore;
         this.oidcLogin = oidcLogin;
         this.vault = vault;
         this.projections = projections;
+        this.inboundReview = inboundReview;
         this.telemetry = telemetry;
         this.routineStore = routineStore;
         this.properties = properties;
@@ -156,6 +159,8 @@ public class ServeCommand implements Callable<Integer> {
                 () -> leaseOidcSecret(), properties.oidcRedirectUri());
         server.withChannels(channelService);
         server.withProjectionCache(projections);
+        server.withInboundScreening(
+                io.jclaw.domain.safety.InboundPolicy.parse(properties.inboundPolicy()), inboundReview);
         server.start(host, port);
         boolean anyAuth = (properties.serveToken() != null && !properties.serveToken().isBlank())
                 || !properties.serveUsers().isEmpty();

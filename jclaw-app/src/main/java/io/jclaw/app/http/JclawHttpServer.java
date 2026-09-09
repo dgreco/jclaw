@@ -86,6 +86,9 @@ public final class JclawHttpServer {
     private final EventLog events;
     private io.jclaw.storage.projection.RunProjectionCache projections =
             io.jclaw.storage.projection.RunProjectionCache.none();
+    private io.jclaw.domain.safety.InboundPolicy inboundPolicy =
+            io.jclaw.domain.safety.InboundPolicy.SANITIZE;
+    private io.jclaw.contracts.inbound.InboundReviewStore inboundReview;
     private final ThreadService threads;
     private final JsonlApprovalStore approvals;
     private final Clock clock;
@@ -193,6 +196,19 @@ public final class JclawHttpServer {
      */
     public void withProjectionCache(io.jclaw.storage.projection.RunProjectionCache cache) {
         this.projections = Objects.requireNonNull(cache, "cache");
+    }
+
+    /**
+     * How a webhook body is screened, and where a held one goes.
+     *
+     * <p>Optional so a server wired without it still answers; the default fences, which is the
+     * behaviour a deployment wants unless it has said otherwise.
+     */
+    public void withInboundScreening(
+            io.jclaw.domain.safety.InboundPolicy policy,
+            io.jclaw.contracts.inbound.InboundReviewStore review) {
+        this.inboundPolicy = Objects.requireNonNull(policy, "policy");
+        this.inboundReview = Objects.requireNonNull(review, "review");
     }
 
     /** Serves {@code POST /channels/{adapter}}. Optional: without it the route is a 404. */
@@ -607,7 +623,26 @@ public final class JclawHttpServer {
             body = in.readNBytes(MAX_WEBHOOK_BODY + 1);
         }
         boolean truncated = body.length > MAX_WEBHOOK_BODY;
-        String payload = new String(body, 0, Math.min(body.length, MAX_WEBHOOK_BODY), StandardCharsets.UTF_8);
+        String raw = new String(body, 0, Math.min(body.length, MAX_WEBHOOK_BODY), StandardCharsets.UTF_8);
+
+        // A webhook body is written by whatever posted it. The bearer secret proves the sender
+        // was told the URL, not that the payload is trustworthy — a CI system relays whatever a
+        // commit message or a pull-request title happened to contain.
+        var screened = io.jclaw.domain.safety.InboundScreening.screen(
+                raw, "hooks/" + name, inboundPolicy);
+        if (screened.decision() == io.jclaw.domain.safety.InboundScreening.Decision.REFUSED) {
+            send(exchange, 422, Map.of("error", "refused by inbound policy",
+                    "severity", screened.severity()));
+            return;
+        }
+        if (screened.decision() == io.jclaw.domain.safety.InboundScreening.Decision.HELD) {
+            var heldRecord = inboundReview.hold("hooks/" + name,
+                    runtime.scopeFor(routine.get().thread()), routine.get().thread(), raw,
+                    screened.severity(), screened.assessment().rules());
+            send(exchange, 202, Map.of("held", heldRecord.id(), "status", "awaiting review"));
+            return;
+        }
+        String payload = screened.text();
         String prompt = routine.get().prompt() + "\n\nWebhook payload"
                 + (truncated ? " (truncated to " + MAX_WEBHOOK_BODY + " bytes)" : "") + ":\n```\n"
                 + payload + "\n```";
@@ -681,6 +716,12 @@ public final class JclawHttpServer {
                     send(exchange, 200, Map.of("ignored", ignored.why()));
             case io.jclaw.app.channel.ChannelService.Handled.Refused refused ->
                     send(exchange, 401, Map.of("error", refused.reason()));
+            // 202: the platform's delivery was accepted and is not its problem any more. A
+            // person has to look at it, which is not a failure the sender can act on, and
+            // telling Slack "error" would have it retry a message deliberately held back.
+            case io.jclaw.app.channel.ChannelService.Handled.Held held ->
+                    send(exchange, 202, Map.of("held", held.id(),
+                            "status", "awaiting review"));
         }
     }
 

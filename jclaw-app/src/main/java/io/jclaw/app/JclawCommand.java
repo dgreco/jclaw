@@ -13,6 +13,7 @@ import io.jclaw.app.cli.ReplCommand;
 import io.jclaw.app.cli.ResumeCommand;
 import io.jclaw.app.cli.RoutinesCommand;
 import io.jclaw.app.cli.RunCommand;
+import io.jclaw.app.cli.InboundCommand;
 import io.jclaw.app.cli.SecretsCommand;
 import io.jclaw.app.cli.ServeCommand;
 import io.jclaw.app.cli.SubmitCommand;
@@ -103,6 +104,7 @@ import picocli.CommandLine.Command;
                 RecoverCommand.class,
                 RetainCommand.class,
                 SecretsCommand.class,
+                InboundCommand.class,
                 WorkerCommand.class,
                 ServeCommand.class,
                 DoctorCommand.class

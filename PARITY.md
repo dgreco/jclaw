@@ -2,7 +2,7 @@
 
 An honest enumeration of what [IronClaw](https://github.com/nearai/ironclaw) (internally "Reborn") has that jclaw does not, and of what jclaw now has. jclaw is roughly 32k lines of Java (plus 13k of tests) against IronClaw's ~1.4M lines of Rust across ~63 crates. The **architecture** is equivalent — layer ladder, turn/run lifecycle, untrusted `LoopExit`, single `CapabilityHost` authority boundary, checkpoint-kind–driven recovery — and, after the September 2026 parity work, most of the runtime *mechanisms* are present in some form. What remains missing is breadth, not mechanism: section 16 records what each closed item delivered, and section 17 is the ranked list of what is left. This file is the list, organised by IronClaw's own crate families so a gap can be traced to the crate that fills it upstream.
 
-Sources: IronClaw's `README.md`, `crates/Architecture.md`, and the `crates/` listing as of September 2026; jclaw's code on this checkout (402 tests, 0 failures). Where the upstream doc names a concept and jclaw has an equivalent under a different name, the mapping is given. Where the gap is uncertain it is marked *(unverified)*.
+Sources: IronClaw's `README.md`, `crates/Architecture.md`, and the `crates/` listing as of September 2026; jclaw's code on this checkout (416 tests, 0 failures). Where the upstream doc names a concept and jclaw has an equivalent under a different name, the mapping is given. Where the gap is uncertain it is marked *(unverified)*.
 
 Legend: ✅ at parity · 🟡 partial · ❌ missing · ➕ jclaw-only
 
@@ -359,12 +359,17 @@ the list is complete, not so someone closes them without re-reading the reasonin
    then resumes and writes, two runs can still interleave one transcript. Closing that needs a
    fence token threaded through every durable write. What exists is a real exclusion between live
    hosts, which is more than the nothing that was there before, and less than a fenced lock.
-2. **Inbound content is never scanned.** `InjectionHeuristics` runs in exactly one place —
-   `DefaultCapabilityHost.succeed`, on capability *output*. A user's message, a Slack message
-   routed by a channel adapter, and a webhook body all reach the prompt unexamined, and there is
-   no review queue to hold a suspicious one. This was a defensible gap while the only way in was
-   a local terminal. Sections 16.1 and 16.2 are what made it reachable by strangers, so closing
-   them moved this up the list rather than down it.
+2. ~~**Inbound content is never scanned.**~~ — closed: a platform message and a webhook body
+   are screened by `InboundScreening` at the boundary that knows they are foreign, under
+   `jclaw.inbound-policy` (`off`/`warn`/`sanitize`/`review`/`block`, default `sanitize`). Foreign
+   text is fenced whether or not anything was found — framing only the suspicious ones would
+   teach the model that unframed foreign text is trustworthy — and under `review` a `HIGH`
+   finding is held in a queue (`jclaw inbound list/approve/discard`) having started no run, no
+   thread lock, and no transcript entry. Approving enqueues it *fenced*: a reviewer saying a
+   message is worth answering is not the same as promoting a stranger to principal.
+   **Deliberately not scanned:** the operator at a terminal and a signed-in user talking to their
+   own agent. They are instructing what they own, "ignore what I said before" is ordinary
+   phrasing, and a check that fires on ordinary use is a check people turn off.
 3. **Secret rotation and key custody.** Every tenant's vault shares one AES key, there is no
    rotation, no expiry, and no re-encryption path, so a compromised key is a full re-provision.
    The `secret-leak-scan` hook matches exact substrings of eight characters or more, which means a

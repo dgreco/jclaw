@@ -210,6 +210,8 @@ public record JclawProperties(
 
         @DefaultValue("sanitize") String injectionPolicy,
 
+        @DefaultValue("sanitize") String inboundPolicy,
+
         @DefaultValue("true") boolean contextSummarise,
 
         @DefaultValue("1024") int contextSummaryMaxTokens,
@@ -400,6 +402,7 @@ public record JclawProperties(
                 List.of(),
                 List.of(),
                 List.of(),
+                "sanitize",
                 "sanitize",
                 true,
                 1024,
@@ -602,6 +605,11 @@ public record JclawProperties(
     /** Where a watch routine's last-seen tree fingerprint is kept, so a watch survives a restart. */
     public Path watchStatePath() {
         return stateDir.resolve("watches.jsonl");
+    }
+
+    /** Where inbound messages held for review are kept. */
+    public Path inboundReviewPath() {
+        return stateDir.resolve("inbound.jsonl");
     }
 
     public Path routinesPath() {

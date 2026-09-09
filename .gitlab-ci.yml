@@ -117,6 +117,9 @@ native-image:
     - $JC extensions sign $SMOKE/pkg --key $SMOKE/keys/publisher.key
     - $JC extensions install $SMOKE/pkg --jclaw.trusted-publishers.ci="$(cat $SMOKE/keys/publisher.pub)"
     - $JC extensions list | grep -q VERIFIED
+    # Inbound screening: the review queue binds and the CLI works it. A foreign message that
+    # started a turn anyway would be the failure worth catching.
+    - $JC inbound list | grep -q 'nothing held'
     # Secret staging: a credential that reaches a child process's environment and never the
     # command line. AES-GCM is already covered above; what is new here is the binding kind and
     # the picocli flag, both of which AOT could plausibly have dropped.

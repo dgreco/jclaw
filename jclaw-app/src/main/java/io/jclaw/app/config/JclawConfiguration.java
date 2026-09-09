@@ -407,6 +407,19 @@ public class JclawConfiguration {
                 routineStore, jclawRuntime, workspaceGuard, watchStateFile, clock);
     }
 
+    /**
+     * Foreign messages held for a person, under {@code inbound-policy: review}.
+     *
+     * <p>Always wired, even when the policy never holds anything: a store that appears only under
+     * one setting is a store nobody notices is missing until they change the setting.
+     */
+    @Bean
+    public io.jclaw.contracts.inbound.InboundReviewStore inboundReviewStore(
+            JclawProperties properties, StorageBackend backend, Clock clock) {
+        return new io.jclaw.storage.inbound.JsonlInboundReviewStore(
+                backend.open("inbound", properties.inboundReviewPath()), clock);
+    }
+
     /** The messaging channels jclaw can be talked to from. Empty unless configured. */
     @Bean
     public java.util.List<io.jclaw.contracts.channel.ChannelAdapter> channelAdapters(Clock clock) {
@@ -432,7 +445,8 @@ public class JclawConfiguration {
             JclawProperties properties,
             io.jclaw.contracts.channel.ChannelBindingStore channelBindingStore,
             io.jclaw.app.runtime.JclawRuntime runtime, ThreadService threadService, RunStore runStore,
-            SecretVault secretVault, EgressGuard egressGuard, EventLog eventLog) {
+            SecretVault secretVault, EgressGuard egressGuard, EventLog eventLog,
+            io.jclaw.contracts.inbound.InboundReviewStore inboundReviewStore) {
 
         java.util.Map<String, io.jclaw.app.channel.ChannelService.Credentials> credentials =
                 new java.util.LinkedHashMap<>();
@@ -445,7 +459,8 @@ public class JclawConfiguration {
                     secrets.verifySecret(), secrets.token()));
         });
         return new io.jclaw.app.channel.ChannelService(channelAdapters, credentials, channelBindingStore,
-                runtime, threadService, runStore, secretVault, egressGuard, eventLog);
+                runtime, threadService, runStore, secretVault, egressGuard, eventLog,
+                inboundReviewStore, io.jclaw.domain.safety.InboundPolicy.parse(properties.inboundPolicy()));
     }
 
     /** What each MCP server offered last time, so the next start need not ask again. */
