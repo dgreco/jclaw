@@ -62,6 +62,7 @@ public class ServeCommand implements Callable<Integer> {
     private final RetentionService retention;
     private final io.jclaw.app.observability.Telemetry telemetry;
     private final io.jclaw.contracts.routine.RoutineStore routineStore;
+    private final io.jclaw.app.channel.ChannelService channelService;
     private final Clock clock;
 
     @Option(names = "--host", description = "Interface to bind. Default 127.0.0.1.")
@@ -81,7 +82,9 @@ public class ServeCommand implements Callable<Integer> {
             ThreadService threads, JsonlApprovalStore approvals, TurnRunScheduler scheduler,
             RoutineRunner routines, RecoveryService recovery, RetentionService retention,
             io.jclaw.app.observability.Telemetry telemetry,
-            io.jclaw.contracts.routine.RoutineStore routineStore, Clock clock) {
+            io.jclaw.contracts.routine.RoutineStore routineStore,
+            io.jclaw.app.channel.ChannelService channelService, Clock clock) {
+        this.channelService = channelService;
         this.telemetry = telemetry;
         this.routineStore = routineStore;
         this.properties = properties;
@@ -106,6 +109,7 @@ public class ServeCommand implements Callable<Integer> {
         JclawHttpServer server = new JclawHttpServer(
                 runtime, runs, events, threads, approvals, clock, Optional.ofNullable(properties.serveToken()),
                 properties.serveUsers(), properties.model(), telemetry, routineStore);
+        server.withChannels(channelService);
         server.start(host, port);
         boolean anyAuth = (properties.serveToken() != null && !properties.serveToken().isBlank())
                 || !properties.serveUsers().isEmpty();
@@ -113,6 +117,9 @@ public class ServeCommand implements Callable<Integer> {
                 + (anyAuth
                         ? " (bearer tokens required; " + properties.serveUsers().size() + " user(s))"
                         : " (no token: loopback only is wise)")
+                + (channelService.enabled()
+                        ? ", channels " + String.join(", ", new java.util.TreeSet<>(channelService.channels()))
+                        : "")
                 + ". Ctrl-C to stop.");
 
         long lastSweep = 0;

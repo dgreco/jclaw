@@ -219,6 +219,47 @@ public class JclawConfiguration {
                 properties.mcpLazy() ? mcpSurfaceCache : null);
     }
 
+    /** The messaging channels jclaw can be talked to from. Empty unless configured. */
+    @Bean
+    public java.util.List<io.jclaw.contracts.channel.ChannelAdapter> channelAdapters(Clock clock) {
+        return java.util.List.of(
+                new io.jclaw.app.channel.SlackAdapter(clock),
+                new io.jclaw.app.channel.TelegramAdapter());
+    }
+
+    @Bean
+    public io.jclaw.contracts.channel.ChannelBindingStore channelBindingStore(
+            JclawProperties properties, StorageBackend backend, Clock clock) {
+        return new io.jclaw.storage.channel.JsonlChannelBindingStore(
+                backend.open("channel-bindings", properties.channelBindingsPath()), clock);
+    }
+
+    /**
+     * Wires the channel loop. Registering it as a listener on the event log is what delivers a
+     * reply after the run that produced it finishes, however long that took.
+     */
+    @Bean
+    public io.jclaw.app.channel.ChannelService channelService(
+            java.util.List<io.jclaw.contracts.channel.ChannelAdapter> channelAdapters,
+            JclawProperties properties,
+            io.jclaw.contracts.channel.ChannelBindingStore channelBindingStore,
+            io.jclaw.app.runtime.JclawRuntime runtime, ThreadService threadService, RunStore runStore,
+            SecretVault secretVault, EgressGuard egressGuard, EventLog eventLog) {
+
+        java.util.Map<String, io.jclaw.app.channel.ChannelService.Credentials> credentials =
+                new java.util.LinkedHashMap<>();
+        properties.channels().forEach((id, secrets) -> {
+            if (!secrets.complete()) {
+                throw new IllegalArgumentException(
+                        "jclaw.channels." + id + " needs both verify-secret and token");
+            }
+            credentials.put(id, new io.jclaw.app.channel.ChannelService.Credentials(
+                    secrets.verifySecret(), secrets.token()));
+        });
+        return new io.jclaw.app.channel.ChannelService(channelAdapters, credentials, channelBindingStore,
+                runtime, threadService, runStore, secretVault, egressGuard, eventLog);
+    }
+
     /** What each MCP server offered last time, so the next start need not ask again. */
     @Bean
     public McpSurfaceCache mcpSurfaceCache(JclawProperties properties, StorageBackend backend, Clock clock) {

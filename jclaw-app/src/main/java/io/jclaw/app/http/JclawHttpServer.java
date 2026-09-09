@@ -72,6 +72,8 @@ public final class JclawHttpServer {
     private static final Pattern RUN_TRACE = Pattern.compile("^/runs/([^/]+)/trace$");
     private static final Pattern APPROVAL = Pattern.compile("^/approvals/([^/]+)$");
     private static final Pattern HOOK = Pattern.compile("^/hooks/([^/]+)$");
+    private static final Pattern CHANNEL = Pattern.compile("^/channels/([^/]+)$");
+    private static final int MAX_CHANNEL_BODY = 256 * 1024;
     private static final int MAX_WEBHOOK_BODY = 16 * 1024;
 
     /** How often the event stream polls the log. */
@@ -88,6 +90,7 @@ public final class JclawHttpServer {
     private final String model;
     private final Telemetry telemetry;
     private final Optional<RoutineStore> routines;
+    private Optional<io.jclaw.app.channel.ChannelService> channels = Optional.empty();
     private final JsonMapper mapper = JsonMapper.builder().build();
     private HttpServer server;
 
@@ -154,6 +157,11 @@ public final class JclawHttpServer {
         log.debug("http: listening on {}:{}", host, port());
     }
 
+    /** Serves {@code POST /channels/{adapter}}. Optional: without it the route is a 404. */
+    public void withChannels(io.jclaw.app.channel.ChannelService channelService) {
+        this.channels = Optional.ofNullable(channelService);
+    }
+
     public int port() {
         return server.getAddress().getPort();
     }
@@ -168,6 +176,12 @@ public final class JclawHttpServer {
 
     private void dispatch(HttpExchange exchange) throws IOException {
         try {
+            Matcher channel = CHANNEL.matcher(exchange.getRequestURI().getPath());
+            if (exchange.getRequestMethod().equals("POST") && channel.matches()) {
+                // A platform authenticates with its own signature, not the operator's token.
+                channel(exchange, channel.group(1));
+                return;
+            }
             Matcher hook = HOOK.matcher(exchange.getRequestURI().getPath());
             if (exchange.getRequestMethod().equals("POST") && hook.matches()) {
                 // A webhook authenticates with its own secret, never with the operator's token:
@@ -421,6 +435,40 @@ public final class JclawHttpServer {
         TurnRunId run = runtime.enqueue(routine.get().thread(), ChatMessage.user(prompt));
         send(exchange, 202, Map.of("run", run.value(), "thread", routine.get().thread().value(),
                 "status", "QUEUED"));
+    }
+
+    /**
+     * Hands one webhook delivery to the channel service.
+     *
+     * <p>Answers immediately in every case: the platform is waiting, and the turn it may have
+     * started will take as long as it takes. A refusal says nothing about why.
+     */
+    private void channel(HttpExchange exchange, String name) throws IOException {
+        if (channels.isEmpty()) {
+            send(exchange, 404, Map.of("error", "no such channel"));
+            return;
+        }
+        Map<String, String> headers = new LinkedHashMap<>();
+        exchange.getRequestHeaders().forEach((key, values) -> {
+            if (!values.isEmpty()) {
+                headers.put(key.toLowerCase(java.util.Locale.ROOT), values.get(0));
+            }
+        });
+        byte[] body;
+        try (InputStream in = exchange.getRequestBody()) {
+            body = in.readNBytes(MAX_CHANNEL_BODY);
+        }
+        var handled = channels.get().receive(name, headers, new String(body, StandardCharsets.UTF_8));
+        switch (handled) {
+            case io.jclaw.app.channel.ChannelService.Handled.Handshake handshake ->
+                    sendText(exchange, "text/plain; charset=utf-8", handshake.body());
+            case io.jclaw.app.channel.ChannelService.Handled.Accepted accepted ->
+                    send(exchange, 202, Map.of("run", accepted.run(), "thread", accepted.thread()));
+            case io.jclaw.app.channel.ChannelService.Handled.Ignored ignored ->
+                    send(exchange, 200, Map.of("ignored", ignored.why()));
+            case io.jclaw.app.channel.ChannelService.Handled.Refused refused ->
+                    send(exchange, 401, Map.of("error", refused.reason()));
+        }
     }
 
     private void sendText(HttpExchange exchange, String contentType, String text) throws IOException {

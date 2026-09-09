@@ -36,6 +36,7 @@ public class DoctorCommand implements Callable<Integer> {
     private final io.jclaw.contracts.secret.SecretVault vault;
     private final io.jclaw.app.config.StorageBackend backend;
     private final io.jclaw.contracts.extension.ExtensionRegistry extensions;
+    private final io.jclaw.app.channel.ChannelService channels;
 
     /**
      * Deliberately does <b>not</b> inject {@link io.jclaw.contracts.model.ModelProvider}.
@@ -52,7 +53,9 @@ public class DoctorCommand implements Callable<Integer> {
             CapabilityPolicy policy,
             io.jclaw.contracts.secret.SecretVault vault,
             io.jclaw.app.config.StorageBackend backend,
-            io.jclaw.contracts.extension.ExtensionRegistry extensions) {
+            io.jclaw.contracts.extension.ExtensionRegistry extensions,
+            io.jclaw.app.channel.ChannelService channels) {
+        this.channels = channels;
         this.properties = properties;
         this.workspace = workspace;
         this.egress = egress;
@@ -103,6 +106,9 @@ public class DoctorCommand implements Callable<Integer> {
                 ? "docker (" + properties.sandboxImage() + ", network " + properties.sandboxNetwork()
                         + ", " + properties.sandboxMemory() + ", " + properties.sandboxCpus() + " cpu)"
                 : "host (no sandbox)"));
+        System.out.println("  channels             " + (channels.enabled()
+                ? String.join(", ", new java.util.TreeSet<>(channels.channels()))
+                : "none"));
         System.out.println("  observability        metrics at /metrics on serve"
                 + (properties.otlpEndpoint() == null || properties.otlpEndpoint().isBlank()
                         ? ", no trace export" : ", traces to " + properties.otlpEndpoint()));

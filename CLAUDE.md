@@ -20,7 +20,7 @@ jclaw is a Java/Spring Boot reimplementation of the **architecture** of
 untrusted-`LoopExit` trust model, and the `CapabilityHost` authority boundary are faithful; the
 feature surface is a fraction of IronClaw's. See **Not built yet** for the honest list.
 
-290 tests pass across 9 modules, including 14 machine-checked architecture rules.
+291 tests pass across 9 modules, including 14 machine-checked architecture rules.
 
 ## Commands
 
@@ -418,8 +418,10 @@ Honest gaps against IronClaw's surface. jclaw is ~20k lines against IronClaw's ~
 architecture and most runtime mechanisms are equivalent, the breadth is not. PARITY.md section
 16 ranks these.
 
-- **Channel adapters** — `serve` has a browser UI and an OpenAI-compatible endpoint; there is no
-  Slack or Telegram adapter and no reply-target binding beyond stdout and HTTP read-back.
+- **Channel adapters beyond two** — Slack and Telegram work over `POST /channels/{adapter}`,
+  with reply-target bindings that survive gates and restarts. There is no Discord, Matrix, or
+  email adapter, and no outbound-initiated message: jclaw answers, it does not start a
+  conversation.
 - **Identity beyond static tokens** — `serve` users are tenants (`TurnScope.tenant()`), and every
   scope-keyed store and the scheduler separate by tenant. There is no login flow, no roles, no
   per-tenant policy or token accounting, and `TurnScope.agent()` is always `default`.

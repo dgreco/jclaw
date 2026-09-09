@@ -61,7 +61,7 @@ jclaw reimplements the **architecture** of IronClaw — the seven-layer ladder, 
 
 Everything is durable JSONL under `~/.jclaw`: a run can park in one process, be approved in a second, and resume in a third. There is no database, and no server unless you start one (`jclaw serve`).
 
-**Status.** Milestones M0–M7 plus subagents (synchronous or asynchronous), MCP, streaming on every provider, lease-based crash recovery, a per-thread run lock, context compaction with model summaries, vector memory, configurable denials and egress lists, per-tool rate limits, injection heuristics, auth and process gates with expiry, a scheduler with `submit` and `worker`, an HTTP surface with run projections, event streams, and per-user tenants, attachments, store retention, an encrypted secret vault with host-side credential injection, a container sandbox for the shell lane, a SQL storage backend (embedded H2 or PostgreSQL) with schema migrations, signed extension packages, execution-stage hooks, a second loop family, Prometheus metrics with OTLP trace export, webhook, heartbeat, and event triggers, and MCP over HTTP with resources, prompts, and lazily started servers. 290 tests pass across the modules, including 14 machine-checked architecture rules (ArchUnit). Both the uber jar and the native image are verified end to end, including subprocess spawning for MCP servers and shell tools. [PARITY.md](PARITY.md) lists what IronClaw still has that jclaw does not.
+**Status.** Milestones M0–M7 plus subagents (synchronous or asynchronous), MCP, streaming on every provider, lease-based crash recovery, a per-thread run lock, context compaction with model summaries, vector memory, configurable denials and egress lists, per-tool rate limits, injection heuristics, auth and process gates with expiry, a scheduler with `submit` and `worker`, an HTTP surface with run projections, event streams, and per-user tenants, attachments, store retention, an encrypted secret vault with host-side credential injection, a container sandbox for the shell lane, a SQL storage backend (embedded H2 or PostgreSQL) with schema migrations, signed extension packages, execution-stage hooks, a second loop family, Prometheus metrics with OTLP trace export, webhook, heartbeat, and event triggers, and MCP over HTTP with resources, prompts, and lazily started servers. 291 tests pass across the modules, including 14 machine-checked architecture rules (ArchUnit). Both the uber jar and the native image are verified end to end, including subprocess spawning for MCP servers and shell tools. [PARITY.md](PARITY.md) lists what IronClaw still has that jclaw does not.
 
 ---
 
@@ -446,6 +446,7 @@ jclaw serve --concurrency 4 --per-user 1 \
 | `GET /runs/{run}/events` | Server-sent events following that run's audit log, replaying what exists and pushing new entries until the run is terminal; each `data:` is the same redacted record the JSONL file holds. |
 | `GET /threads/{thread}/messages` | The transcript. |
 | `GET /approvals`, `POST /approvals/{gate}` `{"approved": true}` | Pending gates; decide one and requeue its run for the scheduler. |
+| `POST /channels/{adapter}` | A messaging platform's webhook. The platform authenticates with its own signature or secret token, never the operator's. A message becomes a queued turn and the request returns at once; the reply is delivered when the run finishes. |
 | `POST /hooks/{name}` | Fires the webhook routine of that name, authenticated by its own bearer secret rather than the operator's token. Returns `202 {"run": "run_…"}`; the body joins the prompt. |
 | `GET /runs/{run}/trace` | The run as an OTLP/JSON trace: a root span with a child per model call, capability call, and gate, projected from the same events. |
 | `GET /metrics` | Process metrics in Prometheus text format: runs, model calls and tokens, capability calls by outcome, gates, injections, hooks, latencies. |
@@ -454,6 +455,23 @@ jclaw serve --concurrency 4 --per-user 1 \
 Every route requires `Authorization: Bearer <token>` when `serve-token` or `serve-users` is set, health included; the browser UI's event stream passes it as `?access_token=` because `EventSource` cannot set headers. There is no TLS: put a reverse proxy in front if it leaves the machine.
 
 **Users are tenants.** A caller presenting a `serve-users` token runs as that user: thread `work` is really `alice:work`, so two users on the same thread name hold two conversations; their runs carry the user as the tenant of their `TurnScope`, and everything that keys on scope, memories, routines, approvals, the thread lock, separates by it without the stores knowing about HTTP. A user sees only their own runs and gates (another user's is a 404). The operator token is the `local` tenant, the one the CLI uses, so what you do in a terminal and in the browser is one conversation, and the operator reads every tenant's runs. `--per-user N` caps how many of one tenant's runs execute at once, so one busy user cannot take every slot. What this surface is *not*: a Slack or Telegram adapter, or a login system; tokens are static (see PARITY.md).
+
+### Messaging channels
+
+jclaw can be talked to from Slack or Telegram over the same runtime as everything else. A message becomes an ordinary queued turn, and the answer is delivered when the run finishes, which is why it survives gates, restarts, and a queue.
+
+```bash
+jclaw secrets set slack-verify --capability channel.connect --host slack.com   # the signing secret
+jclaw secrets set slack-token  --capability channel.connect --host slack.com   # the bot token
+jclaw serve --jclaw.channels.slack.verify-secret=slack-verify \
+            --jclaw.channels.slack.token=slack-token
+```
+
+Point the platform's webhook at `POST /channels/slack` or `/channels/telegram`. Both credentials come from the vault, bound to the capability `channel.connect` and the platform's API host, so no token sits in configuration.
+
+**Inbound is verified before it is read.** Slack signs each request, and the adapter recomputes the HMAC over the raw body and compares it in constant time, refusing anything whose timestamp is more than five minutes old, since a valid signature on an old body is a replay that would run a turn twice. Telegram does not sign, so it is verified by the secret token it echoes in a header, which is weaker because it does not bind the body, and it is what the platform offers. A bot's own messages are ignored, without which an answer in a channel would look like a new message and the loop would not stop.
+
+**A conversation is a thread.** The reply target is derived from the channel and thread, so `slack:C123/1700000000.1` is one continuing jclaw thread rather than a series of unrelated questions, and it is stored durably so a reply finds its way back after an approval gate held the run for an hour. Replies go into the Slack thread the message was in.
 
 ### Tools the agent can use
 

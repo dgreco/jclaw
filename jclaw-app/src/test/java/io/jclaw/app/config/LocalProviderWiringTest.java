@@ -78,7 +78,8 @@ class LocalProviderWiringTest {
                 java.util.Map.of(),
                 java.util.List.of(),
                 "canonical",
-                "");
+                "",
+                java.util.Map.of());
     }
 
     @Test

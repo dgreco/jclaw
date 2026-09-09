@@ -95,6 +95,11 @@ import java.util.Map;
  *                             {@code JCLAW_DATASOURCE_PASSWORD}
  * @param otlpEndpoint         an OpenTelemetry collector's base URL (OTLP/HTTP); every finished
  *                             run's trace is POSTed to {@code /v1/traces}. Blank disables export
+ * @param channels             messaging channels to serve, by adapter id ({@code slack},
+ *                             {@code telegram}). Each names two vault secrets: one to verify
+ *                             inbound webhooks, one to send with. Names, never values, and each
+ *                             must be bound to the capability {@code channel.connect} and the
+ *                             platform's API host
  * @param hooks                built-in execution-stage hooks to enable, by id. {@code budget-notice}
  *                             tells the model when most of its token budget is spent
  * @param loopFamily           the loop strategy: {@code canonical}, or {@code reflective} (the
@@ -236,13 +241,28 @@ public record JclawProperties(
 
         @DefaultValue("canonical") String loopFamily,
 
-        @DefaultValue("") String otlpEndpoint) {
+        @DefaultValue("") String otlpEndpoint,
+
+        Map<String, ChannelSecrets> channels) {
+
+    /** The two vault entries one channel needs. */
+    public record ChannelSecrets(String verifySecret, String token) {
+        public ChannelSecrets {
+            verifySecret = verifySecret == null ? "" : verifySecret.trim();
+            token = token == null ? "" : token.trim();
+        }
+
+        public boolean complete() {
+            return !verifySecret.isBlank() && !token.isBlank();
+        }
+    }
 
     public JclawProperties {
         // Constructor binding leaves an absent map null; an absent map means no limits.
         toolEgress = toolEgress == null ? Map.of() : Map.copyOf(toolEgress);
         toolRateLimits = toolRateLimits == null ? Map.of() : Map.copyOf(toolRateLimits);
         serveUsers = serveUsers == null ? Map.of() : Map.copyOf(serveUsers);
+        channels = channels == null ? Map.of() : Map.copyOf(channels);
         trustedPublishers = trustedPublishers == null ? Map.of() : Map.copyOf(trustedPublishers);
     }
 
@@ -307,7 +327,8 @@ public record JclawProperties(
                 Map.of(),
                 List.of("budget-notice"),
                 "canonical",
-                "");
+                "",
+                Map.of());
     }
 
     /** The JDBC URL {@code storage: sql} uses: the configured one, else an embedded H2 file. */
@@ -418,6 +439,10 @@ public record JclawProperties(
 
     public Path vaultKeyPath() {
         return stateDir.resolve("vault.key");
+    }
+
+    public Path channelBindingsPath() {
+        return stateDir.resolve("channel-bindings.jsonl");
     }
 
     public Path mcpSurfacePath() {

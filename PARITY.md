@@ -2,7 +2,7 @@
 
 An honest enumeration of what [IronClaw](https://github.com/nearai/ironclaw) (internally "Reborn") has that jclaw does not, and of what jclaw now has. jclaw is roughly 20k lines of Java (plus 6.5k of tests) against IronClaw's ~1.4M lines of Rust across ~63 crates. The **architecture** is equivalent — layer ladder, turn/run lifecycle, untrusted `LoopExit`, single `CapabilityHost` authority boundary, checkpoint-kind–driven recovery — and, after the September 2026 parity work, most of the runtime *mechanisms* are present in some form. What remains missing is breadth, not mechanism: channel adapters, a remote extension registry, a WASM lane, and the long tail catalogued in section 16. This file is the list, organised by IronClaw's own crate families so a gap can be traced to the crate that fills it upstream.
 
-Sources: IronClaw's `README.md`, `crates/Architecture.md`, and the `crates/` listing as of September 2026; jclaw's code on this checkout (290 tests, 0 failures). Where the upstream doc names a concept and jclaw has an equivalent under a different name, the mapping is given. Where the gap is uncertain it is marked *(unverified)*.
+Sources: IronClaw's `README.md`, `crates/Architecture.md`, and the `crates/` listing as of September 2026; jclaw's code on this checkout (291 tests, 0 failures). Where the upstream doc names a concept and jclaw has an equivalent under a different name, the mapping is given. Where the gap is uncertain it is marked *(unverified)*.
 
 Legend: ✅ at parity · 🟡 partial · ❌ missing · ➕ jclaw-only
 
@@ -46,10 +46,10 @@ IronClaw is a multi-surface runtime. jclaw has the CLI, the REPL, and a minimal 
 | HTTP ingress / webhooks (`ironclaw_host_ingress`) | ✅ | 🟡 `jclaw serve`: `POST /threads/{t}/turns` enqueues (202 + run id), `GET /runs/{r}` serves the projection and reply, `GET /runs/{r}/events` streams the run's events as SSE, `GET /runs/{r}/trace`, `GET /metrics`, `POST /hooks/{name}` fires a webhook routine, `GET /threads/{t}/messages`, `GET/POST /approvals`, `GET /health`; loopback by default, bearer tokens per user. No TLS |
 | Web UI (`ironclaw_webui`, SSE + WebSocket browser gateway, login token) | ✅ | 🟡 `GET /` on `serve` is a single-page UI over the JSON and SSE routes: threads, transcript, posting turns, following a run's events, approving and denying gates; bearer token kept in session storage. No accounts, no WebSocket, no styling beyond legibility |
 | OpenAI-compatible HTTP API (`ironclaw_openai_compat`) — use the agent from any OpenAI client | ✅ | ✅ `POST /v1/chat/completions` (buffered and `stream: true`) and `GET /v1/models` on `serve`; a stateless client's prior turns are replayed into a fresh thread, `X-Jclaw-Thread` names a persistent one; images arrive as data-URL parts; client `system` messages are ignored in favour of the operator's prompt; a parked run is reported in the completion text with `X-Jclaw-Gate` |
-| Slack and Telegram channel adapters (WASM channel packages implementing `ChannelAdapter`) | ✅ | ❌ |
+| Slack and Telegram channel adapters (WASM channel packages implementing `ChannelAdapter`) | ✅ | ✅ `ChannelAdapter` with Slack (Events API, HMAC-signed, replay window) and Telegram (secret-token header) over `POST /channels/{adapter}`; credentials from the vault under `channel.connect`. Compiled in rather than WASM packages |
 | Operator / admin surface (`ironclaw_operator`) | ✅ | 🟡 `status`, `status --run`, `doctor`, `recover`, `retain`, `tools`, `approvals` |
 | Assistant product with conversation management (`ironclaw_assistant`, `ironclaw_conversations`) | ✅ | ❌ — jclaw has threads, not conversations with source/reply-target bindings |
-| Source and reply-target bindings (`SourceBindingRef`, `ReplyTargetBindingRef`) | ✅ | ❌ — a reply goes to stdout, or is read back over HTTP |
+| Source and reply-target bindings (`SourceBindingRef`, `ReplyTargetBindingRef`) | ✅ | ✅ `ReplyTarget` bound durably to the thread by `ChannelBindingStore`, so an answer returns to the conversation it came from after a queue, a gate, and a restart |
 | Long-running service (`ironclaw service restart`, `ironclaw serve`) | ✅ | 🟡 `serve` and `worker` are long-lived: ingress, scheduler, routines, lease sweep, hourly retention. No service manager |
 | `config list/set` commands | ✅ | ❌ — edit `~/.jclaw/jclaw.yaml` or pass `--jclaw.*` |
 | Gate resolution inside the REPL | ✅ (WebUI approval flow) | ✅ a parked turn is put to the user in the REPL: what is being approved, then `y`/`n`/`l`. Either answer resumes the run; anything else leaves the gate open. A piped session is never asked and still prints the command |
@@ -223,7 +223,7 @@ At parity on the trust model and on the gate mechanics, and on tenant isolation;
 | Structured tracing / metrics substrate (`ironclaw_observability`, `trace_commons`) | ✅ | 🟡 both projected from the event log rather than instrumented: `Telemetry` counts every written event into Prometheus-format metrics at `/metrics`; the pure `RunTrace` turns a run's events into spans (root, model calls, capability calls, gates, with measured latencies) served as OTLP/JSON at `/runs/{r}/trace`, printed by `status --trace`, and exported to `jclaw.otlp-endpoint` when a run finishes. No OpenTelemetry SDK in-process, no propagation into provider/MCP calls, no histograms |
 | Latency harness (`harness/latency/`) | ✅ | ❌ |
 | Deployment assets (`deploy/`, `docker/`, `infra/runner/`) | ✅ | ❌ — one jar or one binary, no Dockerfile; a GitLab release pipeline publishes both |
-| Test tooling (`test-tools/`, `tests/` integration suites) | ✅ | 🟡 290 unit + integration tests, including a child-JVM test for cross-process thread locking and a fake-docker test for the sandbox contract; no end-to-end suite against a live provider |
+| Test tooling (`test-tools/`, `tests/` integration suites) | ✅ | 🟡 291 unit + integration tests, including a child-JVM test for cross-process thread locking and a fake-docker test for the sandbox contract; no end-to-end suite against a live provider |
 | `doctor`-style preflight | *(unverified)* | ➕ `jclaw doctor` |
 
 ---
@@ -275,10 +275,10 @@ left is the long tail each mechanism leaves behind, and it is worth being precis
 
 Ranked, again, by what a deployment beyond one operator's machine would hit first:
 
-1. **Channel adapters** (§2, §12) — `serve` carries a browser UI and an OpenAI-compatible
-   endpoint, and that is one product surface with two doors. Slack and Telegram are packages
-   upstream, with reply-target bindings and platform-native commands; here there is nothing to
-   bind a reply to but stdout and an HTTP read-back.
+1. ~~**Channel adapters**~~ — closed: Slack and Telegram over `POST /channels/{adapter}`, with
+   durable reply-target bindings. Still open under this heading: platform-native slash commands,
+   adapters as installable packages rather than compiled in, and any outbound-initiated
+   message.
 2. **A login flow** (§10) — users are tenants and every scope-keyed store separates by them, but
    identity is a static bearer token per user. No OAuth, no session, no roles, no per-tenant
    policy or token accounting, and `TurnScope.agent()` is always `default`.
