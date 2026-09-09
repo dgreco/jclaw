@@ -3,7 +3,10 @@ package io.jclaw.app.cli;
 import io.jclaw.app.config.JclawProperties;
 import io.jclaw.app.runtime.JclawRuntime;
 import io.jclaw.contracts.model.ModelProvider;
+import io.jclaw.contracts.capability.ApprovalStore;
+import io.jclaw.contracts.turn.GateId;
 import io.jclaw.contracts.turn.ThreadId;
+import io.jclaw.storage.approval.JsonlApprovalStore;
 import org.jline.keymap.KeyMap;
 import org.jline.reader.Binding;
 import org.jline.reader.Candidate;
@@ -21,6 +24,7 @@ import picocli.CommandLine.Option;
 
 import java.io.IOException;
 import java.nio.file.Files;
+import java.util.Locale;
 import java.nio.file.Path;
 import java.util.Optional;
 import java.util.concurrent.Callable;
@@ -92,6 +96,7 @@ public class ReplCommand implements Callable<Integer> {
 
     private final JclawRuntime runtime;
     private final JclawProperties properties;
+    private final JsonlApprovalStore approvals;
 
     @Option(
             names = {"-t", "--thread"},
@@ -107,7 +112,8 @@ public class ReplCommand implements Callable<Integer> {
     @Option(names = "--no-history", description = "Do not read or write the persistent history file.")
     private boolean noHistory;
 
-    public ReplCommand(JclawRuntime runtime, JclawProperties properties) {
+    public ReplCommand(JclawRuntime runtime, JclawProperties properties, JsonlApprovalStore approvals) {
+        this.approvals = approvals;
         this.runtime = runtime;
         this.properties = properties;
     }
@@ -168,7 +174,7 @@ public class ReplCommand implements Callable<Integer> {
             JclawRuntime.TurnResult result = runtime.submit(
                     new ThreadId(thread), input, new AtomicBoolean(false), streamSink(terminal));
 
-            report(terminal, result);
+            report(terminal, reader, result);
         }
 
         if (!quiet) {
@@ -230,21 +236,93 @@ public class ReplCommand implements Callable<Integer> {
         return true;
     }
 
-    private void report(Terminal terminal, JclawRuntime.TurnResult result) {
+    /**
+     * Prints the outcome, and asks about a gate when there is someone to ask.
+     *
+     * @return whether the gate was put to the user rather than printed as a command to run
+     *         elsewhere. The session loop ignores it; a test uses it to tell the two apart
+     *         without depending on terminal output, which JLine writes asynchronously
+     */
+    boolean report(Terminal terminal, LineReader reader, JclawRuntime.TurnResult result) {
         if (stream && result.isSuccess()) {
             // Already printed as it arrived; a second copy would duplicate the whole reply.
             terminal.writer().println();
-        } else {
-            result.reply().ifPresentOrElse(
-                    terminal.writer()::println,
-                    () -> terminal.writer().println("jclaw: " + result.status()
-                            + result.failure().map(kind -> " (" + kind.category() + ")").orElse("")
-                            + result.failureDetail().map(detail -> ": " + detail).orElse("")
-                            + result.gatePrompt()
-                            .map(gate -> " - resolve with: jclaw approvals approve " + gate)
-                            .orElse("")));
+            terminal.writer().flush();
+            return false;
         }
+        if (result.reply().isPresent()) {
+            terminal.writer().println(result.reply().get());
+            terminal.writer().flush();
+            return false;
+        }
+
+        Optional<ApprovalStore.Gate> gate = result.gatePrompt()
+                .map(GateId::new)
+                .flatMap(approvals::find)
+                .filter(ApprovalStore.Gate::isPending)
+                .filter(pending -> !approvals.expired(pending));
+        boolean canAsk = gate.isPresent() && !terminal.getType().equals(Terminal.TYPE_DUMB);
+
+        terminal.writer().println("jclaw: " + result.status()
+                + result.failure().map(kind -> " (" + kind.category() + ")").orElse("")
+                + result.failureDetail().map(detail -> ": " + detail).orElse("")
+                + (canAsk ? "" : result.gatePrompt()
+                        .map(id -> " - resolve with: jclaw approvals approve " + id)
+                        .orElse("")));
         terminal.writer().flush();
+
+        if (canAsk) {
+            resolveInline(terminal, reader, gate.get());
+        }
+        return canAsk;
+    }
+
+    /**
+     * Asks about a gate where the user already is, and resumes the run with the answer.
+     *
+     * <p>Only on a real terminal. With piped input the next line is the next prompt, not an
+     * answer to a question nobody saw, so a scripted session keeps the printed command and
+     * behaves exactly as before.
+     *
+     * <p>The kernel re-authorizes on resume regardless: answering here writes a decision to the
+     * approval store, and the resumed run asks the store again. Nothing about the trust model
+     * changes because the question was asked in a nicer place.
+     */
+    private void resolveInline(Terminal terminal, LineReader reader, ApprovalStore.Gate gate) {
+        terminal.writer().println("  " + gate.prompt());
+        terminal.writer().flush();
+
+        String answer;
+        try {
+            answer = reader.readLine("approve? [y]es / [n]o / [l]ater: ");
+        } catch (UserInterruptException | EndOfFileException e) {
+            // Ctrl-C or Ctrl-D at the question is not an answer, and must never read as one.
+            answer = "later";
+        }
+        applyDecision(terminal, reader, gate, answer);
+    }
+
+    /**
+     * Acts on the answer. Package-private so a test can supply what a terminal would have read.
+     *
+     * <p>Anything that is not a clear yes or no leaves the run parked, including an empty line:
+     * a gate is a question about an effect, and silence is not consent.
+     */
+    void applyDecision(Terminal terminal, LineReader reader, ApprovalStore.Gate gate, String answer) {
+        String choice = answer == null ? "" : answer.trim().toLowerCase(Locale.ROOT);
+        if (!choice.startsWith("y") && !choice.startsWith("n")) {
+            terminal.writer().println("left parked; resolve with: jclaw approvals approve " + gate.id().value());
+            terminal.writer().flush();
+            return;
+        }
+        boolean approved = choice.startsWith("y");
+        approvals.resolve(gate.id(), approved);
+        terminal.writer().println((approved ? "approved " : "denied ") + gate.capability().value()
+                + "; resuming " + gate.run().value());
+        terminal.writer().flush();
+
+        // A denial resumes too: the model is told, and the turn continues without the effect.
+        report(terminal, reader, runtime.resume(gate.run(), new AtomicBoolean(false)));
     }
 
     /**

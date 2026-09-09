@@ -53,7 +53,7 @@ class ReplBindingsTest {
 
     private static KeyMap<Binding> mainKeyMap(Path stateDir) throws IOException {
         try (Terminal terminal = fakeTerminal()) {
-            LineReader reader = new ReplCommand(null, properties(stateDir)).buildReader(terminal);
+            LineReader reader = new ReplCommand(null, properties(stateDir), null).buildReader(terminal);
             return reader.getKeyMaps().get(LineReader.MAIN);
         }
     }
@@ -109,7 +109,7 @@ class ReplBindingsTest {
     @DisplayName("history expansion is disabled so '!' in a prompt stays literal")
     void eventExpansionDisabled(@TempDir Path tmp) throws IOException {
         try (Terminal terminal = fakeTerminal()) {
-            LineReader reader = new ReplCommand(null, properties(tmp)).buildReader(terminal);
+            LineReader reader = new ReplCommand(null, properties(tmp), null).buildReader(terminal);
 
             assertTrue(reader.isSet(LineReader.Option.DISABLE_EVENT_EXPANSION),
                     "prompts are prose; '!' must not trigger bash-style history expansion");
@@ -120,7 +120,7 @@ class ReplBindingsTest {
     @DisplayName("the slash key is bound to the widget that lists commands as you start typing")
     void slashKeyBoundToListingWidget(@TempDir Path tmp) throws IOException {
         try (Terminal terminal = fakeTerminal()) {
-            LineReader reader = new ReplCommand(null, properties(tmp)).buildReader(terminal);
+            LineReader reader = new ReplCommand(null, properties(tmp), null).buildReader(terminal);
 
             KeyMap<Binding> keyMap = reader.getKeyMaps().get(LineReader.MAIN);
             assertBound(keyMap, "/", ReplCommand.SLASH_LIST_WIDGET, "the '/' key");
