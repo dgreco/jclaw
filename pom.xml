@@ -20,6 +20,8 @@
   <description>Java/Spring Boot clone of the IronClaw harness: hexagonal agent OS, pure functional core.</description>
 
   <properties>
+    <!-- Pure-Java WebAssembly runtime: no native library, so the native image keeps working. -->
+    <chicory.version>1.7.5</chicory.version>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
     <maven.compiler.release>21</maven.compiler.release>
@@ -44,6 +46,16 @@
 
   <dependencyManagement>
     <dependencies>
+      <dependency>
+        <groupId>com.dylibso.chicory</groupId>
+        <artifactId>runtime</artifactId>
+        <version>${chicory.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.dylibso.chicory</groupId>
+        <artifactId>wasm</artifactId>
+        <version>${chicory.version}</version>
+      </dependency>
       <!-- jclaw modules -->
       <dependency><groupId>io.jclaw</groupId><artifactId>jclaw-contracts</artifactId><version>${project.version}</version></dependency>
       <dependency><groupId>io.jclaw</groupId><artifactId>jclaw-domain</artifactId><version>${project.version}</version></dependency>

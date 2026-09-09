@@ -36,7 +36,7 @@ public final class ManifestParser {
         try {
             kind = Kind.valueOf(kindText);
         } catch (IllegalArgumentException e) {
-            return Result.err("manifest_kind_must_be_skill_or_mcp");
+            return Result.err("manifest_kind_must_be_skill_mcp_or_wasm");
         }
         EffectClass effect = EffectClass.NETWORK;
         String effectText = text(raw, "effect");
@@ -51,7 +51,8 @@ public final class ManifestParser {
         try {
             return Result.ok(new Manifest(
                     name, version, text(raw, "description"), kind,
-                    strings(raw, "command"), strings(raw, "env"), strings(raw, "hosts"), effect,
+                    strings(raw, "command"), strings(raw, "env"), strings(raw, "hosts"),
+                    strings(raw, "permissions"), strings(raw, "tools"), effect,
                     publisher.isEmpty() ? Optional.empty() : Optional.of(publisher)));
         } catch (IllegalArgumentException e) {
             return Result.err("manifest_invalid: " + e.getMessage());

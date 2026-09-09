@@ -2,7 +2,7 @@
 
 An honest enumeration of what [IronClaw](https://github.com/nearai/ironclaw) (internally "Reborn") has that jclaw does not, and of what jclaw now has. jclaw is roughly 20k lines of Java (plus 6.5k of tests) against IronClaw's ~1.4M lines of Rust across ~63 crates. The **architecture** is equivalent — layer ladder, turn/run lifecycle, untrusted `LoopExit`, single `CapabilityHost` authority boundary, checkpoint-kind–driven recovery — and, after the September 2026 parity work, most of the runtime *mechanisms* are present in some form. What remains missing is breadth, not mechanism: channel adapters, a remote extension registry, a WASM lane, and the long tail catalogued in section 16. This file is the list, organised by IronClaw's own crate families so a gap can be traced to the crate that fills it upstream.
 
-Sources: IronClaw's `README.md`, `crates/Architecture.md`, and the `crates/` listing as of September 2026; jclaw's code on this checkout (294 tests, 0 failures). Where the upstream doc names a concept and jclaw has an equivalent under a different name, the mapping is given. Where the gap is uncertain it is marked *(unverified)*.
+Sources: IronClaw's `README.md`, `crates/Architecture.md`, and the `crates/` listing as of September 2026; jclaw's code on this checkout (302 tests, 0 failures). Where the upstream doc names a concept and jclaw has an equivalent under a different name, the mapping is given. Where the gap is uncertain it is marked *(unverified)*.
 
 Legend: ✅ at parity · 🟡 partial · ❌ missing · ➕ jclaw-only
 
@@ -63,11 +63,11 @@ IronClaw's premise is that already-authorized work runs **in isolation**. jclaw 
 
 | Capability | IronClaw | jclaw |
 |---|---|---|
-| WASM extension lane with capability-based host imports (filesystem, HTTP, credentials, output) | ✅ `ironclaw_wasm` | ❌ |
-| WASM resource limiting (memory, CPU, time) | ✅ `ironclaw_wasm_limiter` | ❌ |
+| WASM extension lane with capability-based host imports (filesystem, HTTP, credentials, output) | ✅ `ironclaw_wasm` | ✅ `WasmLane` over Chicory, a pure-Java runtime so the native image is unaffected. Imports are granted per manifest and supplied by absence: a module importing one it was not granted fails to instantiate. `log`, `read_file` through the workspace guard, `http_get` through the egress guard; no credential import, since the vault stays above the lane |
+| WASM resource limiting (memory, CPU, time) | ✅ `ironclaw_wasm_limiter` | ✅ `WasmSpec`: linear memory capped in pages, every instruction counted against a budget through an execution listener, a result-size cap, and a wall clock. A module is instantiated per call, so nothing carries between them |
 | Container sandbox: Docker orchestrator/worker pattern, per-job tokens, LLM proxying through the host | ✅ `ironclaw_sandbox`, `Dockerfile.sandbox-worker`, `Dockerfile.process-sandbox` | 🟡 `jclaw.shell-backend=docker` runs each `builtin.shell` command in `docker run --rm` with no network, the workspace as the only mount at `/workspace`, memory/CPU/pid limits, a read-only root, and an explicit environment (`SandboxSpec`). One command per container, no orchestrator, no per-job tokens, no LLM proxying; the host backend is the default |
 | Process backend selected by policy (in-process worker vs container) | ✅ | 🟡 selected by configuration per lane: `jclaw.shell-backend` and `jclaw.mcp-backend`, each `host` or `docker` (`SandboxSpec`, with an image and network override for MCP). Not per capability, not per trust class |
-| Dynamic tool building (agent authors and installs new WASM tools) | ✅ | ❌ |
+| Dynamic tool building (agent authors and installs new WASM tools) | ✅ | ❌ — an operator installs a WASM package; the agent cannot author or install one |
 | First-party executors routed through `RuntimeDispatcher` | ✅ | ✅ (`CapabilityHandler` lanes behind `DefaultCapabilityHost`) |
 | MCP over stdio | ✅ | ✅ `StdioTransport`, behind the same `McpTransport` port as HTTP |
 | MCP over HTTP / SSE / streamable HTTP | ✅ *(unverified which transports)* | ✅ `HttpTransport`: streamable HTTP (protocol `2025-03-26`), reading either a JSON body or an SSE stream, echoing the server's session id, never following a redirect |
@@ -209,7 +209,7 @@ At parity on the trust model and on the gate mechanics, and on tenant isolation;
 |---|---|---|
 | Extension manifests declaring capabilities, permissions, endpoints | ✅ `extension_contracts`, `extension_manifests` | ✅ `jclaw-extension.json`: kind, command, required environment names, declared hosts, claimed effect class, publisher (`ExtensionRegistry.Manifest`, parsed and validated by the pure `ManifestParser`) |
 | Extension registry, host, manager (install / enable / update) | ✅ | 🟡 `FilesystemExtensionRegistry` with `jclaw extensions install/list/remove/enable/disable`; packages are local directories, so no fetch from a remote registry and no versioned upgrade |
-| Installable packages (channels, tools) under `extensions/packages/` | ✅ 14 packages | 🟡 two kinds: skill packages (exposed to the catalog while enabled) and MCP packages (started beside `mcp add` servers, under the MCP sandbox); no channel packages, no WASM tools |
+| Installable packages (channels, tools) under `extensions/packages/` | ✅ 14 packages | 🟡 three kinds: skill packages, MCP packages, and WASM packages whose tools register as `wasm.<name>.<tool>`; no channel packages |
 | Signature verification for `VERIFIED` extensions | ✅ | ✅ Ed25519 over a `PackageDigest` of every file; `extensions keygen` / `extensions sign` on the publisher side, `jclaw.trusted-publishers` on the operator side. A trusted signature makes the install `VERIFIED` and its declared effect class is honoured for its tools; an untrusted or failing signature refuses the install; unsigned is `COMMUNITY` with `NETWORK` tools |
 | Skills as installable packages | ✅ | ✅ a skill package installs, enables, disables, and removes through the registry; plain directories still work |
 | Profiles (`profiles/`) selecting bundled configurations | ✅ | ❌ |
@@ -223,7 +223,7 @@ At parity on the trust model and on the gate mechanics, and on tenant isolation;
 | Structured tracing / metrics substrate (`ironclaw_observability`, `trace_commons`) | ✅ | 🟡 both projected from the event log rather than instrumented: `Telemetry` counts every written event into Prometheus-format metrics at `/metrics`; the pure `RunTrace` turns a run's events into spans (root, model calls, capability calls, gates, with measured latencies) served as OTLP/JSON at `/runs/{r}/trace`, printed by `status --trace`, and exported to `jclaw.otlp-endpoint` when a run finishes. No OpenTelemetry SDK in-process, no propagation into provider/MCP calls, no histograms |
 | Latency harness (`harness/latency/`) | ✅ | ❌ |
 | Deployment assets (`deploy/`, `docker/`, `infra/runner/`) | ✅ | ❌ — one jar or one binary, no Dockerfile; a GitLab release pipeline publishes both |
-| Test tooling (`test-tools/`, `tests/` integration suites) | ✅ | 🟡 294 unit + integration tests, including a child-JVM test for cross-process thread locking and a fake-docker test for the sandbox contract; no end-to-end suite against a live provider |
+| Test tooling (`test-tools/`, `tests/` integration suites) | ✅ | 🟡 302 unit + integration tests, including a child-JVM test for cross-process thread locking and a fake-docker test for the sandbox contract; no end-to-end suite against a live provider |
 | `doctor`-style preflight | *(unverified)* | ➕ `jclaw doctor` |
 
 ---
@@ -283,11 +283,10 @@ Ranked, again, by what a deployment beyond one operator's machine would hit firs
    token budgets, and named agents that make `TurnScope.agent()` mean something. Still open under
    this heading: a user directory, groups, per-tenant vaults, and id token signature
    verification for flows that would need it.
-3. **A WASM lane** (§3) — the two kinds of genuinely untrusted code, shell commands and MCP
-   servers, can each be put in a container. Extensions cannot: a `VERIFIED` package's code still
-   runs as a process or in-process. WASM with capability-based host imports and resource
-   limiting, an orchestrator with per-job tokens, and LLM proxying through the host are all
-   upstream and all absent.
+3. ~~**A WASM lane**~~ — closed: modules run under a metered pure-Java runtime with capped
+   memory and only the host imports their manifest asked for. Still open under this heading: a
+   sandbox orchestrator with per-job tokens, LLM proxying through the host, and letting the agent
+   author its own modules.
 4. **A remote extension registry** (§12) — packages have manifests, digests, signatures, and
    trust decided at install, but they are directories on disk. No registry to fetch from, no
    versioned upgrade, no profiles, and only two package kinds.

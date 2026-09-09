@@ -95,6 +95,10 @@ import java.util.Map;
  *                             {@code JCLAW_DATASOURCE_PASSWORD}
  * @param otlpEndpoint         an OpenTelemetry collector's base URL (OTLP/HTTP); every finished
  *                             run's trace is POSTed to {@code /v1/traces}. Blank disables export
+ * @param wasmMaxMemoryPages   linear memory a WebAssembly module may address, in 64 KiB pages
+ * @param wasmMaxInstructions  instructions a module may execute before it is stopped
+ * @param wasmMaxOutputBytes   the largest result a module may return
+ * @param wasmTimeout          wall clock a module call may take
  * @param agents               named profiles a run can be given: a model and a system prompt.
  *                             The chosen one becomes {@code TurnScope.agent()}, so a run records
  *                             which configuration produced it and a resume replays that one
@@ -265,6 +269,14 @@ public record JclawProperties(
 
         Map<String, ChannelSecrets> channels,
 
+        @DefaultValue("256") int wasmMaxMemoryPages,
+
+        @DefaultValue("100000000") long wasmMaxInstructions,
+
+        @DefaultValue("262144") int wasmMaxOutputBytes,
+
+        @DefaultValue("5s") Duration wasmTimeout,
+
         Map<String, AgentProfile> agents,
 
         Map<String, TenantPolicy> tenantPolicies,
@@ -387,6 +399,10 @@ public record JclawProperties(
                 "canonical",
                 "",
                 Map.of(),
+                256,
+                100_000_000L,
+                262_144,
+                Duration.ofSeconds(5),
                 Map.of(),
                 Map.of(),
                 0L,

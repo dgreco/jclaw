@@ -27,14 +27,17 @@ import java.util.regex.Pattern;
 public interface ExtensionRegistry {
 
     /** What an extension contributes. */
-    enum Kind { SKILL, MCP }
+    enum Kind { SKILL, MCP, WASM }
 
     /**
      * The manifest, as declared by the package.
      *
      * @param env      environment variable names an MCP server requires; values are supplied at
      *                 install time and stored with the installation
-     * @param hosts    hosts the extension declares it reaches; informational, shown at install
+     * @param permissions host functions a WASM module may import: {@code log}, {@code read_file},
+ *                    {@code http_get}. A module importing one it was not granted does not run
+ * @param tools    tool names a WASM module offers, each registered as {@code wasm.<name>.<tool>}
+ * @param hosts    hosts the extension declares it reaches; informational, shown at install
      * @param effect   the effect class the extension claims for its tools; honoured only when
      *                 the installation is {@code VERIFIED}
      */
@@ -46,6 +49,8 @@ public interface ExtensionRegistry {
             List<String> command,
             List<String> env,
             List<String> hosts,
+            List<String> permissions,
+            List<String> tools,
             EffectClass effect,
             Optional<String> publisher) {
 
@@ -59,6 +64,8 @@ public interface ExtensionRegistry {
             command = List.copyOf(Objects.requireNonNull(command, "command"));
             env = List.copyOf(Objects.requireNonNull(env, "env"));
             hosts = List.copyOf(Objects.requireNonNull(hosts, "hosts"));
+            permissions = List.copyOf(Objects.requireNonNull(permissions, "permissions"));
+            tools = List.copyOf(Objects.requireNonNull(tools, "tools"));
             Objects.requireNonNull(effect, "effect");
             Objects.requireNonNull(publisher, "publisher");
             if (!NAME.matcher(name).matches()) {
@@ -69,6 +76,9 @@ public interface ExtensionRegistry {
             }
             if (kind == Kind.MCP && command.isEmpty()) {
                 throw new IllegalArgumentException("an mcp extension must declare a command");
+            }
+            if (kind == Kind.WASM && tools.isEmpty()) {
+                throw new IllegalArgumentException("a wasm extension must declare at least one tool");
             }
             for (String variable : env) {
                 if (variable.isBlank() || variable.indexOf('=') >= 0) {

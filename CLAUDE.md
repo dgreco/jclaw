@@ -20,7 +20,7 @@ jclaw is a Java/Spring Boot reimplementation of the **architecture** of
 untrusted-`LoopExit` trust model, and the `CapabilityHost` authority boundary are faithful; the
 feature surface is a fraction of IronClaw's. See **Not built yet** for the honest list.
 
-294 tests pass across 9 modules, including 14 machine-checked architecture rules.
+302 tests pass across 9 modules, including 14 machine-checked architecture rules.
 
 ## Commands
 
@@ -432,11 +432,11 @@ architecture and most runtime mechanisms are equivalent, the breadth is not. PAR
 - **SQL beyond one table** — `storage=sql` keeps every store's rows in `jclaw_rows` with
   versioned migrations; there are no per-concept tables, no materialised projections (folds run
   on demand over indexed reads), and no connection pool (a connection per operation).
-- **A WASM lane** — the two kinds of untrusted code jclaw runs, shell commands and MCP
-  servers, can each be contained (`shell-backend=docker`, `mcp-backend=docker`); first-party
-  lanes (file, http, memory) are host code behind the guards and run in-process by design. There
-  is no WASM lane with capability-based host imports, no orchestrator, no per-job tokens, no LLM
-  proxying, and a sandboxed MCP server's network is all-or-nothing, not host-mediated per host.
+- **A sandbox orchestrator** — shell commands and MCP servers run in containers, and WASM
+  extensions run in-process under Chicory with metered instructions, capped memory, and only the
+  host imports their manifest asked for. There is no orchestrator with per-job tokens, no LLM
+  proxying through the host, and a sandboxed MCP server's network is all-or-nothing rather than
+  host-mediated per host.
 - **An extension registry to fetch from** — packages have manifests, digests, Ed25519
   signatures, and `VERIFIED`/`COMMUNITY` trust decided at install, but they are local
   directories: no remote registry, no versioned upgrades, no profiles, and the only extension

@@ -139,7 +139,8 @@ public class JclawConfiguration {
     public List<CapabilityHandler> capabilityHandlers(
             JclawProperties properties, Clock clock, MemoryStore memoryStore,
             EmbeddingProvider embeddingProvider, SkillCatalog skillCatalog, SubagentHost subagentHost,
-            RoutineStore routineStore, McpRegistry mcp) {
+            RoutineStore routineStore, McpRegistry mcp,
+            io.jclaw.app.runtime.WasmExtensionHost wasmExtensions) {
         List<CapabilityHandler> handlers = new ArrayList<>(CoreTools.all(clock));
         handlers.addAll(FileTools.all());
         handlers.addAll(MemoryTools.all(memoryStore, clock, embeddingProvider));
@@ -152,6 +153,8 @@ public class JclawConfiguration {
         // kernel rejects duplicate ids outright, and the mcp.* namespace makes collision
         // impossible anyway.
         handlers.addAll(mcp.handlers());
+        // WASM extensions last, beside MCP: third-party, namespaced, and never shadowing a built-in.
+        handlers.addAll(wasmExtensions.handlers());
         return List.copyOf(handlers);
     }
 
@@ -285,6 +288,23 @@ public class JclawConfiguration {
 
     /** Marker for the wiring above. */
     public static final class LedgerWiring { }
+
+    /**
+     * The WebAssembly extensions installed here.
+     *
+     * <p>The spec is the operator's: how much memory and computation any module may have. The
+     * permissions are the package's, and they can only open host functions this host implements,
+     * each already behind a guard.
+     */
+    @Bean
+    public io.jclaw.app.runtime.WasmExtensionHost wasmExtensionHost(
+            ExtensionRegistry extensionRegistry, JclawProperties properties) {
+        io.jclaw.domain.wasm.WasmSpec spec = new io.jclaw.domain.wasm.WasmSpec(
+                properties.wasmMaxMemoryPages(), properties.wasmMaxInstructions(),
+                properties.wasmMaxOutputBytes(), properties.wasmTimeout(), java.util.Set.of());
+        return new io.jclaw.app.runtime.WasmExtensionHost(
+                extensionRegistry, properties.extensionsPath(), spec);
+    }
 
     /** Sessions issued by logging in, stored as hashes. */
     @Bean

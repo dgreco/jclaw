@@ -13,6 +13,15 @@
   <name>jclaw-tools</name>
   <description>Built-in tool suite plus filesystem/process/network adapters with workspace, egress, and env-scrub guards.</description>
   <dependencies>
+    <!-- The WASM lane. Pure Java on purpose: a native runtime would break the native image. -->
+    <dependency>
+      <groupId>com.dylibso.chicory</groupId>
+      <artifactId>runtime</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.dylibso.chicory</groupId>
+      <artifactId>wasm</artifactId>
+    </dependency>
     <dependency>
       <groupId>io.jclaw</groupId>
       <artifactId>jclaw-contracts</artifactId>

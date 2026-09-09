@@ -47,6 +47,8 @@ public final class FilesystemExtensionRegistry implements ExtensionRegistry {
     public static final String MANIFEST_FILE = "jclaw-extension.json";
     public static final String SIGNATURE_FILE = "jclaw-extension.sig";
     private static final String SKILL_FILE = "SKILL.md";
+    /** The module a WASM package ships, at a fixed name so nothing has to be configured. */
+    public static final String MODULE_FILE = "module.wasm";
     private static final String KIND_INSTALLED = "installed";
     private static final String KIND_REMOVED = "removed";
     private static final String KIND_ENABLED = "enabled";
@@ -117,6 +119,17 @@ public final class FilesystemExtensionRegistry implements ExtensionRegistry {
         if (manifest.kind() == Kind.SKILL && !pkg.files().containsKey(SKILL_FILE)) {
             return Result.err("skill_package_needs_SKILL.md");
         }
+        if (manifest.kind() == Kind.WASM && !pkg.files().containsKey(MODULE_FILE)) {
+            return Result.err("wasm_package_needs_module.wasm");
+        }
+        if (manifest.kind() == Kind.WASM) {
+            try {
+                io.jclaw.domain.wasm.WasmSpec.defaults()
+                        .withPermissions(io.jclaw.domain.wasm.WasmSpec.parsePermissions(manifest.permissions()));
+            } catch (IllegalArgumentException e) {
+                return Result.err("wasm_permission_unknown");
+            }
+        }
 
         Path target = root.resolve(manifest.name());
         try {
@@ -148,6 +161,8 @@ public final class FilesystemExtensionRegistry implements ExtensionRegistry {
         row.put("command", manifest.command());
         row.put("envNames", manifest.env());
         row.put("hosts", manifest.hosts());
+        row.put("permissions", manifest.permissions());
+        row.put("tools", manifest.tools());
         row.put("effect", manifest.effect().name());
         manifest.publisher().ifPresent(p -> row.put("publisher", p));
         row.put("trust", trust.name());
@@ -279,6 +294,7 @@ public final class FilesystemExtensionRegistry implements ExtensionRegistry {
                                 String.valueOf(row.getOrDefault("description", "")),
                                 Kind.valueOf(String.valueOf(row.get("extensionKind"))),
                                 strings(row.get("command")), strings(row.get("envNames")), strings(row.get("hosts")),
+                                strings(row.get("permissions")), strings(row.get("tools")),
                                 EffectClass.valueOf(String.valueOf(row.get("effect"))),
                                 Optional.ofNullable(row.get("publisher")).map(Object::toString));
                         Map<String, String> secrets = new LinkedHashMap<>();

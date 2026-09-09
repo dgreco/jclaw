@@ -71,8 +71,16 @@ class ExtensionPackagingTest {
                 "name", "s", "version", "1", "kind", "skill")).orElseThrow().effect(), "effect defaults to NETWORK");
         assertEquals("manifest_requires_name_version_kind",
                 ManifestParser.parse(Map.of("name", "x")).errorAsOptional().orElseThrow());
-        assertEquals("manifest_kind_must_be_skill_or_mcp",
-                ManifestParser.parse(Map.of("name", "x", "version", "1", "kind", "wasm")).errorAsOptional().orElseThrow());
+        assertEquals("manifest_kind_must_be_skill_mcp_or_wasm",
+                ManifestParser.parse(Map.of("name", "x", "version", "1", "kind", "applet")).errorAsOptional().orElseThrow());
+        assertTrue(ManifestParser.parse(Map.of("name", "x", "version", "1", "kind", "wasm"))
+                .errorAsOptional().orElseThrow().startsWith("manifest_invalid"), "a wasm module must offer a tool");
+        Manifest wasm = ManifestParser.parse(Map.of(
+                "name", "counter", "version", "1", "kind", "wasm",
+                "permissions", List.of("log"), "tools", List.of("count"))).orElseThrow();
+        assertEquals(Kind.WASM, wasm.kind());
+        assertEquals(List.of("log"), wasm.permissions());
+        assertEquals(List.of("count"), wasm.tools());
         assertTrue(ManifestParser.parse(Map.of("name", "x", "version", "1", "kind", "mcp"))
                 .errorAsOptional().orElseThrow().startsWith("manifest_invalid"), "mcp needs a command");
         assertTrue(ManifestParser.parse(Map.of("name", "Bad Name", "version", "1", "kind", "skill"))
