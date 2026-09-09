@@ -1,6 +1,6 @@
 # jclaw vs IronClaw — Parity
 
-An honest enumeration of what [IronClaw](https://github.com/nearai/ironclaw) (internally "Reborn") has that jclaw does not, and of what jclaw now has. jclaw is roughly 20k lines of Java (plus 6.5k of tests) against IronClaw's ~1.4M lines of Rust across ~63 crates. The **architecture** is equivalent — layer ladder, turn/run lifecycle, untrusted `LoopExit`, single `CapabilityHost` authority boundary, checkpoint-kind–driven recovery — and, after the September 2026 parity work, most of the runtime *mechanisms* are present in some form. What remains missing is breadth: channel adapters, a remote extension registry, and a WASM lane. This file is the list, organised by IronClaw's own crate families so a gap can be traced to the crate that fills it upstream.
+An honest enumeration of what [IronClaw](https://github.com/nearai/ironclaw) (internally "Reborn") has that jclaw does not, and of what jclaw now has. jclaw is roughly 20k lines of Java (plus 6.5k of tests) against IronClaw's ~1.4M lines of Rust across ~63 crates. The **architecture** is equivalent — layer ladder, turn/run lifecycle, untrusted `LoopExit`, single `CapabilityHost` authority boundary, checkpoint-kind–driven recovery — and, after the September 2026 parity work, most of the runtime *mechanisms* are present in some form. What remains missing is breadth, not mechanism: channel adapters, a remote extension registry, a WASM lane, and the long tail catalogued in section 16. This file is the list, organised by IronClaw's own crate families so a gap can be traced to the crate that fills it upstream.
 
 Sources: IronClaw's `README.md`, `crates/Architecture.md`, and the `crates/` listing as of September 2026; jclaw's code on this checkout (286 tests, 0 failures). Where the upstream doc names a concept and jclaw has an equivalent under a different name, the mapping is given. Where the gap is uncertain it is marked *(unverified)*.
 
@@ -267,15 +267,50 @@ Listed so the comparison is not read as one-directional:
 
 ## 16. What is still missing, ranked
 
-The twelve items of the original list and the six that followed are closed (sections above mark each ✅ or 🟡 with the caveat). What remains is breadth rather than mechanism. Ranked by what a deployment beyond one operator's machine would hit first:
+Every item of the three earlier lists is closed — the twelve of the original, the six that
+followed, and the ten ranked here in September 2026 (the sections above mark each ✅ or 🟡 with
+its caveat). None of that makes jclaw IronClaw: it makes the *mechanisms* comparable. What is
+left is the long tail each mechanism leaves behind, and it is worth being precise about, because
+"closed" above never meant "as broad as upstream".
 
-1. ~~**A real product surface**~~ — closed: the browser UI and the OpenAI-compatible endpoint sit on `serve`. Still open under this heading: Slack/Telegram channel adapters and reply-target bindings.
-2. ~~**Identity and multi-tenancy**~~ — closed at the mechanism level: `serve` users are tenants, and every scope-keyed store and the scheduler separate by tenant. Still open under this heading: a login flow instead of static tokens, roles, per-tenant policy and token accounting, and the `agent` field of `TurnScope`, which is always `default`.
-3. ~~**A secrets vault with credential injection**~~ — closed: an encrypted vault and host-side substitution of `{{secret:NAME}}` under capability + host bindings. Still open under this heading: staged handoff into subprocess environments, leak scanning of outbound model requests, and per-tenant vaults.
-4. ~~**SQL persistence**~~ — closed: one `RowStore` port, a JDBC backend with versioned migrations, H2 or PostgreSQL. Still open under this heading: materialised projections (folds run on demand over indexed reads), per-concept tables, and a connection pool.
-5. ~~**Sandboxing beyond the shell lane**~~ — closed for the code that is actually untrusted: MCP servers now run in the container contract (`mcp-backend: docker`) beside shell commands, with network by configuration and environment by name. Still open under this heading: a WASM lane with capability-based host imports and resource limiting, a sandbox orchestrator with per-job tokens and LLM proxying, and per-host egress for a server process rather than all-or-nothing.
-6. ~~**Extension ecosystem**~~ — closed at the package level: manifests, digests, signatures, trust decided at install, skill and MCP packages. Still open under this heading: a remote registry with versioned upgrades, profiles, channel packages, and a WASM tool kind.
-7. ~~**Loop hooks and loop families**~~ — closed: `LoopHook` at the model and capability stages, `LoopFamily` with a second strategy. Still open under this heading: hooks on prompt assembly and gate raising, and families defined outside Java.
-8. ~~**Observability substrate**~~ — closed as projections of the audit log: Prometheus metrics, OTLP traces, collector export. Still open under this heading: an in-process OpenTelemetry SDK with context propagation into provider and MCP calls, and latency histograms.
-9. ~~**Triggers beyond cron**~~ — closed: the pure `Trigger` parses four forms and `RoutineSchedule` decides which the clock drives. Still open under this heading: filesystem watches, inbound-message triggers, and fan-out from one webhook to several routines.
-10. ~~**MCP breadth**~~ — closed: streamable HTTP beside stdio behind one transport port, resources and prompts as capabilities, lazy start from a cached surface, and the egress guard on every remote endpoint. Still open under this heading: the OAuth 2.1 flow (a vault-held bearer token stands in), sampling, server-initiated notifications, and mediating a stdio server's own sockets.
+Ranked, again, by what a deployment beyond one operator's machine would hit first:
+
+1. **Channel adapters** (§2, §12) — `serve` carries a browser UI and an OpenAI-compatible
+   endpoint, and that is one product surface with two doors. Slack and Telegram are packages
+   upstream, with reply-target bindings and platform-native commands; here there is nothing to
+   bind a reply to but stdout and an HTTP read-back.
+2. **A login flow** (§10) — users are tenants and every scope-keyed store separates by them, but
+   identity is a static bearer token per user. No OAuth, no session, no roles, no per-tenant
+   policy or token accounting, and `TurnScope.agent()` is always `default`.
+3. **A WASM lane** (§3) — the two kinds of genuinely untrusted code, shell commands and MCP
+   servers, can each be put in a container. Extensions cannot: a `VERIFIED` package's code still
+   runs as a process or in-process. WASM with capability-based host imports and resource
+   limiting, an orchestrator with per-job tokens, and LLM proxying through the host are all
+   upstream and all absent.
+4. **A remote extension registry** (§12) — packages have manifests, digests, signatures, and
+   trust decided at install, but they are directories on disk. No registry to fetch from, no
+   versioned upgrade, no profiles, and only two package kinds.
+5. **Secrets beyond one call** (§9, §10) — a vault secret is leased into one capability
+   invocation's arguments under a capability + host binding. There is no staged handoff into a
+   subprocess environment, no leak scan of outbound model requests for secrets that arrived
+   through a tool, and no per-tenant vault.
+6. **SQL beyond one table** (§11) — every store's rows live in `jclaw_rows` with versioned
+   migrations. Projections are folded on demand rather than materialised, there are no
+   per-concept tables, and a connection is opened per operation.
+7. **In-process telemetry** (§13) — metrics and traces are projections of the audit log,
+   computed as events are written. There is no OpenTelemetry SDK in the process, no context
+   propagation into provider or MCP calls, and no latency histograms (count, sum, max only).
+8. **Pluggable stages** (§5) — hooks cover the model and capability stages, and there are two
+   loop families. Prompt assembly and gate raising take no hook, and a new family is Java, not
+   configuration.
+9. **MCP auth and the reverse direction** (§3) — servers reach over stdio or HTTP and expose
+   tools, resources, and prompts. Authentication is a vault-held bearer token, not the OAuth 2.1
+   flow; sampling and server-initiated notifications are unimplemented; a stdio server's own
+   sockets are unmediated unless it is containerised.
+10. **Triggers with more sources** (§7) — cron, intervals, webhooks, and two audit-event types.
+    No filesystem watches, no inbound-message triggers, no fan-out from one webhook.
+
+Two things that are structurally different rather than merely narrower, and are unlikely to
+change: jclaw is single-host (the thread lock is an OS file lock, the scheduler runs in one
+process, and there is no cross-host coordination), and it is one agent (no agent-to-agent
+protocol beyond subagents on the same machinery).
