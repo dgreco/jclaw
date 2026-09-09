@@ -160,7 +160,7 @@ Test totals by module (verified on this checkout): contracts 8 · domain 62 · k
 |---|---|---|
 | `byte-verify` | verify | `scripts/byte-verify.sh scan` — refuses stray control bytes in sources. |
 | `build-test` | build | `mvn verify` on Temurin 21; publishes JUnit reports to the merge-request widget and the uber jar as an artifact. Maven's local repository is cached per pom hash. |
-| `native-image` | native | Builds the GraalVM binary and smoke-tests it (`--version`, a mock-provider `run`). Automatic on tags, manual on `main` and merge requests, since it needs a runner with several GB of memory. |
+| `native-image` | native | Builds the GraalVM binary and smoke-tests it (`--version`, a mock-provider `run`). Mandatory on every pipeline: a broken native build fails the pipeline like a broken test. Needs a runner with several GB of memory. |
 
 One pipeline per change: pushes to a branch with an open merge request run only the merge-request pipeline. The jobs assume a Docker-executor runner and pull public images (`maven:3.9.11-eclipse-temurin-21`, `ghcr.io/graalvm/native-image-community:25`).
 
