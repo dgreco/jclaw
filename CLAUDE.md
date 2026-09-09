@@ -33,6 +33,27 @@ feature surface is a fraction of IronClaw's. See **Not built yet** for the hones
 - Run (jar): `java -jar jclaw-app/target/jclaw-app-0.1.0-SNAPSHOT.jar <command>`
 - Source-integrity guard: `./scripts/byte-verify.sh scan`
 
+### PostgreSQL
+
+`storage=sql` defaults to embedded H2, and everything built on it — four migrations, a table per
+busy store, materialised projections, the pooled connections, the cross-host thread lock — was
+written against H2 alone. `SqlSchema` claims its DDL is "written in the dialect H2 and PostgreSQL
+share"; `PostgresStorageIntegrationTest` is what actually checks that claim, on a real server
+under Testcontainers.
+
+```bash
+mvn test -Dtest=PostgresStorageIntegrationTest -pl jclaw-app   # needs a Docker daemon
+docker compose run --rm jclaw run "hello"                      # the same thing by hand
+```
+
+The test is `@Testcontainers(disabledWithoutDocker = true)`: without a daemon it skips rather
+than fails, so a developer with Docker stopped does not see a red suite for an environment
+problem. **It therefore skips in CI too** — the `build-test` job runs in a plain Maven image with
+no Docker socket — so PostgreSQL coverage is something a person runs, not something the pipeline
+guarantees. Wiring a `docker:dind` service into that job would close it. **On a non-default Docker socket** (OrbStack, Colima, rootless) Testcontainers may
+negotiate too old an API version and report "Could not find a valid Docker environment"; the fix
+is `DOCKER_HOST=unix://$HOME/.orbstack/run/docker.sock` plus `-DargLine="-Dapi.version=1.44"`.
+
 ### Native image
 
 ```bash

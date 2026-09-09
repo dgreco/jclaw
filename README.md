@@ -354,6 +354,17 @@ A **finished** run's projection is materialised into `jclaw_run_projection` rath
 
 Connections come from a **HikariCP pool** (`jclaw.datasource-pool-size`, default 8) rather than one per operation. For the CLI the difference is invisible; `serve` runs several turns at once, and against PostgreSQL each unpooled call costs a round trip and a backend process. The connection timeout is deliberately short: a worker holding a connection across a model call is a bug, and should surface as an error rather than a hang.
 
+**Trying it.** `docker compose` brings up PostgreSQL and jclaw together, which is the cheapest way to see the SQL backend do real work:
+
+```bash
+docker compose run --rm jclaw doctor
+docker compose run --rm jclaw run "hello"
+docker compose exec postgres psql -U jclaw -d jclaw -c '\dt'   # the twelve tables jclaw created
+docker compose --profile serve up                              # the HTTP surface on :8080
+```
+
+The CLI container and the `serve` container are two processes on one database, which is exactly the topology the thread lock and the shared cap exist for. The image is the uber jar on a JRE base rather than the native binary: cross-building a native image inside Docker is slow enough to discourage anyone from trying the stack at all, and it is the same code either way.
+
 **Two hosts.** `storage=sql` is also what makes a second worker safe, and the reason is one table. With JSONL the thread lock is an OS file lock: atomic at the kernel, and it vanishes the instant its process dies, but invisible to another machine and unreliable on a shared filesystem. With SQL it is a row in `jclaw_thread_locks`, so two hosts contend for a thread through the database — acquisition is a primary-key insert, which the database decides. The scheduler also counts what the *deployment* has running rather than what its own process does, so `--concurrency 2` means two runs and not two per host, and a run is claimed at the moment it is selected so `RunStore.claim` arbitrates two hosts ticking milliseconds apart.
 
 What that buys is exclusion between hosts that are alive. It is not a fenced lock: a row cannot vanish when a process dies, so it carries a lease the holder renews, and a host frozen past the lease — a long GC pause, a suspended VM, a partition — can be displaced. If it then wakes and writes, two runs can interleave one transcript, which is the thing the lock exists to prevent. Closing that needs a fence token on every durable write and is not implemented. The trade is stated rather than hidden: file locks are stronger on one machine, rows are the only thing that works on two.

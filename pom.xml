@@ -22,6 +22,7 @@
   <properties>
     <!-- Pure-Java WebAssembly runtime: no native library, so the native image keeps working. -->
     <chicory.version>1.7.5</chicory.version>
+    <testcontainers.version>1.21.3</testcontainers.version>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
     <maven.compiler.release>21</maven.compiler.release>
@@ -46,6 +47,17 @@
 
   <dependencyManagement>
     <dependencies>
+      <!--
+        Testcontainers, for the PostgreSQL tests. Its own BOM rather than pinned versions, so the
+        modules cannot drift apart. Boot 4.1 does not manage these coordinates.
+      -->
+      <dependency>
+        <groupId>org.testcontainers</groupId>
+        <artifactId>testcontainers-bom</artifactId>
+        <version>${testcontainers.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
       <dependency>
         <groupId>com.dylibso.chicory</groupId>
         <artifactId>runtime</artifactId>

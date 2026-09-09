@@ -1,0 +1,90 @@
+# jclaw against a real PostgreSQL.
+#
+#   docker compose run --rm jclaw doctor
+#   docker compose run --rm jclaw run "hello"
+#   docker compose run --rm jclaw status -n 10
+#   docker compose --profile serve up          # the HTTP surface on http://localhost:8080
+#
+# Everything under `storage: sql` was written against embedded H2 and is verified against
+# PostgreSQL by PostgresStorageIntegrationTest; this is the same thing by hand, for when you
+# want to poke at the database yourself:
+#
+#   docker compose exec postgres psql -U jclaw -d jclaw -c '\dt'
+#   docker compose exec postgres psql -U jclaw -d jclaw -c 'SELECT * FROM jclaw_schema'
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: jclaw
+      POSTGRES_USER: jclaw
+      # Local-only credential. jclaw itself never reads a password from a file it can see:
+      # it takes JCLAW_DATASOURCE_PASSWORD from the environment and nowhere else.
+      POSTGRES_PASSWORD: jclaw-local-password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      # jclaw applies its migrations on startup, so it must not start before the server accepts
+      # connections — otherwise the first `run` fails on something that is only a race.
+      test: ["CMD-SHELL", "pg_isready -U jclaw -d jclaw"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  jclaw:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      JCLAW_STORAGE: sql
+      JCLAW_DATASOURCE_URL: jdbc:postgresql://postgres:5432/jclaw
+      JCLAW_DATASOURCE_USERNAME: jclaw
+      JCLAW_DATASOURCE_PASSWORD: jclaw-local-password
+      # The mock provider needs no key, so the stack runs with nothing configured. Swap in a
+      # real one by setting JCLAW_PROVIDER and the matching key below.
+      JCLAW_PROVIDER: ${JCLAW_PROVIDER:-mock}
+      JCLAW_MOCK_SCRIPT: ${JCLAW_MOCK_SCRIPT:-text:hello from jclaw on postgres}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      # Trusted only because this is a throwaway local stack: the shell lane runs unattended.
+      JCLAW_APPROVAL_MODE: ${JCLAW_APPROVAL_MODE:-interactive}
+    volumes:
+      # The workspace is the agent's world; mount your own directory to give it real work.
+      - ./docker/workspace:/workspace
+      - jclaw-state:/state
+    # `run` rather than `up`: the CLI is one-shot, and a service that exits immediately looks
+    # like a crash in `docker compose up`.
+    profiles: ["cli"]
+
+  # The long-lived half: HTTP ingress and the worker loop. Started with `--profile serve`.
+  serve:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["serve", "--host", "0.0.0.0", "--port", "8080"]
+    ports:
+      - "8080:8080"
+    environment:
+      JCLAW_STORAGE: sql
+      JCLAW_DATASOURCE_URL: jdbc:postgresql://postgres:5432/jclaw
+      JCLAW_DATASOURCE_USERNAME: jclaw
+      JCLAW_DATASOURCE_PASSWORD: jclaw-local-password
+      JCLAW_PROVIDER: ${JCLAW_PROVIDER:-mock}
+      JCLAW_MOCK_SCRIPT: ${JCLAW_MOCK_SCRIPT:-text:hello from jclaw on postgres}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      # Loopback-only is the default; inside a container that would refuse every request from
+      # the host, so the bind address is explicit above and a token is required.
+      JCLAW_SERVE_TOKEN: ${JCLAW_SERVE_TOKEN:-local-operator-token}
+    volumes:
+      - ./docker/workspace:/workspace
+      - jclaw-state:/state
+    profiles: ["serve"]
+
+volumes:
+  postgres-data:
+  jclaw-state:

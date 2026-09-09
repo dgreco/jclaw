@@ -601,7 +601,14 @@ public class JclawConfiguration {
         com.zaxxer.hikari.HikariConfig pool = new com.zaxxer.hikari.HikariConfig();
         pool.setJdbcUrl(url);
         pool.setUsername(properties.datasourceUsername());
-        pool.setPassword(password == null ? "" : password);
+        // Only when there is one. Forcing an empty password on an unset variable broke the
+        // common deployment shape where the URL carries the credential — a `DATABASE_URL` from
+        // a platform, or a PostgreSQL `?password=` parameter — because an explicit empty
+        // password overrides what the URL says and the server rejects it. Unset now means "the
+        // URL knows", which is the only reading that leaves both shapes working.
+        if (password != null && !password.isEmpty()) {
+            pool.setPassword(password);
+        }
         pool.setMaximumPoolSize(Math.max(1, properties.datasourcePoolSize()));
         // A worker holding a connection while a model call is in flight would be a bug, not a
         // slow query, so a short timeout surfaces it as an error instead of a hang.

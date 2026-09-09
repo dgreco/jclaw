@@ -27,6 +27,22 @@
       <scope>runtime</scope>
     </dependency>
 
+    <!--
+      PostgreSQL for real, in a container. Everything under jclaw.storage=sql had only ever run
+      against embedded H2, and the migrations claim to be written in the dialect both share —
+      a claim nothing checked. Test scope, so none of this reaches the jar or the native image.
+    -->
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>postgresql</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+
     <dependency>
       <groupId>info.picocli</groupId>
       <artifactId>picocli</artifactId>
