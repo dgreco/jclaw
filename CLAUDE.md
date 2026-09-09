@@ -21,7 +21,7 @@ jclaw is a Java/Spring Boot reimplementation of the **architecture** of
 untrusted-`LoopExit` trust model, and the `CapabilityHost` authority boundary are faithful; the
 feature surface is a fraction of IronClaw's. See **Not built yet** for the honest list.
 
-356 tests pass across 9 modules, including 15 machine-checked architecture rules.
+364 tests pass across 9 modules, including 15 machine-checked architecture rules.
 
 ## Commands
 
@@ -465,9 +465,11 @@ architecture and most runtime mechanisms are equivalent, the breadth is not. PAR
   profiles, and three kinds (skill, MCP, WASM). There is no channel package kind, no
   publisher-side `publish` command, and no signed index — the index is trusted only for the
   digest, which the download must then match.
-- **Pluggable pipeline stages** — hooks cover pre/post model and capability, and two families
-  exist (`canonical`, `reflective`); there is no hook on prompt assembly or gate raising, and a
-  new family is Java code, not configuration.
+- **Pipeline-stage breadth** — hooks cover prompt assembly, pre/post model, pre/post capability,
+  and gate raising, and a `reflective`-based family can be defined in `jclaw.loop-families`.
+  There is no hook on checkpoint writes or exit validation, a configured family can only vary
+  the review instruction (not the pass count, which would need a checkpoint codec change), and
+  hooks are still Java beans rather than anything loadable at runtime.
 - **Live instrumentation** — metrics (`/metrics`, Prometheus text, with real latency histograms)
   and traces (`/runs/{r}/trace`, OTLP/JSON, optional export to `otlp-endpoint`) are projections
   of the event log, and outbound model and MCP-over-HTTP calls carry a W3C `traceparent` naming

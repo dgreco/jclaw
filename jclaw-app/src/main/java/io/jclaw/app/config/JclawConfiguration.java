@@ -339,6 +339,37 @@ public class JclawConfiguration {
         return new io.jclaw.app.extension.ExtensionCatalog(properties.extensionRegistries(), egressGuard);
     }
 
+    /**
+     * The loop families this process knows: the two that ship plus any the operator defined.
+     *
+     * <p>Built at startup and validated there, so a typo in {@code jclaw.loop-families} — an
+     * unknown base, a missing instruction, an id that shadows a built-in — fails loudly at boot
+     * rather than at the first run that selects it.
+     */
+    @Bean
+    public io.jclaw.domain.loop.LoopFamilyRegistry loopFamilyRegistry(JclawProperties properties) {
+        List<io.jclaw.domain.loop.LoopFamily> defined = new ArrayList<>();
+        properties.loopFamilies().forEach((id, spec) -> {
+            if (!"reflective".equals(spec.base())) {
+                throw new IllegalArgumentException("loop family '" + id + "': base must be "
+                        + "'reflective' (the only family whose behaviour is configurable), got '"
+                        + spec.base() + "'");
+            }
+            if (spec.reviewInstruction().isBlank()) {
+                throw new IllegalArgumentException("loop family '" + id
+                        + "': review-instruction is required for a reflective family");
+            }
+            defined.add(io.jclaw.domain.loop.LoopFamilies.reviewing(id, spec.reviewInstruction()));
+        });
+        io.jclaw.domain.loop.LoopFamilyRegistry registry =
+                io.jclaw.domain.loop.LoopFamilyRegistry.of(defined);
+        if (!registry.knows(properties.loopFamily())) {
+            throw new IllegalArgumentException("unknown loop family '" + properties.loopFamily()
+                    + "' in jclaw.loop-family; known: " + registry.ids());
+        }
+        return registry;
+    }
+
     /** The messaging channels jclaw can be talked to from. Empty unless configured. */
     @Bean
     public java.util.List<io.jclaw.contracts.channel.ChannelAdapter> channelAdapters(Clock clock) {
@@ -674,9 +705,10 @@ public class JclawConfiguration {
             CapabilityPolicyResolver capabilityPolicyResolver,
             CapabilityHandler.HandlerContext handlerContext,
             io.jclaw.app.runtime.TenantVaults tenantVaults,
+            List<LoopHook> loopHooks,
             Clock clock) {
 
-        return new DefaultCapabilityHost(
+        DefaultCapabilityHost host = new DefaultCapabilityHost(
                 capabilityHandlers,
                 approvalStore,
                 capabilityResultStore,
@@ -688,6 +720,10 @@ public class JclawConfiguration {
                 () -> credentialValues(),
                 tenantVaults,
                 clock);
+        // Hooks may reword a gate or refuse to ask it. There is no outcome that approves, so the
+        // authority order above is unchanged.
+        host.withGateHooks(loopHooks);
+        return host;
     }
 
     /**
@@ -797,11 +833,14 @@ public class JclawConfiguration {
             EventLog eventLog,
             LoopStateCodec loopStateCodec,
             Clock clock,
-            List<LoopHook> loopHooks) {
+            List<LoopHook> loopHooks,
+            io.jclaw.domain.loop.LoopFamilyRegistry loopFamilyRegistry) {
 
-        return new EffectInterpreter(
+        EffectInterpreter interpreter = new EffectInterpreter(
                 modelProvider, capabilityHost, approvalStore, threadService,
                 checkpointStore, eventLog, loopStateCodec, loopHooks, clock);
+        interpreter.withFamilies(loopFamilyRegistry);
+        return interpreter;
     }
 
     /**

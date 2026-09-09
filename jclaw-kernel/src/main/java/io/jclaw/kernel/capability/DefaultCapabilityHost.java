@@ -13,6 +13,7 @@ import io.jclaw.contracts.capability.HandlerError;
 import io.jclaw.contracts.event.EventLog;
 import io.jclaw.contracts.event.JclawEvent;
 import io.jclaw.contracts.loop.GateKind;
+import io.jclaw.contracts.loop.LoopHook;
 import io.jclaw.contracts.secret.SecretVault;
 import io.jclaw.contracts.secret.SecretVaults;
 import io.jclaw.contracts.turn.TurnRef.LoopGateRef;
@@ -87,6 +88,7 @@ public final class DefaultCapabilityHost implements CapabilityHost {
     private final CapabilityHandler.HandlerContext context;
     private final Supplier<Set<String>> knownSecrets;
     private final SecretVaults vaults;
+    private List<LoopHook> loopHooks = List.of();
     private final Clock clock;
 
     /** Dispatch instants per rate-limited capability; per process, like the limit itself. */
@@ -188,6 +190,18 @@ public final class DefaultCapabilityHost implements CapabilityHost {
     public Optional<CapabilityDescriptor> describe(CapabilityId id) {
         Objects.requireNonNull(id, "id");
         return Optional.ofNullable(handlers.get(id)).map(CapabilityHandler::descriptor);
+    }
+
+    /**
+     * Hooks consulted when a gate is about to be raised.
+     *
+     * <p>A setter rather than a constructor parameter because gate hooks are optional and there
+     * are four constructors; threading an empty list through all of them would add ceremony to
+     * every call site to serve the case that does not use it. Set once at wiring, before any
+     * dispatch.
+     */
+    public void withGateHooks(List<LoopHook> hooks) {
+        this.loopHooks = List.copyOf(Objects.requireNonNull(hooks, "hooks"));
     }
 
     @Override
@@ -306,8 +320,19 @@ public final class DefaultCapabilityHost implements CapabilityHost {
             return Optional.of(denied(invocation, descriptor, "approval_required_but_unattended"));
         }
 
+        // Hooks see the question before a human does. They may amend the prompt — a ticket
+        // number, a tenant, a policy note — or refuse to ask it, which becomes a denial. There is
+        // deliberately no outcome that approves: only a human or the operator's policy says yes,
+        // which is what keeps this class the single authority gate.
+        Optional<String> prompt = hookedPrompt(
+                invocation, GateKind.APPROVAL, Optional.of(descriptor.id().value()),
+                describeForHuman(invocation, descriptor));
+        if (prompt.isEmpty()) {
+            return Optional.of(denied(invocation, descriptor, "gate_refused_by_hook"));
+        }
+
         ApprovalStore.Gate raised = approvals.raise(
-                invocation.run(), invocation.scope(), invocation, describeForHuman(invocation, descriptor));
+                invocation.run(), invocation.scope(), invocation, prompt.get());
         events.append(new JclawEvent.GateRaised(
                 clock.instant(), invocation.run(), GateKind.APPROVAL, raised.id().value()));
         log.debug("capability {}: approval gate {} raised for fingerprint {}",
@@ -444,6 +469,49 @@ public final class DefaultCapabilityHost implements CapabilityHost {
      * by the invocation, so a resume that re-dispatches the same call lands on the same gate until
      * the lane reports an outcome.
      */
+    /**
+     * Runs the gate hooks, returning the prompt to ask or empty when one refused.
+     *
+     * <p>A hook that throws is treated as no opinion rather than as a refusal. Hooks are host
+     * code, but a buggy one turning every gate into a denial would be a worse failure than the
+     * bug it came from.
+     */
+    private Optional<String> hookedPrompt(
+            CapabilityInvocation invocation, GateKind kind, Optional<String> capability, String prompt) {
+        if (loopHooks.isEmpty()) {
+            return Optional.of(prompt);
+        }
+        // The kernel does not track iteration or budget; a gate hook is asked about a question,
+        // not about how far along the run is.
+        LoopHook.HookContext context =
+                new LoopHook.HookContext(invocation.run(), invocation.scope(), 0, 0.0);
+        LoopHook.GateRequest request = new LoopHook.GateRequest(kind, capability, prompt);
+        String current = prompt;
+        for (LoopHook hook : loopHooks) {
+            LoopHook.Outcome<String> outcome;
+            try {
+                outcome = hook.beforeGate(context,
+                        new LoopHook.GateRequest(request.kind(), request.capability(), current));
+            } catch (RuntimeException e) {
+                log.debug("gate hook {} threw ({}); treating it as no opinion", hook.id(), e.toString());
+                continue;
+            }
+            if (outcome instanceof LoopHook.Outcome.Veto<String> veto) {
+                events.append(new JclawEvent.HookFired(
+                        clock.instant(), invocation.run(), hook.id(), "before-gate", "vetoed"));
+                log.debug("gate hook {} refused to ask ({})", hook.id(), veto.reason());
+                return Optional.empty();
+            }
+            String amended = ((LoopHook.Outcome.Proceed<String>) outcome).value();
+            if (!amended.equals(current)) {
+                events.append(new JclawEvent.HookFired(
+                        clock.instant(), invocation.run(), hook.id(), "before-gate", "amended"));
+                current = amended;
+            }
+        }
+        return Optional.of(current);
+    }
+
     private CapabilityOutcome waitOn(
             CapabilityInvocation invocation, CapabilityDescriptor descriptor,
             HandlerError.Waiting waiting, long elapsed) {
@@ -452,8 +520,15 @@ public final class DefaultCapabilityHost implements CapabilityHost {
                 .filter(existing -> existing.kind() == GateKind.PROCESS)
                 .filter(existing -> existing.isPending() && !existing.isExpiredAt(clock.instant()))
                 .orElseGet(() -> {
+                    // A process gate is the lane saying "not yet", so a hook may reword it but a
+                    // refusal here would strand the child work rather than prevent an effect;
+                    // the prompt is taken and the veto ignored, which the empty case expresses
+                    // by falling back to what the lane asked for.
+                    String asked = hookedPrompt(invocation, GateKind.PROCESS,
+                            Optional.of(descriptor.id().value()), waiting.prompt())
+                            .orElse(waiting.prompt());
                     ApprovalStore.Gate raised = approvals.raiseProcess(
-                            invocation.run(), invocation.scope(), invocation, waiting.prompt());
+                            invocation.run(), invocation.scope(), invocation, asked);
                     events.append(new JclawEvent.GateRaised(
                             clock.instant(), invocation.run(), GateKind.PROCESS, raised.id().value()));
                     return raised;

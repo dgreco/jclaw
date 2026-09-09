@@ -8,6 +8,7 @@ import io.jclaw.contracts.event.EventLog;
 import io.jclaw.contracts.event.JclawEvent;
 import io.jclaw.contracts.loop.CheckpointStore;
 import io.jclaw.contracts.loop.FailureKind;
+import io.jclaw.contracts.loop.LoopHook;
 import io.jclaw.contracts.loop.LoopExit;
 import io.jclaw.contracts.model.ChatMessage;
 import io.jclaw.contracts.model.ModelExchange.ToolSpec;
@@ -71,6 +72,7 @@ public class JclawRuntime {
     private final LoopStateCodec codec;
     private final EventLog events;
     private final io.jclaw.storage.projection.RunProjectionCache projections;
+    private final java.util.List<io.jclaw.contracts.loop.LoopHook> loopHooks;
     private final JclawProperties properties;
     private final WorkspaceGuard workspace;
     private final SkillCatalog skills;
@@ -105,6 +107,7 @@ public class JclawRuntime {
             SkillCatalog skills,
             SecretVault vault,
             io.jclaw.storage.projection.RunProjectionCache projections,
+            java.util.List<io.jclaw.contracts.loop.LoopHook> loopHooks,
             Clock clock) {
         this.interpreter = Objects.requireNonNull(interpreter, "interpreter");
         this.vault = Objects.requireNonNull(vault, "vault");
@@ -120,6 +123,7 @@ public class JclawRuntime {
         this.workspace = Objects.requireNonNull(workspace, "workspace");
         this.skills = Objects.requireNonNull(skills, "skills");
         this.projections = Objects.requireNonNull(projections, "projections");
+        this.loopHooks = java.util.List.copyOf(Objects.requireNonNull(loopHooks, "loopHooks"));
         this.clock = Objects.requireNonNull(clock, "clock");
     }
 
@@ -216,8 +220,17 @@ public class JclawRuntime {
                     Optional.empty(), 0, 0);
         }
         TurnRunId run = TurnRunId.fresh();
-        LoopPolicy policy = resolvePolicy(scope, properties.modelFor(scope.agent()),
-                assembleSystemPrompt(scope.agent()));
+        LoopPolicy policy;
+        try {
+            policy = resolvePolicy(scope, properties.modelFor(scope.agent()),
+                    assembleSystemPrompt(run, scope));
+        } catch (PromptRefused refused) {
+            log.debug("run {}: a hook refused the turn at prompt assembly ({})",
+                    run.value(), refused.getMessage());
+            return new TurnResult(run, TurnStatus.FAILED, Optional.empty(),
+                    Optional.of(FailureKind.POLICY_DENIED), Optional.of(refused.getMessage()),
+                    Optional.empty(), 0, 0);
+        }
 
         log.debug("run {}: admitted on thread {} (project {}, model {}, {} tools visible, "
                         + "system prompt {} chars)",
@@ -400,8 +413,10 @@ public class JclawRuntime {
 
         TurnScope scope = scopeFor(tenant, thread);
         TurnRunId run = TurnRunId.fresh();
+        // A refusal here happens before the inbound message is written, so an enqueue a hook
+        // rejects leaves nothing behind — the caller gets the exception, not a queued run.
         LoopPolicy policy = resolvePolicy(scope, properties.modelFor(scope.agent()),
-                assembleSystemPrompt(scope.agent()));
+                assembleSystemPrompt(run, scope));
 
         threads.acceptInbound(thread, inbound);
         runs.record(new RunStore.RunRecord(
@@ -668,6 +683,46 @@ public class JclawRuntime {
                 PromptAssembly.workspaceName(workspace.root()),
                 skills.list(),
                 vault.list());
+    }
+
+    /**
+     * The assembled prompt after every hook has had a look at it.
+     *
+     * <p>Once per turn, at admission, so what a hook produces is what gets stored on the run and
+     * replayed on resume. A vetoing hook throws {@link PromptRefused}, which the caller turns
+     * into a failed turn before anything is written — refusing after the inbound message is
+     * durable would leave a message with no run to answer it.
+     */
+    private String assembleSystemPrompt(TurnRunId run, TurnScope scope) {
+        String prompt = assembleSystemPrompt(scope.agent());
+        if (loopHooks.isEmpty()) {
+            return prompt;
+        }
+        // Budget spent is zero: nothing has run yet, and a hook that reads it at this stage is
+        // asking about a turn that has not started.
+        LoopHook.HookContext context = new LoopHook.HookContext(run, scope, 0, 0.0);
+        for (LoopHook hook : loopHooks) {
+            LoopHook.Outcome<String> outcome = hook.beforePrompt(context, prompt);
+            if (outcome instanceof LoopHook.Outcome.Veto<String> veto) {
+                events.append(new JclawEvent.HookFired(
+                        clock.instant(), run, hook.id(), "before-prompt", "vetoed"));
+                throw new PromptRefused(hook.id() + ": " + veto.reason());
+            }
+            String amended = ((LoopHook.Outcome.Proceed<String>) outcome).value();
+            if (!amended.equals(prompt)) {
+                events.append(new JclawEvent.HookFired(
+                        clock.instant(), run, hook.id(), "before-prompt", "amended"));
+                prompt = amended;
+            }
+        }
+        return prompt;
+    }
+
+    /** A hook refused the turn while its prompt was being assembled. */
+    static final class PromptRefused extends RuntimeException {
+        PromptRefused(String reason) {
+            super(reason);
+        }
     }
 
     /**

@@ -36,8 +36,11 @@ public record LoopPolicy(
 
     public LoopPolicy {
         Objects.requireNonNull(family, "family");
-        if (LoopFamilies.byId(family).isEmpty()) {
-            throw new IllegalArgumentException("unknown loop family '" + family + "'");
+        // Only the shape is checked here. Whether a *configured* family exists is the
+        // registry's question, and the registry is built by the application, not the domain —
+        // a policy that validated against a static list could not carry an operator's own.
+        if (family.isBlank()) {
+            throw new IllegalArgumentException("a loop family id must not be blank");
         }
         Objects.requireNonNull(model, "model");
         Objects.requireNonNull(systemPrompt, "systemPrompt");
@@ -72,9 +75,22 @@ public record LoopPolicy(
         this(model, systemPrompt, tools, maxOutputTokens, maxConsecutiveModelFailures, context, "canonical");
     }
 
-    /** The strategy driving this run; see {@link LoopFamilies}. */
+    /**
+     * The strategy driving this run, resolved through a registry.
+     *
+     * <p>Takes the registry rather than looking the id up statically, which is what lets a
+     * configured family exist at all: the domain knows the two that ship and nothing about an
+     * operator's YAML.
+     */
+    public LoopFamily loopFamily(LoopFamilyRegistry registry) {
+        Objects.requireNonNull(registry, "registry");
+        return registry.byId(family).orElseThrow(
+                () -> new IllegalStateException("unknown loop family '" + family + "'"));
+    }
+
+    /** The strategy, among the families that ship. */
     public LoopFamily loopFamily() {
-        return LoopFamilies.byId(family).orElseThrow();
+        return loopFamily(LoopFamilyRegistry.builtIn());
     }
 
     public LoopPolicy withFamily(String family) {

@@ -145,6 +145,11 @@ native-image:
     # and the projection a finished run wrote reads back through the pooled connection.
     - export SQLRUN=$(./jclaw-app/target/jclaw status -n 20 --jclaw.workspace=$SMOKE --jclaw.state-dir=$SMOKE/sql --jclaw.provider=mock --jclaw.storage=sql | grep -o 'run_[0-9a-f]*' | head -1)
     - ./jclaw-app/target/jclaw status --run $SQLRUN --spans --jclaw.workspace=$SMOKE --jclaw.state-dir=$SMOKE/sql --jclaw.provider=mock --jclaw.storage=sql | grep -q COMPLETED
+    # A loop family defined in configuration, and the startup validation that catches a typo in
+    # one. Both are pure wiring, which is exactly what AOT is most likely to have dropped.
+    - $JC run "family" --jclaw.loop-families.strict.base=reflective --jclaw.loop-families.strict.review-instruction=REVIEW-IT --jclaw.loop-family=strict '--jclaw.mock-script[0]=text:draft' '--jclaw.mock-script[1]=text:REVIEWED' | grep -q REVIEWED
+    - "! $JC run x --jclaw.loop-family=nope"
+    - "! $JC run x --jclaw.loop-families.canonical.base=reflective --jclaw.loop-families.canonical.review-instruction=x"
     # Spans: `--spans` is the option `--trace` could never be, since that name is claimed
     # process-wide for verbosity. Cheap to check and silent to lose.
     - $JC run "metrics" --jclaw.mock-script=text:done

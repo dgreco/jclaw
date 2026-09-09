@@ -268,6 +268,8 @@ public record JclawProperties(
 
         @DefaultValue("canonical") String loopFamily,
 
+        Map<String, LoopFamilySpec> loopFamilies,
+
         @DefaultValue("") String otlpEndpoint,
 
         Map<String, ChannelSecrets> channels,
@@ -303,6 +305,21 @@ public record JclawProperties(
         Map<String, String> extensionProfiles,
 
         @DefaultValue("") String extensionProfile) {
+
+    /**
+     * A loop family an operator defines instead of writing Java.
+     *
+     * <p>{@code base} names what it derives from — only {@code reflective} today, which is the
+     * one shipped family whose behaviour is worth varying. The instruction is what the model is
+     * asked when it reviews its own draft, and it is the whole point: a team wants the review to
+     * check that a migration is reversible, or that no customer name appears in the answer.
+     */
+    public record LoopFamilySpec(String base, String reviewInstruction) {
+        public LoopFamilySpec {
+            base = base == null || base.isBlank() ? "reflective" : base.trim().toLowerCase(java.util.Locale.ROOT);
+            reviewInstruction = reviewInstruction == null ? "" : reviewInstruction.trim();
+        }
+    }
 
     /** A named run profile. Blank fields fall back to the host's model and prompt. */
     public record AgentProfile(String model, String systemPrompt) {
@@ -346,6 +363,7 @@ public record JclawProperties(
         extensionRegistries = extensionRegistries == null ? List.of()
                 : extensionRegistries.stream().filter(url -> !url.isBlank()).toList();
         extensionProfiles = extensionProfiles == null ? Map.of() : Map.copyOf(extensionProfiles);
+        loopFamilies = loopFamilies == null ? Map.of() : Map.copyOf(loopFamilies);
     }
 
     /**
@@ -410,6 +428,7 @@ public record JclawProperties(
                 Map.of(),
                 List.of("budget-notice"),
                 "canonical",
+                Map.of(),
                 "",
                 Map.of(),
                 256,

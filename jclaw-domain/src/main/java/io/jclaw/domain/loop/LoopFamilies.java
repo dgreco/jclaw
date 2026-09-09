@@ -12,6 +12,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.Optional;
 
 /** The loop families jclaw ships. */
@@ -57,18 +58,71 @@ public final class LoopFamilies {
                     && state.phase() == Phase.AWAITING_MODEL
                     && !canonical.state().budget().isExhausted(now)) {
                 LoopExecutionState reflecting = canonical.state().withPhase(Phase.AWAITING_REFLECTION);
-                return new LoopStep(reflecting, new LoopDecision.CallModel(reviewRequest(reflecting, policy), false));
+                return new LoopStep(reflecting,
+                        new LoopDecision.CallModel(reviewRequest(reflecting, policy, REVIEW_INSTRUCTION), false));
             }
             return canonical;
         }
     };
 
-    private static final String REVIEW_INSTRUCTION =
+    static final String REVIEW_INSTRUCTION =
             "Review your previous reply for correctness, completeness, and clarity against the "
                     + "conversation so far. Then output only the final reply you stand behind, "
                     + "revised if needed, with no commentary about the review.";
 
     private LoopFamilies() {
+    }
+
+    /**
+     * A reviewing family with the operator's own review instruction.
+     *
+     * <p>{@link #REFLECTIVE} is this with the default instruction. What makes it worth
+     * configuring is the case that actually recurs: a team wants the review to check something
+     * their work needs checked — that a migration is reversible, that no customer name appears in
+     * the answer, that the reply cites a file it read. Writing a Java class for that was more
+     * ceremony than the change deserved.
+     *
+     * <p>The number of passes is <em>not</em> configurable, and that is a choice rather than an
+     * oversight. A second pass needs a counter in {@link LoopExecutionState}, which means a record
+     * component and a checkpoint codec change — friction this codebase keeps on purpose — to buy
+     * something speculative: each pass is another model call on the same budget, and there is no
+     * evidence a third look improves an answer more than it costs. One pass, or a family in Java.
+     *
+     * @param id          the name the operator configured, used in logs and the run record
+     * @param instruction what to ask the model when reviewing its draft
+     */
+    public static LoopFamily reviewing(String id, String instruction) {
+        Objects.requireNonNull(id, "id");
+        Objects.requireNonNull(instruction, "instruction");
+        if (id.isBlank()) {
+            throw new IllegalArgumentException("a family needs an id");
+        }
+        if (instruction.isBlank()) {
+            throw new IllegalArgumentException("a reviewing family needs a review instruction");
+        }
+        return new LoopFamily() {
+            @Override
+            public String id() {
+                return id;
+            }
+
+            @Override
+            public LoopStep step(LoopExecutionState state, Observation observation, LoopPolicy policy, Instant now) {
+                if (state.phase() == Phase.AWAITING_REFLECTION) {
+                    return onReflection(state, observation);
+                }
+                LoopStep canonical = TurnMachine.step(state, observation, policy, now);
+                if (canonical.decision() instanceof LoopDecision.PersistReply persist
+                        && !persist.draft()
+                        && state.phase() == Phase.AWAITING_MODEL
+                        && !canonical.state().budget().isExhausted(now)) {
+                    LoopExecutionState reflecting = canonical.state().withPhase(Phase.AWAITING_REFLECTION);
+                    return new LoopStep(reflecting,
+                            new LoopDecision.CallModel(reviewRequest(reflecting, policy, instruction), false));
+                }
+                return canonical;
+            }
+        };
     }
 
     /** The family for a configured id, or empty when the id names none. */
@@ -80,10 +134,11 @@ public final class LoopFamilies {
         };
     }
 
-    private static ModelRequest reviewRequest(LoopExecutionState state, LoopPolicy policy) {
+    private static ModelRequest reviewRequest(
+            LoopExecutionState state, LoopPolicy policy, String instruction) {
         List<ChatMessage> messages = new ArrayList<>(
                 ContextCompaction.compact(state.messages(), policy.context()).messages());
-        messages.add(ChatMessage.user(REVIEW_INSTRUCTION));
+        messages.add(ChatMessage.user(instruction));
         return new ModelRequest(policy.model(), policy.systemPrompt(), messages, List.of(),
                 policy.maxOutputTokens(), Optional.empty());
     }

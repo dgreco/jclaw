@@ -124,6 +124,8 @@ public final class EffectInterpreter {
     private final EventLog events;
     private final LoopStateCodec codec;
     private final List<LoopHook> loopHooks;
+    private io.jclaw.domain.loop.LoopFamilyRegistry families =
+            io.jclaw.domain.loop.LoopFamilyRegistry.builtIn();
     private final Clock clock;
 
     public EffectInterpreter(
@@ -249,7 +251,7 @@ public final class EffectInterpreter {
                 return LoopExit.Failed.of(FailureKind.LEASE_EXPIRED, "lease lost during execution");
             }
 
-            TurnMachine.LoopStep step = policy.loopFamily().step(state, observation, policy, clock.instant());
+            TurnMachine.LoopStep step = policy.loopFamily(families).step(state, observation, policy, clock.instant());
             log.debug("run {}: step {} | phase {} + observation {} -> decision {} | next phase {} (iteration {})",
                     run.value(), steps, state.phase(), observation.type(),
                     describe(step.decision()), step.state().phase(), step.state().iteration());
@@ -291,6 +293,17 @@ public final class EffectInterpreter {
      * <p>The scope is closed whatever happens, including on an exception, which is the property
      * that keeps a failed call from leaving the next one attributed to it.
      */
+    /**
+     * The families this interpreter can drive a run with.
+     *
+     * <p>A setter rather than a constructor parameter: the registry is optional (the built-ins
+     * are the default) and the interpreter has several call sites that would otherwise all gain
+     * an argument for a case most of them do not use. Set once at wiring, before any run.
+     */
+    public void withFamilies(io.jclaw.domain.loop.LoopFamilyRegistry registry) {
+        this.families = java.util.Objects.requireNonNull(registry, "registry");
+    }
+
     private static <T> T withTrace(TurnRunId run, int iteration, java.util.function.Supplier<T> work) {
         io.jclaw.contracts.observability.TraceContext context =
                 new io.jclaw.contracts.observability.TraceContext(

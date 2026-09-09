@@ -61,7 +61,7 @@ jclaw reimplements the **architecture** of IronClaw — the seven-layer ladder, 
 
 Everything is durable JSONL under `~/.jclaw`: a run can park in one process, be approved in a second, and resume in a third. There is no database, and no server unless you start one (`jclaw serve`).
 
-**Status.** Milestones M0–M7 plus subagents (synchronous or asynchronous), MCP, streaming on every provider, lease-based crash recovery, a per-thread run lock, context compaction with model summaries, vector memory, configurable denials and egress lists, per-tool rate limits, injection heuristics, auth and process gates with expiry, a scheduler with `submit` and `worker`, an HTTP surface with run projections, event streams, and per-user tenants, attachments, store retention, an encrypted secret vault with host-side credential injection, a container sandbox for the shell lane, a SQL storage backend (embedded H2 or PostgreSQL) with schema migrations, signed extension packages, execution-stage hooks, a second loop family, Prometheus metrics with OTLP trace export, webhook, heartbeat, and event triggers, and MCP over HTTP with resources, prompts, and lazily started servers. 356 tests pass across the modules, including 15 machine-checked architecture rules (ArchUnit). Both the uber jar and the native image are verified end to end, including subprocess spawning for MCP servers and shell tools. [PARITY.md](PARITY.md) lists what IronClaw still has that jclaw does not.
+**Status.** Milestones M0–M7 plus subagents (synchronous or asynchronous), MCP, streaming on every provider, lease-based crash recovery, a per-thread run lock, context compaction with model summaries, vector memory, configurable denials and egress lists, per-tool rate limits, injection heuristics, auth and process gates with expiry, a scheduler with `submit` and `worker`, an HTTP surface with run projections, event streams, and per-user tenants, attachments, store retention, an encrypted secret vault with host-side credential injection, a container sandbox for the shell lane, a SQL storage backend (embedded H2 or PostgreSQL) with schema migrations, signed extension packages, execution-stage hooks, a second loop family, Prometheus metrics with OTLP trace export, webhook, heartbeat, and event triggers, and MCP over HTTP with resources, prompts, and lazily started servers. 364 tests pass across the modules, including 15 machine-checked architecture rules (ArchUnit). Both the uber jar and the native image are verified end to end, including subprocess spawning for MCP servers and shell tools. [PARITY.md](PARITY.md) lists what IronClaw still has that jclaw does not.
 
 ---
 
@@ -239,7 +239,8 @@ jclaw:
 | `storage` | `jsonl` | Where durable rows live: `jsonl` files under the state directory, or `sql` (every store in one database; see [The state directory](#the-state-directory)). Skills and thread locks stay on the filesystem either way. |
 | `otlp-endpoint` | *(blank)* | An OpenTelemetry collector's base URL (OTLP/HTTP, JSON). Every finished run's trace is POSTed to `<endpoint>/v1/traces`, best effort, off the request path. Blank disables export. |
 | `hooks` | `budget-notice` | Built-in execution-stage hooks to enable, by id. `budget-notice` tells the model, once most of the run's token budget is spent, to finish rather than start new work. Blank disables all built-ins. |
-| `loop-family` | `canonical` | The loop strategy. `reflective` has the model review its draft reply once, without tools and without streaming, before it is persisted; one extra model call per turn. |
+| `loop-family` | `canonical` | The loop strategy: `canonical`, `reflective`, or a family defined in `loop-families`. `reflective` has the model review its draft reply once, without tools and without streaming, before it is persisted; one extra model call per turn. |
+| `loop-families.<id>` | *(none)* | A family defined in configuration: `base` (only `reflective` today) and `review-instruction`. Validated at startup; an id may not shadow a built-in. |
 | `serve-user-roles` | *(none)* | Role per user: `viewer`, `member`, or `operator`. Unlisted people are members. A viewer may read but not start a turn or answer a gate. |
 | `session-ttl` | `12h` | How long a session minted by `POST /login` lasts. |
 | `oidc-issuer` / `oidc-client-id` / `oidc-client-secret` / `oidc-redirect-uri` | *(blank)* | An OpenID Connect provider to sign in through. The client secret is a vault entry name, bound to the capability `identity.login` and the provider's host. All four are needed before the login routes appear. |
@@ -722,9 +723,33 @@ By default the child runs inside the parent's tool call. With `subagents-async: 
 
 Two seams let host code change how a run behaves without touching the machine.
 
-**Hooks** run before and after every model call and capability dispatch. A hook may narrow a model request (amend the system prompt, drop tools) or veto it, and may rewrite a capability's arguments or veto the call; it may not widen a request, change a call's identity, or bypass the kernel, which still checks whatever a hook hands back. A rewrite or veto is recorded as a `hook.fired` audit event. Built-in hooks are enabled by id in `hooks`; any Spring bean implementing `LoopHook` is picked up as well, which is the seam a plugin uses.
+**Hooks** run at four points: prompt assembly, before and after every model call, before and after every capability dispatch, and when a gate is about to be raised.
+
+| Stage | What a hook may do |
+|---|---|
+| `beforePrompt` | Amend the assembled system prompt, or veto the turn. Runs **once per turn, at admission** — the prompt is resolved once and stored on the run so a resume replays the same instructions, and a hook rewriting it per call would defeat that. A veto fails the turn before the inbound message is written, so nothing is left behind. |
+| `beforeModel` / `afterModel` | Narrow a request (amend the prompt, drop tools) or veto it. Never widen it: a hook that tries is a host bug the run fails on rather than a request the model gets. |
+| `beforeCapability` / `afterCapability` | Rewrite arguments or veto the call. Never change its identity. |
+| `beforeGate` | Reword the question a human will be asked — a ticket number, a tenant, a policy note — or refuse to ask it, which becomes a denial the model is told about. **There is no outcome that approves.** That absence is what keeps `CapabilityHost` the single authority gate: a hook can make the question clearer or refuse it, and only a human or the operator's policy says yes. |
+
+The kernel still checks whatever a hook hands back, so a hook cannot grant what policy would refuse. Every rewrite and veto is recorded as a `hook.fired` audit event with its stage. A gate hook that throws is treated as no opinion rather than as a refusal — a buggy hook turning every gate into a denial would be a worse failure than the bug it came from. Built-in hooks are enabled by id in `hooks`; any Spring bean implementing `LoopHook` is picked up as well, which is the seam a plugin uses.
 
 **Loop families** are strategies over the same state, decisions, and checkpoints. `canonical` is the machine described in [ARCH.md](ARCH.md). `reflective` intercepts the moment the canonical machine would persist a reply and first asks the model to review the draft against the conversation and return the reply it stands behind; the revision replaces the draft, the review call is charged to the budget, is skipped when the budget is exhausted, and falls back to the draft if it fails. A family cannot invent a new kind of effect: the decision type is sealed and the interpreter is the only executor.
+
+A family can also come from configuration, which is the case that actually recurs — a team wants the review to check something their work needs checked:
+
+```yaml
+jclaw:
+  loop-families:
+    strict:
+      base: reflective
+      review-instruction: >
+        Check the reply cites every file it claims to have read and that no
+        migration it proposes is irreversible. Then output only the final reply.
+  loop-family: strict
+```
+
+The registry is built and validated at startup, so an unknown base, a missing instruction, a family id that shadows `canonical` or `reflective`, or a `loop-family` naming none of them fails at boot with the known ids listed — not at the first run that selects it. The *number* of review passes is deliberately not configurable: a second pass needs a counter in the loop state, which means a checkpoint codec change (friction this codebase keeps on purpose) to buy something speculative, since each pass is another model call on the same budget. One pass, or a family in Java.
 
 ### Streaming
 

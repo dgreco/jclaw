@@ -2,7 +2,7 @@
 
 An honest enumeration of what [IronClaw](https://github.com/nearai/ironclaw) (internally "Reborn") has that jclaw does not, and of what jclaw now has. jclaw is roughly 20k lines of Java (plus 6.5k of tests) against IronClaw's ~1.4M lines of Rust across ~63 crates. The **architecture** is equivalent — layer ladder, turn/run lifecycle, untrusted `LoopExit`, single `CapabilityHost` authority boundary, checkpoint-kind–driven recovery — and, after the September 2026 parity work, most of the runtime *mechanisms* are present in some form. What remains missing is breadth, not mechanism: the long tail catalogued in section 16. This file is the list, organised by IronClaw's own crate families so a gap can be traced to the crate that fills it upstream.
 
-Sources: IronClaw's `README.md`, `crates/Architecture.md`, and the `crates/` listing as of September 2026; jclaw's code on this checkout (356 tests, 0 failures). Where the upstream doc names a concept and jclaw has an equivalent under a different name, the mapping is given. Where the gap is uncertain it is marked *(unverified)*.
+Sources: IronClaw's `README.md`, `crates/Architecture.md`, and the `crates/` listing as of September 2026; jclaw's code on this checkout (364 tests, 0 failures). Where the upstream doc names a concept and jclaw has an equivalent under a different name, the mapping is given. Where the gap is uncertain it is marked *(unverified)*.
 
 Legend: ✅ at parity · 🟡 partial · ❌ missing · ➕ jclaw-only
 
@@ -15,7 +15,7 @@ Legend: ✅ at parity · 🟡 partial · ❌ missing · ➕ jclaw-only
 | Layer ladder + architecture tests | `crates/AGENTS.md`, `ironclaw_architecture_tests` | 9 modules, `DependencyLawTest` (14 ArchUnit rules) | ✅ |
 | Contracts / turn vocabulary | `contracts/{host_api, common, prompt_envelope, loop_contracts, extension_contracts, product_contracts}` | `jclaw-contracts` (loop + host + product vocabulary in one module; no prompt envelope type, no extension contracts) | 🟡 |
 | Pure agent loop, checkpoints, resumable state | `ironclaw_agent_loop`, `ironclaw_loop_host`, `ironclaw_turn_runner` | `TurnMachine` + `EffectInterpreter` + `JclawRuntime`; `LoopFamily` (`canonical`, `reflective`) | ✅ |
-| Loop hooks | `ironclaw_hooks` | `LoopHook` before/after model and capability; may narrow or veto, never widen | ✅ |
+| Loop hooks | `ironclaw_hooks` | `LoopHook` at prompt assembly, before/after model, before/after capability, and gate raising; may narrow or veto, never widen, and never approve | ✅ |
 | Kernel: trust, authorization, approvals, capabilities, turns | `ironclaw_trust`, `_authorization`, `_approvals`, `_capabilities`, `_turns`, `_host_runtime` | `DefaultCapabilityHost`, `CapabilityPolicy`, `TrustClass`, `ApprovalStore` (approval, auth, and process gates with expiry), `JclawRuntime.validate` | ✅ |
 | Kernel: resources, runtime policy, processes | `ironclaw_resources`, `ironclaw_runtime_policy`, `ironclaw_processes` | `Budget`; `CapabilityPolicy` postures + configurable hard denials, per-tool egress and rate limits, injection policy; `RunStore` with leases and a per-thread `ThreadLock`; no process journal / process trees / deployment modes | 🟡 |
 | Scheduler with bounded concurrency | `TurnRunScheduler`, `RebornTurnRunExecutor` | `TurnRunScheduler` over the pure `RunScheduling`: `submit`/HTTP enqueue, `worker`/`serve` claim and execute, one run per thread, a global and a per-tenant cap | ✅ |
@@ -107,9 +107,9 @@ At parity on the trust model and on the gate mechanics, and on tenant isolation;
 |---|---|---|
 | Pure, resumable loop state; `LoopExit` as refs-only claim; `LoopExitApplier` validation | ✅ | ✅ — reply refs and every result ref are re-resolved before a `Completed` is trusted |
 | Checkpoint kinds driving recovery (`BeforeModel`, `BeforeBlock`, …) | ✅ | ✅ |
-| Multiple **loop families** / sealed strategy composition | ✅ | ✅ `LoopFamily` over the same state, decisions, and checkpoints: `canonical` and `reflective` (review the draft reply once, without tools, before persisting), chosen by `jclaw.loop-family`. `LoopDecision` stays sealed, so a family composes phases but cannot add an effect |
-| `CanonicalAgentLoopExecutor` tick pipeline with input / prompt / model / capability / gate / stop stages | ✅ | 🟡 same stages; the model and capability stages take hooks, the prompt and gate stages do not |
-| Execution-stage hooks (`ironclaw_hooks`) — pre/post model, pre/post tool | ✅ | ✅ `LoopHook` (before/after model, before/after capability) applied by `EffectInterpreter`; may narrow or veto, never widen (tools may only be removed, the model and messages are fixed, a capability's identity is fixed), and the kernel still checks what a hook returns. Built-in `budget-notice`; any `LoopHook` bean joins. `hook.fired` audit events |
+| Multiple **loop families** / sealed strategy composition | ✅ | ✅ `LoopFamily` over the same state, decisions, and checkpoints: `canonical` and `reflective` (review the draft reply once, without tools, before persisting), plus any defined in `jclaw.loop-families` with their own review instruction, resolved through `LoopFamilyRegistry` and validated at startup. `LoopDecision` stays sealed, so a family composes phases but cannot add an effect |
+| `CanonicalAgentLoopExecutor` tick pipeline with input / prompt / model / capability / gate / stop stages | ✅ | ✅ same stages; the prompt, model, capability, and gate stages all take hooks. The stop stage does not: an exit claim is validated by re-resolving refs, and a hook there could only weaken that |
+| Execution-stage hooks (`ironclaw_hooks`) — pre/post model, pre/post tool | ✅ | ✅ `LoopHook`: `beforePrompt` (once at admission, amend or veto the turn), before/after model, before/after capability, and `beforeGate` (reword the human's question or refuse to ask it — no outcome approves). Applied by `EffectInterpreter`, `JclawRuntime`, and `DefaultCapabilityHost`; may narrow or veto, never widen (tools may only be removed, the model and messages are fixed, a capability's identity is fixed), and the kernel still checks what a hook returns. Built-in `budget-notice` and `secret-leak-scan`; any `LoopHook` bean joins. `hook.fired` audit events carry the stage |
 | Prompt envelope contract (`prompt_envelope`) with context policy | ✅ | 🟡 `PromptAssembly` (base + workspace + skill summaries) plus `ContextPolicy` on `LoopPolicy`; no envelope contract type — the system prompt and the message window are assembled separately |
 | Context management: compaction / summarisation / truncation policy | ✅ *(via context policy in `ResolvedRunProfile`)* | ✅ `ContextPolicy` (message cap + estimated token budget, summarise on/off); pure `ContextCompaction` truncates at safe boundaries with an omission notice; with summarisation on, `TurnMachine` first asks the model to summarise the dropped span (a non-streamed `CallModel`) and folds the answer into the notice, falling back to truncation if that call fails |
 | `RunProfileResolver`: driver, checkpoint schema, model profile, capability surface, context policy, budget, scheduling class | ✅ | 🟡 `LoopPolicy` + `RunRecord` capture model, prompt, tools, budget, context policy; the context policy is resolved from current config on resume rather than stored on the run; no scheduling class, one schema version |
@@ -309,9 +309,11 @@ Ranked, again, by what a deployment beyond one operator's machine would hit firs
    a reflective dependency the native image would have to be taught. What that leaves open is
    the SDK's auto-instrumentation and its exporters' batching and retry — the OTLP/JSON export
    is best-effort and unbatched.
-8. **Pluggable stages** (§5) — hooks cover the model and capability stages, and there are two
-   loop families. Prompt assembly and gate raising take no hook, and a new family is Java, not
-   configuration.
+8. ~~**Pluggable stages**~~ — closed: hooks now cover prompt assembly and gate raising as well
+   as the model and capability stages, and a family can be defined in `jclaw.loop-families`. A
+   gate hook may reword the question or refuse to ask it and has **no outcome that approves**,
+   which is what keeps the authority gate single. Still open: no hook on checkpoint writes or
+   exit validation, and a configured family varies only the review instruction.
 9. **MCP auth and the reverse direction** (§3) — servers reach over stdio or HTTP and expose
    tools, resources, and prompts. Authentication is a vault-held bearer token, not the OAuth 2.1
    flow; sampling and server-initiated notifications are unimplemented; a stdio server's own

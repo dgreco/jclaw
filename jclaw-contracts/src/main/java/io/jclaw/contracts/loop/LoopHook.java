@@ -68,6 +68,55 @@ public interface LoopHook {
         }
     }
 
+    /**
+     * When a run's system prompt is assembled, before it is stored on the run.
+     *
+     * <p>Runs once per turn, at admission — not per model call — which is deliberate: the prompt
+     * is resolved once and recorded so a resume replays the same instructions rather than picking
+     * up a skill installed in the meantime. A hook that rewrote it per call would defeat that.
+     *
+     * <p>Amending the prompt is the widest thing a hook does anywhere, so it is worth saying what
+     * it cannot do: the prompt is text, not authority. Nothing here changes which tools exist,
+     * what the policy allows, or what the kernel will approve.
+     *
+     * <p>A veto refuses the turn before anything is written.
+     */
+    default Outcome<String> beforePrompt(HookContext context, String systemPrompt) {
+        return Outcome.proceed(systemPrompt);
+    }
+
+    /**
+     * When the kernel is about to raise a gate for a human to answer.
+     *
+     * <p>The value is the prompt the human will see, which a hook may amend — to add the ticket a
+     * change belongs to, the tenant's name, a policy note. A veto turns the gate into a denial:
+     * the call does not happen and the model is told it was refused.
+     *
+     * <p>What a hook <em>cannot</em> do here is approve. There is no outcome that grants, which
+     * is the property that keeps {@code CapabilityHost} the single authority gate: a hook can
+     * make the question clearer or refuse to ask it, and only a human or the operator's policy
+     * can answer yes.
+     */
+    default Outcome<String> beforeGate(HookContext context, GateRequest gate) {
+        return Outcome.proceed(gate.prompt());
+    }
+
+    /**
+     * A gate about to be raised.
+     *
+     * @param kind       what kind of gate: approval, auth, or process
+     * @param capability the capability id the gate is for, or empty for a gate that is not a
+     *                   capability's, such as a provider auth failure
+     * @param prompt     what the human will be shown
+     */
+    record GateRequest(GateKind kind, java.util.Optional<String> capability, String prompt) {
+        public GateRequest {
+            Objects.requireNonNull(kind, "kind");
+            Objects.requireNonNull(capability, "capability");
+            Objects.requireNonNull(prompt, "prompt");
+        }
+    }
+
     /** Before a model call. The request may be narrowed, never widened. */
     default Outcome<ModelRequest> beforeModel(HookContext context, ModelRequest request) {
         return Outcome.proceed(request);
