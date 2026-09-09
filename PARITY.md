@@ -268,13 +268,18 @@ Listed so the comparison is not read as one-directional:
 
 ## 16. What is still missing, ranked
 
-Every item of the three earlier lists is closed — the twelve of the original, the six that
-followed, and the ten ranked here in September 2026 (the sections above mark each ✅ or 🟡 with
-its caveat). None of that makes jclaw IronClaw: it makes the *mechanisms* comparable. What is
-left is the long tail each mechanism leaves behind, and it is worth being precise about, because
-"closed" above never meant "as broad as upstream".
+Every item of the four earlier lists is closed — the twelve of the original, the six that
+followed, and the ten ranked here in September 2026, which are now struck through below. None of
+that makes jclaw IronClaw: it makes the *mechanisms* comparable. What is left is the long tail
+each mechanism leaves behind, and being precise about it is the point of this file, because
+"closed" has never meant "as broad as upstream".
 
-Ranked, again, by what a deployment beyond one operator's machine would hit first:
+Each entry below records what was built **and what it deliberately did not build**. Several of
+those omissions are decisions rather than gaps — the OpenTelemetry SDK, the OAuth
+authorization-code flow, a configurable review-pass count — and each says why, so a later reader
+can disagree with the reasoning rather than assume it was an oversight.
+
+Ranked, as they were, by what a deployment beyond one operator's machine would hit first:
 
 1. ~~**Channel adapters**~~ — closed: Slack and Telegram over `POST /channels/{adapter}`, with
    durable reply-target bindings. Still open under this heading: platform-native slash commands,
@@ -282,7 +287,7 @@ Ranked, again, by what a deployment beyond one operator's machine would hit firs
    message.
 2. ~~**A login flow**~~ — closed: OIDC with PKCE, sessions, three roles, per-tenant policy and
    token budgets, and named agents that make `TurnScope.agent()` mean something. Still open under
-   this heading: a user directory, groups, per-tenant vaults, and id token signature
+   this heading: a user directory, groups, and id token signature
    verification for flows that would need it.
 3. ~~**A WASM lane**~~ — closed: modules run under a metered pure-Java runtime with capped
    memory and only the host imports their manifest asked for. Still open under this heading: a

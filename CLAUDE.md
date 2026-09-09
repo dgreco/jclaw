@@ -9,8 +9,10 @@ streaming on every provider, lease-based crash recovery, a per-thread run lock, 
 compaction with model summaries, vector memory, configurable denials, egress lists and per-tool
 rate limits, injection heuristics, auth and process gates with expiry, a scheduler behind
 `submit`/`worker`, an HTTP surface (`serve`) with run projections and SSE, attachments, store
-retention, a container sandbox for the shell lane, and extension registries with versioned
-upgrades and profiles. `jclaw run "..."` completes a real turn end
+retention, a container sandbox for the shell lane, extension registries with versioned
+upgrades and profiles, channel adapters, OIDC login, a WASM lane, subprocess secret
+staging, per-concept SQL tables, trace propagation, hooks on prompt assembly and gate
+raising, MCP OAuth and sampling, and filesystem and fan-out triggers. `jclaw run "..."` completes a real turn end
 to end; runs park on gates and resume across process boundaries; memory, skills, and scheduled
 routines work. Ships as an uber jar and a GraalVM native image, both verified — including
 subprocess spawning for MCP servers and subagent child runs.
