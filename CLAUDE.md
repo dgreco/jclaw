@@ -20,7 +20,7 @@ jclaw is a Java/Spring Boot reimplementation of the **architecture** of
 untrusted-`LoopExit` trust model, and the `CapabilityHost` authority boundary are faithful; the
 feature surface is a fraction of IronClaw's. See **Not built yet** for the honest list.
 
-286 tests pass across 9 modules, including 14 machine-checked architecture rules.
+290 tests pass across 9 modules, including 14 machine-checked architecture rules.
 
 ## Commands
 
@@ -50,7 +50,7 @@ The `native` profile lives in `jclaw-app/pom.xml`. The Boot parent contributes o
 | `run [--stream] [--attach f]…` | one-shot turn; exits 0 ok, 1 failed, 2 parked on a gate |
 | `submit` | queue a turn durably and return its run id; a `worker` or `serve` executes it. `--attach` like `run` |
 | `serve [--host --port --concurrency --per-user]` | HTTP ingress + worker loop: browser UI at `/`, OpenAI-compatible `/v1/chat/completions`, enqueue, run projections, SSE event streams, approvals; operator token via `jclaw.serve-token`, per-user tenants via `jclaw.serve-users` |
-| `repl` | interactive session with readline editing (and still pipes) |
+| `repl` | interactive session with readline editing (and still pipes); resolves approval gates inline on a real terminal |
 | `approvals list [--all]\|approve\|deny` | resolve gates (approval, auth, process); approving resumes by default; expired gates are hidden and refuse decisions |
 | `resume <run-id>` | continue a parked run |
 | `memory write\|search\|list\|forget\|reindex` | durable memories, BM25 + recency + vector (when an embedding provider is configured) |
@@ -257,6 +257,11 @@ the Anthropic SDK, and tool lanes may not read the process environment.
 - `contracts` — no Spring, no Jackson databind, no `java.sql`, no HTTP.
 - `domain` — total, deterministic functions; the clock is a parameter, never read.
 - `loop` — ports only; never imports `providers`, `tools`, or `storage`.
+- **No credential is ever written to a store.** The vault is the only place a value lives. An
+  extension or MCP server records the *name* of a vault entry per environment variable, and
+  `McpCredentials` leases the values in the app layer when the server starts; an HTTP server's
+  bearer token is leased the same way. A secret used this way must be bound to `mcp.connect`,
+  and to the declared hosts when the package declares any.
 - `tools` — no adapter holds a `SecretVault` handle; `HandlerContext` has no method to obtain one.
   The kernel host substitutes `{{secret:NAME}}` references into the arguments a lane receives at
   dispatch, only when the secret's binding names that capability and every URL host in the
@@ -449,7 +454,7 @@ architecture and most runtime mechanisms are equivalent, the breadth is not. PAR
   authenticates with a vault-held bearer token bound to `mcp.connect` and its host; there is no
   OAuth 2.1 discovery, dynamic client registration, or authorization-code flow, and no sampling
   or server-initiated notifications.
-- **Smaller items** — `repl` does not resolve gates inline; OpenRouter routing preferences are not
+- **Smaller items** — OpenRouter routing preferences are not
   sent; embedding providers beyond the OpenAI-compatible shape (Voyage, Cohere) need their own
   adapter; PDFs and other documents are refused as attachments; inbound content is not scanned
   for injection and there is no review queue; retention has no archival step.

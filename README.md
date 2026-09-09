@@ -61,7 +61,7 @@ jclaw reimplements the **architecture** of IronClaw — the seven-layer ladder, 
 
 Everything is durable JSONL under `~/.jclaw`: a run can park in one process, be approved in a second, and resume in a third. There is no database, and no server unless you start one (`jclaw serve`).
 
-**Status.** Milestones M0–M7 plus subagents (synchronous or asynchronous), MCP, streaming on every provider, lease-based crash recovery, a per-thread run lock, context compaction with model summaries, vector memory, configurable denials and egress lists, per-tool rate limits, injection heuristics, auth and process gates with expiry, a scheduler with `submit` and `worker`, an HTTP surface with run projections, event streams, and per-user tenants, attachments, store retention, an encrypted secret vault with host-side credential injection, a container sandbox for the shell lane, a SQL storage backend (embedded H2 or PostgreSQL) with schema migrations, signed extension packages, execution-stage hooks, a second loop family, Prometheus metrics with OTLP trace export, webhook, heartbeat, and event triggers, and MCP over HTTP with resources, prompts, and lazily started servers. 286 tests pass across the modules, including 14 machine-checked architecture rules (ArchUnit). Both the uber jar and the native image are verified end to end, including subprocess spawning for MCP servers and shell tools. [PARITY.md](PARITY.md) lists what IronClaw still has that jclaw does not.
+**Status.** Milestones M0–M7 plus subagents (synchronous or asynchronous), MCP, streaming on every provider, lease-based crash recovery, a per-thread run lock, context compaction with model summaries, vector memory, configurable denials and egress lists, per-tool rate limits, injection heuristics, auth and process gates with expiry, a scheduler with `submit` and `worker`, an HTTP surface with run projections, event streams, and per-user tenants, attachments, store retention, an encrypted secret vault with host-side credential injection, a container sandbox for the shell lane, a SQL storage backend (embedded H2 or PostgreSQL) with schema migrations, signed extension packages, execution-stage hooks, a second loop family, Prometheus metrics with OTLP trace export, webhook, heartbeat, and event triggers, and MCP over HTTP with resources, prompts, and lazily started servers. 290 tests pass across the modules, including 14 machine-checked architecture rules (ArchUnit). Both the uber jar and the native image are verified end to end, including subprocess spawning for MCP servers and shell tools. [PARITY.md](PARITY.md) lists what IronClaw still has that jclaw does not.
 
 ---
 
@@ -385,7 +385,7 @@ Lines starting with `/` are **session controls** and never reach the model. Typi
 | `/stream [on\|off]` | Toggle or set streaming. |
 | `/exit`, `/quit` | Leave. |
 
-When a turn parks on a gate the REPL prints the exact `jclaw approvals approve <gate>` command; resolving it still requires another shell (see PARITY.md).
+When a turn parks on an approval gate, the REPL asks there and then: it shows what is being approved and reads `y`, `n`, or `l` for later. Either answer resumes the run and prints what came back, a denial included, since the model is told and the turn finishes without the effect. Anything else, an empty line included, leaves the gate open: silence is not consent. A piped or scripted session is never asked and still prints the `jclaw approvals approve <gate>` command, so nothing that automates jclaw has to change.
 
 ### Approval gates: `approvals` and `resume`
 
@@ -575,13 +575,14 @@ An extension is a directory with a manifest, `jclaw-extension.json`, and either 
 ```
 
 ```bash
-jclaw extensions install ./github-tools --env GITHUB_TOKEN=ghp_…   # values for the names the manifest requires
+jclaw secrets set gh-mcp --capability mcp.connect --host api.github.com   # the value, once, into the vault
+jclaw extensions install ./github-tools --secret GITHUB_TOKEN=gh-mcp     # the name of the vault entry, not the value
 jclaw extensions list                                              # name, version, kind, trust, enabled
 jclaw extensions disable github-tools ; jclaw extensions enable github-tools
 jclaw extensions remove github-tools
 ```
 
-The manifest declares the kind, the command, the environment *names* the server needs (values are given at install and stored with the installation, never in the package), the hosts it says it reaches, the effect class its tools claim, and optionally a publisher. A skill package is copied into the skills directory while enabled; an MCP package's server is started beside the `mcp add` servers, under `mcp-backend` like any other.
+The manifest declares the kind, the command, the environment *names* the server needs, the hosts it says it reaches, the effect class its tools claim, and optionally a publisher. A value is never given at install: `--secret VAR=name` records which vault entry supplies each variable, and the value is leased when the server starts. The secret must be bound to the capability `mcp.connect`, and for a package that declares hosts, to those hosts, which a `VERIFIED` package has signed. A skill package is copied into the skills directory while enabled; an MCP package's server is started beside the `mcp add` servers, under `mcp-backend` like any other.
 
 **Trust is decided at install, once, by signature.** A publisher generates a key pair with `jclaw extensions keygen --out keys` and signs a package with `jclaw extensions sign ./pkg --key keys/publisher.key`, which writes `jclaw-extension.sig`: an Ed25519 signature over a digest of every file in the package. An operator who lists the publisher's public key under `trusted-publishers` gets a **`VERIFIED`** install, and a verified manifest's declared effect class is believed: a read-only MCP tool that declares `read_local` can run unattended in `trusted` mode. An unsigned package installs as **`COMMUNITY`**: its tools are `NETWORK` whatever the manifest claims, and every call gates. A package whose signature does not verify, or whose publisher is not trusted, is refused outright, since a package claiming a publisher it cannot prove is worse than one claiming none. Editing a signed package breaks its signature. Packages are directories; there is no registry to fetch from, no versioned upgrade, and no profile bundling.
 
@@ -601,6 +602,7 @@ jclaw mcp test fs --jclaw.mcp-backend=docker --jclaw.mcp-sandbox-image=node:22-a
 ```bash
 jclaw mcp add --name fs npx -y @modelcontextprotocol/server-filesystem .
 jclaw mcp add --name gh --url https://mcp.example.com/mcp --auth-secret gh-mcp
+jclaw mcp add --name fs2 --secret API_KEY=fs-token npx -y @acme/fs-mcp   # a stdio server's environment, from the vault
 jclaw mcp test fs              # start, handshake, list tools, shut down
 jclaw mcp list
 jclaw mcp refresh [name]       # forget cached surfaces; the next run rediscovers
@@ -609,7 +611,7 @@ jclaw mcp toggle fs
 jclaw mcp remove fs
 ```
 
-The command is stored as argv (never re-parsed through a shell). A stdio server runs with the workspace as its working directory and a scrubbed environment. A remote endpoint goes through the **egress guard** first, exactly as a tool's URL does: an MCP server on a private address is refused unless `allow-private-networks` says otherwise. Its bearer token, when it needs one, comes from the [secret vault](#secrets-the-agent-may-use-but-never-see) rather than config: create it bound to the capability `mcp.connect` and the endpoint's host, and name it with `--auth-secret`. Nothing below the application layer ever holds the vault; the transport receives a finished header value.
+The command is stored as argv (never re-parsed through a shell). A stdio server runs with the workspace as its working directory and a scrubbed environment, plus whatever `--secret VAR=name` maps in, leased from the vault at start. Configuration holds the names; the values live in the vault and nowhere else. For a subprocess the host half of a binding cannot be enforced, since its egress is not observable, so the capability alone binds unless the package declares hosts. A remote endpoint goes through the **egress guard** first, exactly as a tool's URL does: an MCP server on a private address is refused unless `allow-private-networks` says otherwise. Its bearer token, when it needs one, comes from the [secret vault](#secrets-the-agent-may-use-but-never-see) rather than config: create it bound to the capability `mcp.connect` and the endpoint's host, and name it with `--auth-secret`. Nothing below the application layer ever holds the vault; the transport receives a finished header value.
 
 ```bash
 echo -n "$GH_MCP_TOKEN" | jclaw secrets set gh-mcp --capability mcp.connect --host mcp.example.com

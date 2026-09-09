@@ -2,7 +2,7 @@
 
 An honest enumeration of what [IronClaw](https://github.com/nearai/ironclaw) (internally "Reborn") has that jclaw does not, and of what jclaw now has. jclaw is roughly 20k lines of Java (plus 6.5k of tests) against IronClaw's ~1.4M lines of Rust across ~63 crates. The **architecture** is equivalent — layer ladder, turn/run lifecycle, untrusted `LoopExit`, single `CapabilityHost` authority boundary, checkpoint-kind–driven recovery — and, after the September 2026 parity work, most of the runtime *mechanisms* are present in some form. What remains missing is breadth, not mechanism: channel adapters, a remote extension registry, a WASM lane, and the long tail catalogued in section 16. This file is the list, organised by IronClaw's own crate families so a gap can be traced to the crate that fills it upstream.
 
-Sources: IronClaw's `README.md`, `crates/Architecture.md`, and the `crates/` listing as of September 2026; jclaw's code on this checkout (286 tests, 0 failures). Where the upstream doc names a concept and jclaw has an equivalent under a different name, the mapping is given. Where the gap is uncertain it is marked *(unverified)*.
+Sources: IronClaw's `README.md`, `crates/Architecture.md`, and the `crates/` listing as of September 2026; jclaw's code on this checkout (290 tests, 0 failures). Where the upstream doc names a concept and jclaw has an equivalent under a different name, the mapping is given. Where the gap is uncertain it is marked *(unverified)*.
 
 Legend: ✅ at parity · 🟡 partial · ❌ missing · ➕ jclaw-only
 
@@ -12,26 +12,26 @@ Legend: ✅ at parity · 🟡 partial · ❌ missing · ➕ jclaw-only
 
 | IronClaw area | Upstream crates | jclaw | Status |
 |---|---|---|---|
-| Layer ladder + architecture tests | `crates/AGENTS.md`, `ironclaw_architecture_tests` | 8 modules, `DependencyLawTest` (13 ArchUnit rules) | ✅ |
+| Layer ladder + architecture tests | `crates/AGENTS.md`, `ironclaw_architecture_tests` | 9 modules, `DependencyLawTest` (14 ArchUnit rules) | ✅ |
 | Contracts / turn vocabulary | `contracts/{host_api, common, prompt_envelope, loop_contracts, extension_contracts, product_contracts}` | `jclaw-contracts` (loop + host + product vocabulary in one module; no prompt envelope type, no extension contracts) | 🟡 |
-| Pure agent loop, checkpoints, resumable state | `ironclaw_agent_loop`, `ironclaw_loop_host`, `ironclaw_turn_runner` | `TurnMachine` + `EffectInterpreter` + `JclawRuntime` | ✅ (one loop family) |
-| Loop hooks | `ironclaw_hooks` | none | ❌ |
-| Kernel: trust, authorization, approvals, capabilities, turns | `ironclaw_trust`, `_authorization`, `_approvals`, `_capabilities`, `_turns`, `_host_runtime` | `DefaultCapabilityHost`, `CapabilityPolicy`, `TrustClass`, `ApprovalStore` (approval, auth, and process gates with expiry), `JclawRuntime.validate` | ✅ (single-tenant) |
+| Pure agent loop, checkpoints, resumable state | `ironclaw_agent_loop`, `ironclaw_loop_host`, `ironclaw_turn_runner` | `TurnMachine` + `EffectInterpreter` + `JclawRuntime`; `LoopFamily` (`canonical`, `reflective`) | ✅ |
+| Loop hooks | `ironclaw_hooks` | `LoopHook` before/after model and capability; may narrow or veto, never widen | ✅ |
+| Kernel: trust, authorization, approvals, capabilities, turns | `ironclaw_trust`, `_authorization`, `_approvals`, `_capabilities`, `_turns`, `_host_runtime` | `DefaultCapabilityHost`, `CapabilityPolicy`, `TrustClass`, `ApprovalStore` (approval, auth, and process gates with expiry), `JclawRuntime.validate` | ✅ |
 | Kernel: resources, runtime policy, processes | `ironclaw_resources`, `ironclaw_runtime_policy`, `ironclaw_processes` | `Budget`; `CapabilityPolicy` postures + configurable hard denials, per-tool egress and rate limits, injection policy; `RunStore` with leases and a per-thread `ThreadLock`; no process journal / process trees / deployment modes | 🟡 |
-| Scheduler with bounded concurrency | `TurnRunScheduler`, `RebornTurnRunExecutor` | `TurnRunScheduler` over the pure `RunScheduling`: `submit`/HTTP enqueue, `worker`/`serve` claim and execute, one run per thread | ✅ (single-user caps) |
+| Scheduler with bounded concurrency | `TurnRunScheduler`, `RebornTurnRunExecutor` | `TurnRunScheduler` over the pure `RunScheduling`: `submit`/HTTP enqueue, `worker`/`serve` claim and execute, one run per thread, a global and a per-tenant cap | ✅ |
 | WASM lane | `ironclaw_wasm`, `ironclaw_wasm_limiter` | none | ❌ |
-| Script / container sandbox lane | `ironclaw_sandbox` (Docker orchestrator/worker) | `builtin.shell` in a `docker run` container per `SandboxSpec` when `jclaw.shell-backend=docker`; host backend by default | 🟡 |
-| MCP lane | `ironclaw_mcp` | stdio JSON-RPC client, `tools/list` + `tools/call` | 🟡 |
-| Extension system | `extension_registry`, `_host`, `_manager`, `_support`, `packages/*` | none (built-ins compiled in; MCP is the only external route) | ❌ |
-| Products | `ironclaw_cli`, `_webui`, `_assistant`, `_operator`, `_openai_compat`, `_host_ingress`, Slack/Telegram channel packages | CLI + REPL, and `jclaw serve`: an HTTP ingress with run projections and an SSE event stream | 🟡 |
+| Script / container sandbox lane | `ironclaw_sandbox` (Docker orchestrator/worker) | `builtin.shell` and MCP servers in a `docker run` container per `SandboxSpec` (`shell-backend`, `mcp-backend`); host backend by default | 🟡 |
+| MCP lane | `ironclaw_mcp` | stdio and streamable-HTTP transports; tools, resources, and prompts; lazy start from a cached surface | 🟡 |
+| Extension system | `extension_registry`, `_host`, `_manager`, `_support`, `packages/*` | manifests, package digests, Ed25519 signatures, `VERIFIED`/`COMMUNITY` trust at install; local directories, no remote registry | 🟡 |
+| Products | `ironclaw_cli`, `_webui`, `_assistant`, `_operator`, `_openai_compat`, `_host_ingress`, Slack/Telegram channel packages | CLI + REPL, and `jclaw serve`: a browser UI, an OpenAI-compatible endpoint, run projections, SSE, and per-user tenants | 🟡 |
 | Substrates: filesystem, network | `ironclaw_filesystem`, `ironclaw_network` | `WorkspaceGuard`, `EgressGuard` (host-wide and per-tool lists) | ✅ |
 | Substrates: secrets | `ironclaw_secrets` (AES-256-GCM vault, leased handoff) | `FileSecretVault` (AES-256-GCM, owner-only key file or `JCLAW_VAULT_KEY`); `{{secret:NAME}}` references substituted by the kernel host at dispatch under a capability + host binding | ✅ |
 | Substrates: safety | `ironclaw_safety` (injection detection, sanitization, leak detection, policy severities) | `Redaction`, `InjectionHeuristics` with an `off/warn/sanitize/block` policy, egress lists; no leak detection on outbound requests | 🟡 |
-| Substrates: documents, libsql/Postgres, observability | `ironclaw_documents`, `ironclaw_libsql_runtime`, `ironclaw_observability` | JSONL files or a SQL database (`jclaw.storage=sql`: H2 embedded, PostgreSQL hosted, versioned migrations) behind one `RowStore` port; retention; SLF4J logs; no documents, no telemetry | 🟡 |
-| Events | `event_log`, `event_store`, `event_projections`, `event_streams` | `JsonlEventLog`; `RunProjection` read model; SSE stream per run over `serve` | 🟡 |
+| Substrates: documents, libsql/Postgres, observability | `ironclaw_documents`, `ironclaw_libsql_runtime`, `ironclaw_observability` | JSONL files or a SQL database (`jclaw.storage=sql`: H2 embedded, PostgreSQL hosted, versioned migrations) behind one `RowStore` port; retention; SLF4J logs, Prometheus metrics and OTLP traces projected from the event log; no documents | 🟡 |
+| Events | `event_log`, `event_store`, `event_projections`, `event_streams` | `JsonlEventLog` or SQL rows; `RunProjection` read model; SSE stream per run; metrics and traces folded from the same log | 🟡 |
 | Domains: threads, memory, skills, triggers, llm | `ironclaw_threads`, `_memory`, `_skills`, `_triggers`, `_llm` | `ThreadService`, `MemoryStore` + `EmbeddingProvider`, `SkillCatalog`, `RoutineStore`, `ModelProvider` | 🟡 |
 | Domains: attachments | `ironclaw_attachments`, `ironclaw_extractors` | image and UTF-8 text attachments on `run`, `submit`, and HTTP; no PDF or document extraction | 🟡 |
-| Domains: conversations, auth, identity, outbound | same-named crates | none | ❌ |
+| Domains: conversations, auth, identity, outbound | same-named crates | identity as `serve` users that are tenants; no conversations, no auth flow, no outbound | 🟡 |
 | Subagents | `ironclaw_loop_host` subagent port | `RuntimeSubagentHost` (child runs, depth ≤ 3), synchronous by default or asynchronous via process gates under a worker | ✅ |
 
 ---
@@ -43,7 +43,7 @@ IronClaw is a multi-surface runtime. jclaw has the CLI, the REPL, and a minimal 
 | Capability | IronClaw | jclaw |
 |---|---|---|
 | CLI (`run`, `repl`, `onboard`, `status`, `models`) | ✅ | ✅ plus `submit`, `serve`, `retain`, `approvals`, `resume`, `memory`, `routines`, `worker`, `skills`, `mcp`, `recover`, `tools`, `doctor` |
-| HTTP ingress / webhooks (`ironclaw_host_ingress`) | ✅ | 🟡 `jclaw serve`: `POST /threads/{t}/turns` enqueues (202 + run id), `GET /runs/{r}` serves the projection and reply, `GET /runs/{r}/events` streams the run's events as SSE, `GET /threads/{t}/messages`, `GET/POST /approvals`, `GET /health`; loopback by default, bearer token optional. No webhook routing to routines, no TLS |
+| HTTP ingress / webhooks (`ironclaw_host_ingress`) | ✅ | 🟡 `jclaw serve`: `POST /threads/{t}/turns` enqueues (202 + run id), `GET /runs/{r}` serves the projection and reply, `GET /runs/{r}/events` streams the run's events as SSE, `GET /runs/{r}/trace`, `GET /metrics`, `POST /hooks/{name}` fires a webhook routine, `GET /threads/{t}/messages`, `GET/POST /approvals`, `GET /health`; loopback by default, bearer tokens per user. No TLS |
 | Web UI (`ironclaw_webui`, SSE + WebSocket browser gateway, login token) | ✅ | 🟡 `GET /` on `serve` is a single-page UI over the JSON and SSE routes: threads, transcript, posting turns, following a run's events, approving and denying gates; bearer token kept in session storage. No accounts, no WebSocket, no styling beyond legibility |
 | OpenAI-compatible HTTP API (`ironclaw_openai_compat`) — use the agent from any OpenAI client | ✅ | ✅ `POST /v1/chat/completions` (buffered and `stream: true`) and `GET /v1/models` on `serve`; a stateless client's prior turns are replayed into a fresh thread, `X-Jclaw-Thread` names a persistent one; images arrive as data-URL parts; client `system` messages are ignored in favour of the operator's prompt; a parked run is reported in the completion text with `X-Jclaw-Gate` |
 | Slack and Telegram channel adapters (WASM channel packages implementing `ChannelAdapter`) | ✅ | ❌ |
@@ -52,7 +52,7 @@ IronClaw is a multi-surface runtime. jclaw has the CLI, the REPL, and a minimal 
 | Source and reply-target bindings (`SourceBindingRef`, `ReplyTargetBindingRef`) | ✅ | ❌ — a reply goes to stdout, or is read back over HTTP |
 | Long-running service (`ironclaw service restart`, `ironclaw serve`) | ✅ | 🟡 `serve` and `worker` are long-lived: ingress, scheduler, routines, lease sweep, hourly retention. No service manager |
 | `config list/set` commands | ✅ | ❌ — edit `~/.jclaw/jclaw.yaml` or pass `--jclaw.*` |
-| Gate resolution inside the REPL | ✅ (WebUI approval flow) | ❌ — REPL prints the `approvals approve` command; another shell is needed |
+| Gate resolution inside the REPL | ✅ (WebUI approval flow) | ✅ a parked turn is put to the user in the REPL: what is being approved, then `y`/`n`/`l`. Either answer resumes the run; anything else leaves the gate open. A piped session is never asked and still prints the command |
 | REPL slash commands (`/help /tools /thread /new /stream`) | not documented upstream | ➕ |
 
 ---
@@ -130,7 +130,7 @@ At parity on the trust model and on the gate mechanics, and on tenant isolation;
 | Queued runs (a `QUEUED` state that something later picks up) | ✅ | ✅ `submit` and HTTP enqueue; `recover` requeues; a finished child requeues its waiting parent; `worker` and `serve` execute all of them. A queued run is seeded with the conversation as of its own submission |
 | Priorities, parallel jobs with isolated contexts | ✅ | 🟡 parallel across threads under the cap; no priorities |
 | Self-repair of stuck operations | ✅ | 🟡 `recover` / worker sweep on each tick; requeued runs are executed by the same worker |
-| Heartbeat system (proactive background agent runs) | ✅ | ❌ — routines are cron-only |
+| Heartbeat system (proactive background agent runs) | ✅ | ✅ `routines add --every <interval>`; see §7 |
 
 ---
 
@@ -179,7 +179,7 @@ At parity on the trust model and on the gate mechanics, and on tenant isolation;
 
 | Capability | IronClaw | jclaw |
 |---|---|---|
-| Encrypted secret vault (AES-256-GCM), leased/staged per runtime handoff | ✅ `ironclaw_secrets` | ✅ `FileSecretVault`: AES-256-GCM per value with the name as associated data, append-only JSONL, key from an owner-only file or `JCLAW_VAULT_KEY`; leased per capability call. No staging into subprocess environments |
+| Encrypted secret vault (AES-256-GCM), leased/staged per runtime handoff | ✅ `ironclaw_secrets` | ✅ `FileSecretVault`: AES-256-GCM per value with the name as associated data, append-only JSONL, key from an owner-only file or `JCLAW_VAULT_KEY`. Leased per capability call, and staged into an MCP server's process environment at start (`McpCredentials`) or into an HTTP server's bearer header, under a `mcp.connect` binding. No store anywhere holds a credential value |
 | Secret references usable by tools without exposure | ✅ | ✅ `{{secret:NAME}}` in any tool argument, bound to one capability and a host list; `jclaw secrets set/list/remove`; the system prompt lists names and bindings, never values |
 | Multi-user identity (`ironclaw_identity`), per-user scoping | ✅ | 🟡 `jclaw.serve-users` names users with static bearer tokens; each is the tenant of its runs, with namespaced threads (`alice:work`), its own memories and approvals, and read access only to its own runs and gates. The operator (`serve-token`) is the `local` tenant the CLI uses and reads everything. No user directory, roles, or per-user policy |
 | Auth domain (`ironclaw_auth`): Google OAuth, NEAR AI login, WebUI login tokens | ✅ | ❌ (Anthropic `ANTHROPIC_AUTH_TOKEN` OAuth-style credential is honoured; `serve-token` and `serve-users` are static bearers, no login flow) |
@@ -223,7 +223,7 @@ At parity on the trust model and on the gate mechanics, and on tenant isolation;
 | Structured tracing / metrics substrate (`ironclaw_observability`, `trace_commons`) | ✅ | 🟡 both projected from the event log rather than instrumented: `Telemetry` counts every written event into Prometheus-format metrics at `/metrics`; the pure `RunTrace` turns a run's events into spans (root, model calls, capability calls, gates, with measured latencies) served as OTLP/JSON at `/runs/{r}/trace`, printed by `status --trace`, and exported to `jclaw.otlp-endpoint` when a run finishes. No OpenTelemetry SDK in-process, no propagation into provider/MCP calls, no histograms |
 | Latency harness (`harness/latency/`) | ✅ | ❌ |
 | Deployment assets (`deploy/`, `docker/`, `infra/runner/`) | ✅ | ❌ — one jar or one binary, no Dockerfile; a GitLab release pipeline publishes both |
-| Test tooling (`test-tools/`, `tests/` integration suites) | ✅ | 🟡 286 unit + integration tests, including a child-JVM test for cross-process thread locking and a fake-docker test for the sandbox contract; no end-to-end suite against a live provider |
+| Test tooling (`test-tools/`, `tests/` integration suites) | ✅ | 🟡 290 unit + integration tests, including a child-JVM test for cross-process thread locking and a fake-docker test for the sandbox contract; no end-to-end suite against a live provider |
 | `doctor`-style preflight | *(unverified)* | ➕ `jclaw doctor` |
 
 ---
