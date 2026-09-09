@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -28,8 +29,13 @@ import java.util.Objects;
 @Service
 public class McpRegistry {
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(McpRegistry.class);
+
     private final List<McpClient> clients = new ArrayList<>();
     private final List<CapabilityHandler> handlers = new ArrayList<>();
+    private final io.jclaw.kernel.guard.EgressGuard egress;
+    private final io.jclaw.contracts.secret.SecretVault vault;
+    private final io.jclaw.storage.mcp.McpSurfaceCache cache;
 
     public McpRegistry(McpServerStore servers, Path workspaceRoot) {
         this(servers, workspaceRoot, java.util.Optional.empty());
@@ -49,18 +55,49 @@ public class McpRegistry {
     public McpRegistry(McpServerStore servers, Path workspaceRoot,
             java.util.Optional<io.jclaw.domain.sandbox.SandboxSpec> sandbox,
             io.jclaw.contracts.extension.ExtensionRegistry extensions) {
+        this(servers, workspaceRoot, sandbox, extensions, null,
+                io.jclaw.contracts.secret.SecretVault.empty(), null);
+    }
+
+    /**
+     * @param egress guard every remote server's endpoint is checked against, so an MCP URL cannot
+     *               reach a private address any more than a tool's URL can
+     * @param vault  where an HTTP server's bearer token comes from: the secret named by the
+     *               server's {@code authSecret}, bound to {@code mcp.connect} and the endpoint's
+     *               host. The token is handed to the transport as a header value; no code below
+     *               the app layer sees the vault
+     */
+    public McpRegistry(McpServerStore servers, Path workspaceRoot,
+            java.util.Optional<io.jclaw.domain.sandbox.SandboxSpec> sandbox,
+            io.jclaw.contracts.extension.ExtensionRegistry extensions,
+            io.jclaw.kernel.guard.EgressGuard egress,
+            io.jclaw.contracts.secret.SecretVault vault) {
+        this(servers, workspaceRoot, sandbox, extensions, egress, vault, null);
+    }
+
+    /**
+     * @param cache remembered surfaces; when a server's cached surface matches its current
+     *              configuration, its capabilities are published from the cache and the server is
+     *              not started until one of them is invoked. Null discovers everything eagerly
+     */
+    public McpRegistry(McpServerStore servers, Path workspaceRoot,
+            java.util.Optional<io.jclaw.domain.sandbox.SandboxSpec> sandbox,
+            io.jclaw.contracts.extension.ExtensionRegistry extensions,
+            io.jclaw.kernel.guard.EgressGuard egress,
+            io.jclaw.contracts.secret.SecretVault vault,
+            io.jclaw.storage.mcp.McpSurfaceCache cache) {
         Objects.requireNonNull(servers, "servers");
         Objects.requireNonNull(workspaceRoot, "workspaceRoot");
         Objects.requireNonNull(sandbox, "sandbox");
+        this.egress = egress;
+        this.vault = Objects.requireNonNull(vault, "vault");
+        this.cache = cache;
 
         for (McpServerStore.McpServer server : servers.list()) {
             if (!server.enabled()) {
                 continue;
             }
-            McpClient.start(server.name(), server.command(), server.env(), workspaceRoot, sandbox)
-                    .fold(
-                            client -> register(server, client, TrustClass.COMMUNITY, EffectClass.NETWORK),
-                            reason -> warn(server, reason));
+            bring(server, workspaceRoot, sandbox, TrustClass.COMMUNITY, EffectClass.NETWORK);
         }
         if (extensions != null) {
             for (var installed : extensions.list()) {
@@ -69,13 +106,138 @@ public class McpRegistry {
                 }
                 McpServerStore.McpServer server = new McpServerStore.McpServer(
                         installed.name(), installed.manifest().command(), installed.env(), true);
-                McpClient.start(server.name(), server.command(), server.env(), workspaceRoot, sandbox)
-                        .fold(
-                                client -> register(server, client, installed.trust(), installed.effectiveEffect()),
-                                reason -> warn(server, reason));
+                bring(server, workspaceRoot, sandbox, installed.trust(), installed.effectiveEffect());
             }
         }
     }
+
+    /**
+     * Opens a connection: a child process for a stdio server, an HTTP transport for a remote one.
+     *
+     * <p>A remote endpoint goes through the egress guard first — an MCP URL is operator
+     * configuration, but it is still a URL the host is about to open, and the same private-network
+     * and metadata rules apply. Its bearer token, when configured, is leased from the vault and
+     * only if the secret's binding names {@code mcp.connect} and that endpoint's host.
+     */
+    private io.jclaw.contracts.Result<io.jclaw.tools.mcp.McpTransport, String> transportFor(
+            McpServerStore.McpServer server, Path workspaceRoot,
+            java.util.Optional<io.jclaw.domain.sandbox.SandboxSpec> sandbox) {
+
+        if (!server.isHttp()) {
+            return io.jclaw.tools.mcp.StdioTransport.start(
+                    server.command(), server.env(), workspaceRoot, sandbox);
+        }
+        if (egress == null) {
+            return io.jclaw.contracts.Result.err("http_transport_needs_an_egress_guard");
+        }
+        io.jclaw.contracts.Result<java.net.URI, String> checked = egress.check(server.url());
+        if (checked.isErr()) {
+            return io.jclaw.contracts.Result.err("endpoint_" + checked.errorAsOptional().orElse("denied"));
+        }
+        java.net.URI endpoint = checked.orElseThrow();
+        java.util.Optional<String> authorization;
+        if (server.authSecret().isBlank()) {
+            authorization = java.util.Optional.empty();
+        } else {
+            var name = new io.jclaw.contracts.secret.SecretVault.SecretName(server.authSecret());
+            var lease = vault.lease(name);
+            if (lease.isEmpty()) {
+                return io.jclaw.contracts.Result.err("auth_secret_unknown");
+            }
+            var refusal = io.jclaw.domain.secret.SecretInjection.refuse(
+                    lease.get().info().binding(), CONNECT,
+                    java.util.Set.of(endpoint.getHost() == null ? "" : endpoint.getHost()));
+            if (refusal.isPresent()) {
+                return io.jclaw.contracts.Result.err(refusal.get());
+            }
+            authorization = java.util.Optional.of("Bearer " + lease.get().value());
+        }
+        return io.jclaw.contracts.Result.ok(new io.jclaw.tools.mcp.HttpTransport(endpoint, authorization));
+    }
+
+    /**
+     * Registers one server, from the cache when it has an entry for this exact configuration and
+     * from a live handshake otherwise. A live discovery updates the cache, so the next process
+     * starts nothing.
+     */
+    private void bring(
+            McpServerStore.McpServer server, Path workspaceRoot,
+            java.util.Optional<io.jclaw.domain.sandbox.SandboxSpec> sandbox,
+            TrustClass trust, EffectClass effect) {
+
+        String fingerprint = fingerprint(server);
+        var cached = cache == null
+                ? java.util.Optional.<io.jclaw.storage.mcp.McpSurfaceCache.Surface>empty()
+                : cache.find(server.name(), fingerprint);
+        if (cached.isPresent()) {
+            McpClient client = McpClient.deferred(server.name(), cached.get().offers(),
+                    () -> transportFor(server, workspaceRoot, sandbox));
+            clients.add(client);
+            for (Map<String, Object> tool : cached.get().tools()) {
+                handlers.add(new McpCapabilityHandler(client, toTool(tool), trust, effect));
+            }
+            handlers.addAll(io.jclaw.tools.mcp.McpSurfaceTools.handlersFor(client, trust, effect));
+            log.debug("mcp: {} published {} tool(s) from cache; not started", server.name(),
+                    cached.get().tools().size());
+            return;
+        }
+        transportFor(server, workspaceRoot, sandbox)
+                .flatMap(transport -> McpClient.connect(server.name(), transport))
+                .fold(
+                        client -> {
+                            boolean registered = register(server, client, trust, effect);
+                            if (registered && cache != null) {
+                                client.listTools().toOptional().ifPresent(tools -> cache.put(
+                                        server.name(), fingerprint, client.offers(),
+                                        tools.stream().map(McpRegistry::fromTool).toList()));
+                            }
+                            return registered;
+                        },
+                        reason -> warn(server, reason));
+    }
+
+    /**
+     * A stable hash of everything about a server that could change its surface: how it is
+     * reached, and which environment names it is given (never their values, which are not the
+     * surface and do not belong in a cache key).
+     */
+    private static String fingerprint(McpServerStore.McpServer server) {
+        String material = server.name() + '\u001f' + server.url() + '\u001f'
+                + String.join("\u001e", server.command()) + '\u001f'
+                + String.join("\u001e", new java.util.TreeSet<>(server.env().keySet())) + '\u001f'
+                + server.authSecret();
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(material.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder hex = new StringBuilder();
+            for (int i = 0; i < 16; i++) {
+                hex.append(String.format("%02x", digest[i]));
+            }
+            return hex.toString();
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is mandatory in every JDK", e);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static McpClient.McpTool toTool(Map<String, Object> row) {
+        return new McpClient.McpTool(
+                String.valueOf(row.get("name")),
+                String.valueOf(row.getOrDefault("description", "")),
+                row.get("inputSchema") instanceof Map<?, ?> schema ? (Map<String, Object>) schema : Map.of());
+    }
+
+    private static Map<String, Object> fromTool(McpClient.McpTool tool) {
+        Map<String, Object> row = new java.util.LinkedHashMap<>();
+        row.put("name", tool.name());
+        row.put("description", tool.description());
+        row.put("inputSchema", tool.inputSchema());
+        return row;
+    }
+
+    /** The capability an MCP server's bearer token must be bound to in the vault. */
+    public static final io.jclaw.contracts.capability.CapabilityId CONNECT =
+            io.jclaw.contracts.capability.CapabilityId.of("mcp.connect");
 
     private boolean register(McpServerStore.McpServer server, McpClient client, TrustClass trust, EffectClass effect) {
         return McpCapabilityHandler.handlersFor(client, trust, effect).fold(

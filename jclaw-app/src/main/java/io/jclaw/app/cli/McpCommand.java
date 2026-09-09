@@ -26,6 +26,7 @@ import java.util.concurrent.Callable;
         description = "Add, inspect, and test MCP server integrations.",
         mixinStandardHelpOptions = true,
         subcommands = {
+                McpCommand.Refresh.class,
                 McpCommand.Add.class,
                 McpCommand.ListServers.class,
                 McpCommand.Remove.class,
@@ -48,9 +49,18 @@ public class McpCommand implements Runnable {
         @Option(names = "--name", required = true, description = "Short name for the server.")
         private String name;
 
-        @Parameters(arity = "1..*",
+        @Parameters(arity = "0..*",
                 description = "Command and arguments to launch the server, e.g. npx -y @some/mcp-server")
-        private String[] command;
+        private String[] command = new String[0];
+
+        @Option(names = "--url",
+                description = "Endpoint of a remote server over streamable HTTP, instead of a command.")
+        private String url;
+
+        @Option(names = "--auth-secret",
+                description = "With --url: name of a vault secret sent as a bearer token. "
+                        + "Bind it to the capability mcp.connect and the endpoint's host.")
+        private String authSecret;
 
         public Add(McpServerStore store) {
             this.store = store;
@@ -62,7 +72,19 @@ public class McpCommand implements Runnable {
                 System.err.println("jclaw: a server named '" + name + "' already exists");
                 return 1;
             }
-            store.add(new McpServerStore.McpServer(name, List.of(command), Map.of(), true));
+            boolean remote = url != null && !url.isBlank();
+            if (remote == (command.length > 0)) {
+                System.err.println(remote
+                        ? "jclaw: an --url server has no command"
+                        : "jclaw: give a command to launch, or --url for a remote server");
+                return 1;
+            }
+            if (authSecret != null && !remote) {
+                System.err.println("jclaw: --auth-secret applies to --url servers only");
+                return 1;
+            }
+            store.add(new McpServerStore.McpServer(name, remote ? List.of() : List.of(command), Map.of(),
+                    remote ? url.trim() : "", authSecret == null ? "" : authSecret.trim(), true));
             System.out.println("Added MCP server '" + name + "'");
             System.out.println("Verify it with: jclaw mcp test " + name);
             System.out.println();
@@ -93,8 +115,42 @@ public class McpCommand implements Runnable {
                 System.out.printf("%-20s %-10s %s%n",
                         server.name(),
                         server.enabled() ? "enabled" : "disabled",
-                        server.commandLine());
+                        (server.isHttp() ? "http " : "stdio ") + server.commandLine());
             }
+            return 0;
+        }
+    }
+
+    @Component
+    @Command(name = "refresh",
+            description = "Forget cached server surfaces, so the next run rediscovers them.",
+            mixinStandardHelpOptions = true)
+    public static class Refresh implements Callable<Integer> {
+
+        private final io.jclaw.storage.mcp.McpSurfaceCache cache;
+
+        @Parameters(index = "0", arity = "0..1", description = "Server name. Omit for all.")
+        private String name;
+
+        public Refresh(io.jclaw.storage.mcp.McpSurfaceCache cache) {
+            this.cache = cache;
+        }
+
+        @Override
+        public Integer call() {
+            if (name != null) {
+                if (cache.drop(name)) {
+                    System.out.println("forgot the cached surface of '" + name + "'");
+                    return 0;
+                }
+                System.err.println("jclaw: nothing cached for '" + name + "'");
+                return 1;
+            }
+            java.util.Set<String> names = cache.names();
+            names.forEach(cache::drop);
+            System.out.println(names.isEmpty()
+                    ? "(nothing cached)"
+                    : "forgot " + names.size() + " cached surface(s): " + String.join(", ", new java.util.TreeSet<>(names)));
             return 0;
         }
     }

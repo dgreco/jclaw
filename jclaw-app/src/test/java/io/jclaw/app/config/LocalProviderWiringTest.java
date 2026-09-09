@@ -69,6 +69,7 @@ class LocalProviderWiringTest {
                 "1",
                 256,
                 "host",
+                true,
                 "",
                 "",
                 "jsonl",

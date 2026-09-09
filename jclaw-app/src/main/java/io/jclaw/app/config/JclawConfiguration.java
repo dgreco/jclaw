@@ -39,6 +39,7 @@ import io.jclaw.storage.checkpoint.JsonLoopStateCodec;
 import io.jclaw.storage.event.JsonlEventLog;
 import io.jclaw.storage.lock.FileThreadLock;
 import io.jclaw.storage.mcp.JsonlMcpServerStore;
+import io.jclaw.storage.mcp.McpSurfaceCache;
 import io.jclaw.storage.memory.JsonlMemoryStore;
 import io.jclaw.storage.skill.FilesystemSkillCatalog;
 import io.jclaw.storage.result.JsonlCapabilityResultStore;
@@ -211,8 +212,17 @@ public class JclawConfiguration {
     @Bean
     public McpRegistry mcpRegistry(
             McpServerStore mcpServerStore, WorkspaceGuard workspaceGuard, JclawProperties properties,
-            ExtensionRegistry extensionRegistry) {
-        return new McpRegistry(mcpServerStore, workspaceGuard.root(), mcpSandboxSpec(properties), extensionRegistry);
+            ExtensionRegistry extensionRegistry, EgressGuard egressGuard, SecretVault secretVault,
+            McpSurfaceCache mcpSurfaceCache) {
+        return new McpRegistry(mcpServerStore, workspaceGuard.root(), mcpSandboxSpec(properties),
+                extensionRegistry, egressGuard, secretVault,
+                properties.mcpLazy() ? mcpSurfaceCache : null);
+    }
+
+    /** What each MCP server offered last time, so the next start need not ask again. */
+    @Bean
+    public McpSurfaceCache mcpSurfaceCache(JclawProperties properties, StorageBackend backend, Clock clock) {
+        return new McpSurfaceCache(backend.open("mcp-surface", properties.mcpSurfacePath()), clock);
     }
 
     /**

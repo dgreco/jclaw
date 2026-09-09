@@ -114,7 +114,8 @@ public class DoctorCommand implements Callable<Integer> {
                 + " verified), " + properties.trustedPublishers().size() + " trusted publisher(s)");
         System.out.println("  mcp backend          " + io.jclaw.app.config.JclawConfiguration.mcpSandboxSpec(properties)
                 .map(spec -> "docker (" + spec.image() + ", network " + spec.network() + ")")
-                .orElse("host (servers unsandboxed)"));
+                .orElse("host (servers unsandboxed)")
+                + (properties.mcpLazy() ? ", started on first use" : ", started at boot"));
         System.out.println("  retention            results " + properties.retentionResults()
                 + ", events " + properties.retentionEvents() + ", checkpoints " + properties.retentionCheckpoints()
                 + " (0 = keep forever; transcript is never swept)");

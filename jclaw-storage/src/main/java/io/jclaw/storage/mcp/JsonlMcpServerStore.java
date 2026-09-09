@@ -31,6 +31,8 @@ public final class JsonlMcpServerStore implements McpServerStore {
         row.put("name", server.name());
         row.put("command", server.command());
         row.put("env", server.env());
+        row.put("url", server.url());
+        row.put("authSecret", server.authSecret());
         row.put("enabled", server.enabled());
         file.append(row);
     }
@@ -88,6 +90,8 @@ public final class JsonlMcpServerStore implements McpServerStore {
                             row.get("env") instanceof Map<?, ?> env
                                     ? (Map<String, String>) env
                                     : Map.of(),
+                            row.get("url") instanceof String url ? url : "",
+                            row.get("authSecret") instanceof String secret ? secret : "",
                             !(row.get("enabled") instanceof Boolean flag) || flag));
                     case KIND_REMOVED -> servers.remove(name);
                     case KIND_ENABLED -> {

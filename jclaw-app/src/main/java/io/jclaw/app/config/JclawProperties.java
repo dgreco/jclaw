@@ -77,6 +77,9 @@ import java.util.Map;
  * @param mcpBackend           {@code host} runs MCP server processes directly; {@code docker}
  *                             runs each inside the sandbox contract, so a server's network and
  *                             filesystem reach are what the operator says
+ * @param mcpLazy              publish an MCP server's capabilities from a cached surface and
+ *                             start the server only when one is invoked. {@code false}
+ *                             rediscovers, and so starts every server, on every invocation
  * @param mcpSandboxImage      image for MCP servers under {@code mcp-backend: docker}; blank
  *                             means {@code sandbox-image}. Servers usually need a runtime
  * @param mcpSandboxNetwork    network for MCP servers under {@code mcp-backend: docker}; blank
@@ -215,6 +218,8 @@ public record JclawProperties(
 
         @DefaultValue("host") String mcpBackend,
 
+        @DefaultValue("true") boolean mcpLazy,
+
         @DefaultValue("") String mcpSandboxImage,
 
         @DefaultValue("") String mcpSandboxNetwork,
@@ -293,6 +298,7 @@ public record JclawProperties(
                 "1",
                 256,
                 "host",
+                true,
                 "",
                 "",
                 "jsonl",
@@ -412,6 +418,10 @@ public record JclawProperties(
 
     public Path vaultKeyPath() {
         return stateDir.resolve("vault.key");
+    }
+
+    public Path mcpSurfacePath() {
+        return stateDir.resolve("mcp-surface.jsonl");
     }
 
     public Path extensionsPath() {

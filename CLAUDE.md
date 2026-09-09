@@ -20,7 +20,7 @@ jclaw is a Java/Spring Boot reimplementation of the **architecture** of
 untrusted-`LoopExit` trust model, and the `CapabilityHost` authority boundary are faithful; the
 feature surface is a fraction of IronClaw's. See **Not built yet** for the honest list.
 
-282 tests pass across 9 modules, including 14 machine-checked architecture rules.
+286 tests pass across 9 modules, including 14 machine-checked architecture rules.
 
 ## Commands
 
@@ -60,7 +60,7 @@ The `native` profile lives in `jclaw-app/pom.xml`. The Boot parent contributes o
 | `extensions install\|list\|remove\|enable\|disable\|keygen\|sign` | signed extension packages (skills, MCP servers); a trusted publisher's signature makes an install `VERIFIED` |
 | `models [--probe]` | provider status; `--probe` proves one actually responds |
 | `onboard` | writes `~/.jclaw/jclaw.yaml` |
-| `mcp add\|list\|remove\|toggle\|test` | external MCP tool servers (stdio transport) |
+| `mcp add\|list\|remove\|toggle\|test\|refresh` | external MCP tool servers over stdio or streamable HTTP; tools, resources, and prompts; started on first use from a cached surface |
 | `recover` | reconcile runs whose worker died |
 | `retain [--dry-run]` | drop old rows of finished runs from results, events, checkpoints |
 | `secrets set\|list\|remove` | encrypted vault of credentials tools use by `{{secret:NAME}}` reference, bound to one capability and a host list |
@@ -444,8 +444,11 @@ architecture and most runtime mechanisms are equivalent, the breadth is not. PAR
   (`POST /hooks/{name}`, bearer secret, SHA-256 stored), or an audit event (`run.finished`,
   `gate.raised`). There is no filesystem watch, no inbound-message trigger, no fan-out to several
   routines from one webhook, and event triggers see only what the audit log records.
-- **MCP breadth** — stdio only; no HTTP/SSE transports, no OAuth, no resources or prompts, eager
-  server lifecycle.
+- **MCP auth beyond a bearer token** — servers reach over stdio or streamable HTTP, expose
+  tools, resources, and prompts, and start on first use from a cached surface. An HTTP server
+  authenticates with a vault-held bearer token bound to `mcp.connect` and its host; there is no
+  OAuth 2.1 discovery, dynamic client registration, or authorization-code flow, and no sampling
+  or server-initiated notifications.
 - **Smaller items** — `repl` does not resolve gates inline; OpenRouter routing preferences are not
   sent; embedding providers beyond the OpenAI-compatible shape (Voyage, Cohere) need their own
   adapter; PDFs and other documents are refused as attachments; inbound content is not scanned

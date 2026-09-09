@@ -105,8 +105,17 @@ public final class McpCapabilityHandler implements CapabilityHandler {
     /** Registers every tool a connected server offers, at the given trust and effect. */
     public static Result<List<CapabilityHandler>, String> handlersFor(
             McpClient client, TrustClass trust, EffectClass effect) {
-        return client.listTools().map(tools -> tools.stream()
-                .map(tool -> (CapabilityHandler) new McpCapabilityHandler(client, tool, trust, effect))
-                .toList());
+        Result<List<CapabilityHandler>, String> tools = client.offersOrUnknown("tools")
+                ? client.listTools().map(discovered -> discovered.stream()
+                        .map(tool -> (CapabilityHandler) new McpCapabilityHandler(client, tool, trust, effect))
+                        .toList())
+                : Result.ok(List.of());
+        // Resources and prompts are additive: a server that offers them gets a few more
+        // capabilities, and one that does not is never asked.
+        return tools.map(discovered -> {
+            List<CapabilityHandler> all = new java.util.ArrayList<>(discovered);
+            all.addAll(McpSurfaceTools.handlersFor(client, trust, effect));
+            return List.copyOf(all);
+        });
     }
 }

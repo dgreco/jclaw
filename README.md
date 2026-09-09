@@ -61,7 +61,7 @@ jclaw reimplements the **architecture** of IronClaw — the seven-layer ladder, 
 
 Everything is durable JSONL under `~/.jclaw`: a run can park in one process, be approved in a second, and resume in a third. There is no database, and no server unless you start one (`jclaw serve`).
 
-**Status.** Milestones M0–M7 plus subagents (synchronous or asynchronous), MCP, streaming on every provider, lease-based crash recovery, a per-thread run lock, context compaction with model summaries, vector memory, configurable denials and egress lists, per-tool rate limits, injection heuristics, auth and process gates with expiry, a scheduler with `submit` and `worker`, an HTTP surface with run projections, event streams, and per-user tenants, attachments, store retention, an encrypted secret vault with host-side credential injection, a container sandbox for the shell lane, a SQL storage backend (embedded H2 or PostgreSQL) with schema migrations, signed extension packages, execution-stage hooks, a second loop family, Prometheus metrics with OTLP trace export, and webhook, heartbeat, and event triggers. 282 tests pass across the modules, including 14 machine-checked architecture rules (ArchUnit). Both the uber jar and the native image are verified end to end, including subprocess spawning for MCP servers and shell tools. [PARITY.md](PARITY.md) lists what IronClaw still has that jclaw does not.
+**Status.** Milestones M0–M7 plus subagents (synchronous or asynchronous), MCP, streaming on every provider, lease-based crash recovery, a per-thread run lock, context compaction with model summaries, vector memory, configurable denials and egress lists, per-tool rate limits, injection heuristics, auth and process gates with expiry, a scheduler with `submit` and `worker`, an HTTP surface with run projections, event streams, and per-user tenants, attachments, store retention, an encrypted secret vault with host-side credential injection, a container sandbox for the shell lane, a SQL storage backend (embedded H2 or PostgreSQL) with schema migrations, signed extension packages, execution-stage hooks, a second loop family, Prometheus metrics with OTLP trace export, webhook, heartbeat, and event triggers, and MCP over HTTP with resources, prompts, and lazily started servers. 286 tests pass across the modules, including 14 machine-checked architecture rules (ArchUnit). Both the uber jar and the native image are verified end to end, including subprocess spawning for MCP servers and shell tools. [PARITY.md](PARITY.md) lists what IronClaw still has that jclaw does not.
 
 ---
 
@@ -233,6 +233,7 @@ jclaw:
 | `serve-users` | *(none)* | Named users for `serve`, as a map of user name to bearer token (`jclaw.serve-users.alice=<token>`). Each user is a tenant: their thread names are namespaced, their memories, routines, and approvals are their own, and they see only their own runs and gates. |
 | `shell-backend` | `host` | `host` runs `builtin.shell` as a child process; `docker` runs each command in a container (see [Tools](#tools-the-agent-can-use)). |
 | `sandbox-docker` / `sandbox-image` / `sandbox-network` / `sandbox-memory` / `sandbox-cpus` / `sandbox-pids-limit` | `docker` / `alpine:3.20` / `none` / `512m` / `1` / `256` | The container contract for `shell-backend: docker` and `mcp-backend: docker`: binary, image, network (`none` unless you say otherwise), memory, CPU, and pid limits. |
+| `mcp-lazy` | `true` | Publish an MCP server's capabilities from its cached surface and start the server only when one is invoked. `false` rediscovers, and so starts every server, on every invocation. |
 | `mcp-backend` | `host` | `host` runs MCP server processes directly; `docker` runs each one inside the sandbox contract (see [MCP servers](#mcp-servers-mcp)). |
 | `mcp-sandbox-image` / `mcp-sandbox-network` | *(blank)* | Overrides for MCP servers under `mcp-backend: docker`; blank inherits `sandbox-image` / `sandbox-network`. Servers usually need a runtime image (`node:22-alpine`) and, when their tool exists to reach an API, `bridge`. |
 | `storage` | `jsonl` | Where durable rows live: `jsonl` files under the state directory, or `sql` (every store in one database; see [The state directory](#the-state-directory)). Skills and thread locks stay on the filesystem either way. |
@@ -300,6 +301,7 @@ Everything durable is append-only JSONL under `state-dir` (default `~/.jclaw`), 
 ├── memory.jsonl        durable memories, project-scoped, with embeddings when configured
 ├── routines.jsonl      scheduled routines
 ├── mcp.jsonl           registered MCP servers
+├── mcp-surface.jsonl   what each MCP server offered last time, so it need not be started
 ├── secrets.jsonl       vault entries: names, bindings, AES-256-GCM ciphertext
 ├── extensions.jsonl    installed extensions: manifests, trust, digests
 ├── extensions/<name>/  installed extension packages
@@ -585,7 +587,10 @@ The manifest declares the kind, the command, the environment *names* the server 
 
 ### MCP servers: `mcp`
 
-jclaw speaks [Model Context Protocol](https://modelcontextprotocol.io) to external tool servers over **stdio** (JSON-RPC 2.0, protocol `2024-11-05`).
+jclaw speaks [Model Context Protocol](https://modelcontextprotocol.io) to external tool servers (JSON-RPC 2.0, protocol `2025-03-26`, negotiated down by servers on the older revision) over two transports:
+
+- **stdio** — the server is a child process, the common form.
+- **streamable HTTP** — the server is remote. Each message is a POST; the server may answer with a JSON body or an SSE stream, and both are read, so a server that sends progress notifications before its result works unchanged. The session id it returns is echoed on every later request. Redirects are never followed: an endpoint that moves is configuration to fix, not a hop to take.
 
 An MCP server is third-party code with its own network stack. On the host it can reach anything and read the workspace directly; with `mcp-backend: docker` each server runs inside the same container contract as the sandboxed shell, with the workspace as its only mount, the network as `mcp-sandbox-network` says (`none` by default), and resource limits. Its configured environment is passed to the container **by name**, never as a value on the command line. The protocol is unchanged: the container's stdio is the server's.
 
@@ -595,14 +600,24 @@ jclaw mcp test fs --jclaw.mcp-backend=docker --jclaw.mcp-sandbox-image=node:22-a
 
 ```bash
 jclaw mcp add --name fs npx -y @modelcontextprotocol/server-filesystem .
+jclaw mcp add --name gh --url https://mcp.example.com/mcp --auth-secret gh-mcp
 jclaw mcp test fs              # start, handshake, list tools, shut down
 jclaw mcp list
+jclaw mcp refresh [name]       # forget cached surfaces; the next run rediscovers
 jclaw mcp toggle fs --disable  # keep the config, stop loading it
 jclaw mcp toggle fs
 jclaw mcp remove fs
 ```
 
-The command is stored as argv (never re-parsed through a shell). Enabled servers are started when jclaw boots, with the workspace as their working directory and a scrubbed environment; each advertised tool registers as `mcp.<server>.<tool>` with `COMMUNITY` trust, which means **every call needs approval in every mode, including `trusted`** — no setting can raise a third-party ceiling. A server that fails to start is reported on stderr and skipped, never fatal. Only text content is returned to the model; images and other content types are elided.
+The command is stored as argv (never re-parsed through a shell). A stdio server runs with the workspace as its working directory and a scrubbed environment. A remote endpoint goes through the **egress guard** first, exactly as a tool's URL does: an MCP server on a private address is refused unless `allow-private-networks` says otherwise. Its bearer token, when it needs one, comes from the [secret vault](#secrets-the-agent-may-use-but-never-see) rather than config: create it bound to the capability `mcp.connect` and the endpoint's host, and name it with `--auth-secret`. Nothing below the application layer ever holds the vault; the transport receives a finished header value.
+
+```bash
+echo -n "$GH_MCP_TOKEN" | jclaw secrets set gh-mcp --capability mcp.connect --host mcp.example.com
+```
+
+**What a server offers.** Tools register as `mcp.<server>.<tool>`. A server that declares resources also gets `mcp.<server>.list_resources` and `read_resource`; one that declares prompts gets `list_prompts` and `get_prompt`. Declared, not assumed: a server is never asked for a capability it did not claim. All of them carry `COMMUNITY` trust, which means **every call needs approval in every mode, including `trusted`** — no setting can raise a third-party ceiling. Only text content is returned to the model; images, binary resources, and other content types are named and elided.
+
+**Servers start on first use.** The capability surface has to be known before a turn begins, and discovering it means a handshake, which used to mean spawning every configured server on every `jclaw` invocation. The surface is now cached per server, keyed by a fingerprint of its command, URL, and environment *names*, so a later process publishes the capabilities from the cache and starts nothing until one is actually invoked. Change any of that and the entry is invalidated; `mcp refresh` drops it by hand; `jclaw.mcp-lazy=false` rediscovers on every start. A server that fails to start is reported on stderr and skipped, never fatal.
 
 ### Subagents
 

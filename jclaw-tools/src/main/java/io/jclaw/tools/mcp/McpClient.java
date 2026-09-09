@@ -2,14 +2,7 @@ package io.jclaw.tools.mcp;
 
 import io.jclaw.contracts.Result;
 import io.jclaw.domain.sandbox.SandboxSpec;
-import tools.jackson.databind.json.JsonMapper;
 
-import java.io.BufferedReader;
-import java.io.BufferedWriter;
-import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.OutputStreamWriter;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -22,62 +15,46 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * A minimal Model Context Protocol client over stdio.
+ * A connected MCP server: the protocol, over whichever {@link McpTransport} carries it.
  *
- * <p>MCP is JSON-RPC 2.0 with a small handshake. This implements the part an agent harness
- * actually needs — {@code initialize}, {@code tools/list}, {@code tools/call} — over the stdio
- * transport, which is what local MCP servers use. HTTP/SSE transports are not implemented.
+ * <p>Speaks the parts of MCP jclaw actually uses — the handshake, tools, resources, and prompts —
+ * and no more. Notifications the server sends are ignored rather than dispatched: this client
+ * asks questions, and a server that pushes an unsolicited instruction is not a server whose
+ * instruction should reach the loop.
  *
- * <p>Written directly rather than pulled from a library because the surface is three methods and
- * the process lifecycle is the hard part, not the protocol.
- *
- * <h2>Security posture</h2>
- *
- * <p>An MCP server is <b>third-party code the user chose to install</b>, and its tool descriptions
- * are attacker-influenced text that ends up in the model's prompt. Two consequences are enforced
- * outside this class and worth stating here:
- *
- * <ul>
- *   <li>MCP capabilities are registered as {@link io.jclaw.contracts.capability.TrustClass#COMMUNITY},
- *       whose auto-approval ceiling is {@code PURE}. Every MCP tool call therefore requires human
- *       approval, whatever the operator's policy says — policy may tighten a third-party trust
- *       ceiling, never raise it.</li>
- *   <li>The child process inherits a scrubbed environment, so an MCP server cannot read the
- *       harness's credentials out of its own environment.</li>
- * </ul>
+ * <p>What the server may offer is read from its handshake, not assumed: {@link #offers} reports
+ * the declared capabilities, so a server without resources is never asked for them, and
+ * capabilities are registered only for what it said it has.
  */
 public final class McpClient implements AutoCloseable {
 
-    /** MCP revision this client speaks. */
-    private static final String PROTOCOL_VERSION = "2024-11-05";
-
+    /**
+     * The version this client speaks. {@code 2025-03-26} is the revision that introduced the
+     * streamable HTTP transport; servers on the older revision negotiate down in their reply,
+     * and nothing here depends on the difference.
+     */
+    private static final String PROTOCOL_VERSION = "2025-03-26";
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(30);
 
-    /**
-     * Environment a server process may inherit. Same discipline as {@link ShellTool}: without it,
-     * an installed MCP server can read {@code ANTHROPIC_API_KEY} straight out of its environment.
-     */
-    private static final Set<String> ENV_ALLOWLIST =
-            Set.of("PATH", "HOME", "LANG", "LC_ALL", "TZ", "TERM", "USER", "TMPDIR");
-
-    private final JsonMapper mapper = JsonMapper.builder().build();
     private final AtomicLong nextId = new AtomicLong(1);
-
     private final String serverName;
-    private final Process process;
-    private final BufferedWriter toServer;
-    private final BufferedReader fromServer;
+    private final java.util.function.Supplier<Result<McpTransport, String>> connector;
+    private final Object connectLock = new Object();
+    private volatile McpTransport transport;
+    private volatile Set<String> offers;
 
-    private McpClient(String serverName, Process process) {
+    private McpClient(
+            String serverName,
+            java.util.function.Supplier<Result<McpTransport, String>> connector,
+            McpTransport transport,
+            Set<String> offers) {
         this.serverName = serverName;
-        this.process = process;
-        this.toServer = new BufferedWriter(
-                new OutputStreamWriter(process.getOutputStream(), StandardCharsets.UTF_8));
-        this.fromServer = new BufferedReader(
-                new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8));
+        this.connector = connector;
+        this.transport = transport;
+        this.offers = Set.copyOf(offers);
     }
 
-    /** One tool advertised by a server. */
+    /** A tool the server advertises. */
     public record McpTool(String name, String description, Map<String, Object> inputSchema) {
         public McpTool {
             Objects.requireNonNull(name, "name");
@@ -86,77 +63,152 @@ public final class McpClient implements AutoCloseable {
         }
     }
 
-    /**
-     * Starts a server and completes the MCP handshake.
-     *
-     * @param workingDirectory directory the server runs in; the workspace root, so a filesystem
-     *                         MCP server is confined the same way the built-in tools are
-     */
+    /** A resource the server can read: addressable content, not an action. */
+    public record McpResource(String uri, String name, String description, String mimeType) {
+        public McpResource {
+            Objects.requireNonNull(uri, "uri");
+            Objects.requireNonNull(name, "name");
+            Objects.requireNonNull(description, "description");
+            Objects.requireNonNull(mimeType, "mimeType");
+        }
+    }
+
+    /** A prompt template the server offers, with the arguments it takes. */
+    public record McpPrompt(String name, String description, List<String> arguments) {
+        public McpPrompt {
+            Objects.requireNonNull(name, "name");
+            Objects.requireNonNull(description, "description");
+            arguments = List.copyOf(Objects.requireNonNull(arguments, "arguments"));
+        }
+    }
+
+    /** Starts a server as a child process over stdio. */
     public static Result<McpClient, String> start(
             String serverName, List<String> command, Map<String, String> extraEnv, Path workingDirectory) {
         return start(serverName, command, extraEnv, workingDirectory, Optional.empty());
     }
 
-    /**
-     * As {@link #start(String, List, Map, Path)}, optionally inside a container.
-     *
-     * <p>With a sandbox the process jclaw spawns is the Docker client, and the server runs in the
-     * container it starts, with the workspace mounted and the network as the spec says. The
-     * server's configured environment is set on the Docker client and passed through by name, so
-     * it reaches the server without appearing in any argument vector. The protocol is stdio
-     * either way; the container's stdin and stdout are the server's.
-     */
+    /** As {@link #start(String, List, Map, Path)}, optionally inside a container. */
     public static Result<McpClient, String> start(
             String serverName, List<String> command, Map<String, String> extraEnv, Path workingDirectory,
             Optional<SandboxSpec> sandbox) {
-
-        Objects.requireNonNull(serverName, "serverName");
-        Objects.requireNonNull(command, "command");
-        Objects.requireNonNull(sandbox, "sandbox");
-        if (command.isEmpty()) {
-            return Result.err("empty_command");
-        }
-
-        List<String> argv = sandbox
-                .map(spec -> spec.argv(workingDirectory, command, extraEnv.keySet()))
-                .orElse(command);
-        ProcessBuilder builder = new ProcessBuilder(argv);
-        builder.directory(workingDirectory.toFile());
-        // stderr stays separate: server diagnostics must never be parsed as protocol.
-        builder.redirectError(ProcessBuilder.Redirect.DISCARD);
-
-        Map<String, String> environment = builder.environment();
-        environment.keySet().removeIf(key -> !ENV_ALLOWLIST.contains(key));
-        environment.putAll(extraEnv);
-
-        Process process;
-        try {
-            process = builder.start();
-        } catch (IOException e) {
-            return Result.err("server_spawn_failed");
-        }
-
-        McpClient client = new McpClient(serverName, process);
-        Result<Map<String, Object>, String> handshake = client.request("initialize", Map.of(
-                "protocolVersion", PROTOCOL_VERSION,
-                "capabilities", Map.of(),
-                "clientInfo", Map.of("name", "jclaw", "version", "0.1.0")));
-
-        if (handshake.isErr()) {
-            client.close();
-            return Result.err(handshake.errorAsOptional().orElse("handshake_failed"));
-        }
-        // MCP requires this notification before any other call.
-        client.notification("notifications/initialized", Map.of());
-        return Result.ok(client);
+        return StdioTransport.start(command, extraEnv, workingDirectory, sandbox)
+                .flatMap(transport -> connect(serverName, transport));
     }
 
-    /** Lists the tools this server offers. */
+    /**
+     * Completes the handshake over an already-built transport.
+     *
+     * <p>The one entry point for a remote server: the caller validates the URL against the egress
+     * guard and leases any credential, then hands over a ready transport.
+     */
+    public static Result<McpClient, String> connect(String serverName, McpTransport transport) {
+        Objects.requireNonNull(serverName, "serverName");
+        Objects.requireNonNull(transport, "transport");
+        McpClient client = new McpClient(serverName, () -> Result.ok(transport), null, Set.of());
+        Result<McpTransport, String> ready = client.ensureConnected();
+        return ready.isErr()
+                ? Result.err(ready.errorAsOptional().orElse("handshake_failed"))
+                : Result.ok(client);
+    }
+
+    /**
+     * A client that has not connected yet and will on its first call.
+     *
+     * <p>How a server stays unstarted until something actually uses it. The surface is supplied
+     * from a cache of an earlier discovery, so the capabilities can be published — and the whole
+     * prompt built — without a process, a socket, or a handshake. A CLI invocation that never
+     * calls an MCP tool therefore never starts one.
+     *
+     * @param offers    what the server declared last time it was asked
+     * @param connector opens the transport, when the moment comes
+     */
+    public static McpClient deferred(
+            String serverName, Set<String> offers,
+            java.util.function.Supplier<Result<McpTransport, String>> connector) {
+        Objects.requireNonNull(serverName, "serverName");
+        Objects.requireNonNull(offers, "offers");
+        Objects.requireNonNull(connector, "connector");
+        return new McpClient(serverName, connector, null, offers);
+    }
+
+    /** Whether this client has actually opened its transport. */
+    public boolean isConnected() {
+        return transport != null;
+    }
+
+    /**
+     * Opens the transport and completes the handshake, once.
+     *
+     * <p>The handshake writes directly to the transport rather than going through
+     * {@link #request}, which would come back here and recurse.
+     */
+    private Result<McpTransport, String> ensureConnected() {
+        McpTransport current = transport;
+        if (current != null) {
+            return Result.ok(current);
+        }
+        synchronized (connectLock) {
+            if (transport != null) {
+                return Result.ok(transport);
+            }
+            Result<McpTransport, String> opened = connector.get();
+            if (opened.isErr()) {
+                return opened;
+            }
+            McpTransport fresh = opened.orElseThrow();
+
+            long id = nextId.getAndIncrement();
+            Map<String, Object> envelope = new LinkedHashMap<>();
+            envelope.put("jsonrpc", "2.0");
+            envelope.put("id", id);
+            envelope.put("method", "initialize");
+            envelope.put("params", Map.of(
+                    "protocolVersion", PROTOCOL_VERSION,
+                    "capabilities", Map.of(),
+                    "clientInfo", Map.of("name", "jclaw", "version", "0.1.0")));
+            Result<Map<String, Object>, String> handshake =
+                    fresh.send(envelope, Optional.of(id), REQUEST_TIMEOUT);
+            if (handshake.isErr()) {
+                fresh.close();
+                return Result.err(handshake.errorAsOptional().orElse("handshake_failed"));
+            }
+            // MCP requires this notification before any other call.
+            Map<String, Object> initialized = new LinkedHashMap<>();
+            initialized.put("jsonrpc", "2.0");
+            initialized.put("method", "notifications/initialized");
+            initialized.put("params", Map.of());
+            fresh.send(initialized, Optional.empty(), REQUEST_TIMEOUT);
+
+            offers = declaredCapabilities(handshake.orElseThrow());
+            transport = fresh;
+            return Result.ok(fresh);
+        }
+    }
+
+    private static Set<String> declaredCapabilities(Map<String, Object> handshake) {
+        if (!(handshake.get("capabilities") instanceof Map<?, ?> capabilities)) {
+            return Set.of();
+        }
+        Set<String> declared = new java.util.LinkedHashSet<>();
+        capabilities.keySet().forEach(key -> declared.add(String.valueOf(key)));
+        return declared;
+    }
+
+    /** What the server said it offers: some of {@code tools}, {@code resources}, {@code prompts}. */
+    public Set<String> offers() {
+        return offers;
+    }
+
+    /** Whether the server declared a capability. A server that declared nothing is asked for tools anyway. */
+    public boolean offersOrUnknown(String capability) {
+        return offers.isEmpty() || offers.contains(capability);
+    }
+
     @SuppressWarnings("unchecked")
     public Result<List<McpTool>, String> listTools() {
         return request("tools/list", Map.of()).flatMap(result -> {
-            Object rawTools = result.get("tools");
-            if (!(rawTools instanceof List<?> list)) {
+            if (!(result.get("tools") instanceof List<?> list)) {
                 return Result.err("malformed_tools_list");
             }
             List<McpTool> tools = new ArrayList<>();
@@ -175,16 +227,112 @@ public final class McpClient implements AutoCloseable {
         });
     }
 
-    /**
-     * Invokes a tool and flattens its content to text.
-     *
-     * <p>MCP results are a list of typed content blocks; only text is extracted. Binary content is
-     * summarized rather than inlined, because a base64 image in a tool result would consume the
-     * context window to no purpose.
-     */
     public Result<String, String> callTool(String name, Map<String, Object> arguments) {
         return request("tools/call", Map.of("name", name, "arguments", arguments))
                 .flatMap(McpClient::flattenContent);
+    }
+
+    @SuppressWarnings("unchecked")
+    public Result<List<McpResource>, String> listResources() {
+        return request("resources/list", Map.of()).flatMap(result -> {
+            if (!(result.get("resources") instanceof List<?> list)) {
+                return Result.err("malformed_resources_list");
+            }
+            List<McpResource> resources = new ArrayList<>();
+            for (Object element : list) {
+                if (element instanceof Map<?, ?> map) {
+                    Map<String, Object> resource = (Map<String, Object>) map;
+                    resources.add(new McpResource(
+                            String.valueOf(resource.get("uri")),
+                            String.valueOf(resource.getOrDefault("name", resource.get("uri"))),
+                            String.valueOf(resource.getOrDefault("description", "")),
+                            String.valueOf(resource.getOrDefault("mimeType", "text/plain"))));
+                }
+            }
+            return Result.ok(List.copyOf(resources));
+        });
+    }
+
+    /** Reads a resource, flattened to text the way tool content is. */
+    @SuppressWarnings("unchecked")
+    public Result<String, String> readResource(String uri) {
+        return request("resources/read", Map.of("uri", uri)).flatMap(result -> {
+            if (!(result.get("contents") instanceof List<?> contents)) {
+                return Result.err("malformed_resource_contents");
+            }
+            StringBuilder text = new StringBuilder();
+            for (Object element : contents) {
+                if (!(element instanceof Map<?, ?> map)) {
+                    continue;
+                }
+                Map<String, Object> content = (Map<String, Object>) map;
+                if (content.get("text") instanceof String value) {
+                    if (!text.isEmpty()) {
+                        text.append('\n');
+                    }
+                    text.append(value);
+                } else if (content.containsKey("blob")) {
+                    // Binary content would be base64 the model cannot use; name it instead.
+                    text.append("\n[binary resource ").append(content.getOrDefault("mimeType", "?"))
+                            .append(" omitted]");
+                }
+            }
+            return Result.ok(text.isEmpty() ? "(no readable content)" : text.toString());
+        });
+    }
+
+    @SuppressWarnings("unchecked")
+    public Result<List<McpPrompt>, String> listPrompts() {
+        return request("prompts/list", Map.of()).flatMap(result -> {
+            if (!(result.get("prompts") instanceof List<?> list)) {
+                return Result.err("malformed_prompts_list");
+            }
+            List<McpPrompt> prompts = new ArrayList<>();
+            for (Object element : list) {
+                if (element instanceof Map<?, ?> map) {
+                    Map<String, Object> prompt = (Map<String, Object>) map;
+                    List<String> arguments = new ArrayList<>();
+                    if (prompt.get("arguments") instanceof List<?> declared) {
+                        for (Object argument : declared) {
+                            if (argument instanceof Map<?, ?> argumentMap) {
+                                arguments.add(String.valueOf(argumentMap.get("name")));
+                            }
+                        }
+                    }
+                    prompts.add(new McpPrompt(
+                            String.valueOf(prompt.get("name")),
+                            String.valueOf(prompt.getOrDefault("description", "")),
+                            arguments));
+                }
+            }
+            return Result.ok(List.copyOf(prompts));
+        });
+    }
+
+    /** Expands a prompt template to its message text. */
+    @SuppressWarnings("unchecked")
+    public Result<String, String> getPrompt(String name, Map<String, Object> arguments) {
+        return request("prompts/get", Map.of("name", name, "arguments", arguments)).flatMap(result -> {
+            if (!(result.get("messages") instanceof List<?> messages)) {
+                return Result.err("malformed_prompt_messages");
+            }
+            StringBuilder text = new StringBuilder();
+            for (Object element : messages) {
+                if (!(element instanceof Map<?, ?> map)) {
+                    continue;
+                }
+                Map<String, Object> message = (Map<String, Object>) map;
+                String role = String.valueOf(message.getOrDefault("role", "user"));
+                String body = message.get("content") instanceof Map<?, ?> content
+                        ? String.valueOf(((Map<String, Object>) content).getOrDefault("text", ""))
+                        : "";
+                if (!text.isEmpty()) {
+                    text.append("\n\n");
+                }
+                text.append(role).append(": ").append(body);
+            }
+            return Result.ok(text.isEmpty() ? "(empty prompt)" : text.toString());
+        });
     }
 
     @SuppressWarnings("unchecked")
@@ -217,90 +365,37 @@ public final class McpClient implements AutoCloseable {
         return serverName;
     }
 
+    /** A client that has not connected is alive: it still can. */
     public boolean isAlive() {
-        return process.isAlive();
+        McpTransport current = transport;
+        return current == null || current.isAlive();
     }
 
-    // --- JSON-RPC plumbing ---
+    /** How this server is reached, for logs and {@code mcp list}. Never a credential. */
+    public String transportDescription() {
+        McpTransport current = transport;
+        return current == null ? "not connected" : current.describe();
+    }
 
-    /** Sends a request and waits for the matching response. */
-    @SuppressWarnings("unchecked")
     private Result<Map<String, Object>, String> request(String method, Map<String, Object> params) {
+        Result<McpTransport, String> ready = ensureConnected();
+        if (ready.isErr()) {
+            return Result.err(ready.errorAsOptional().orElse("server_unavailable"));
+        }
         long id = nextId.getAndIncrement();
         Map<String, Object> envelope = new LinkedHashMap<>();
         envelope.put("jsonrpc", "2.0");
         envelope.put("id", id);
         envelope.put("method", method);
         envelope.put("params", params);
-
-        try {
-            send(envelope);
-        } catch (IOException | RuntimeException e) {
-            return Result.err("server_write_failed");
-        }
-
-        long deadline = System.currentTimeMillis() + REQUEST_TIMEOUT.toMillis();
-        while (System.currentTimeMillis() < deadline) {
-            String line;
-            try {
-                line = fromServer.readLine();
-            } catch (IOException e) {
-                return Result.err("server_read_failed");
-            }
-            if (line == null) {
-                return Result.err("server_closed_stream");
-            }
-            if (line.isBlank()) {
-                continue;
-            }
-
-            Map<String, Object> message;
-            try {
-                message = mapper.readValue(line, Map.class);
-            } catch (RuntimeException e) {
-                continue; // not protocol; ignore rather than abort
-            }
-
-            // Skip notifications and responses to other requests.
-            Object responseId = message.get("id");
-            if (!(responseId instanceof Number number) || number.longValue() != id) {
-                continue;
-            }
-            if (message.get("error") instanceof Map<?, ?> error) {
-                // The server's error message is third-party text; only its code is used.
-                Object code = ((Map<String, Object>) error).get("code");
-                return Result.err("server_error_" + code);
-            }
-            return message.get("result") instanceof Map<?, ?> result
-                    ? Result.ok((Map<String, Object>) result)
-                    : Result.ok(Map.of());
-        }
-        return Result.err("server_timeout");
-    }
-
-    /** Fire-and-forget message; MCP notifications carry no id and expect no reply. */
-    private void notification(String method, Map<String, Object> params) {
-        Map<String, Object> envelope = new LinkedHashMap<>();
-        envelope.put("jsonrpc", "2.0");
-        envelope.put("method", method);
-        envelope.put("params", params);
-        try {
-            send(envelope);
-        } catch (IOException | RuntimeException e) {
-            // Best effort by definition: there is no reply to miss.
-        }
-    }
-
-    private void send(Map<String, Object> envelope) throws IOException {
-        toServer.write(mapper.writeValueAsString(envelope));
-        toServer.newLine();
-        toServer.flush();
+        return ready.orElseThrow().send(envelope, Optional.of(id), REQUEST_TIMEOUT);
     }
 
     @Override
     public void close() {
-        // Destroy the whole tree: an MCP server that spawned helpers would otherwise leak them.
-        process.descendants().forEach(ProcessHandle::destroyForcibly);
-        process.destroyForcibly();
+        McpTransport current = transport;
+        if (current != null) {
+            current.close();
+        }
     }
 }

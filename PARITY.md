@@ -2,7 +2,7 @@
 
 An honest enumeration of what [IronClaw](https://github.com/nearai/ironclaw) (internally "Reborn") has that jclaw does not, and of what jclaw now has. jclaw is roughly 20k lines of Java (plus 6.5k of tests) against IronClaw's ~1.4M lines of Rust across ~63 crates. The **architecture** is equivalent — layer ladder, turn/run lifecycle, untrusted `LoopExit`, single `CapabilityHost` authority boundary, checkpoint-kind–driven recovery — and, after the September 2026 parity work, most of the runtime *mechanisms* are present in some form. What remains missing is breadth: channel adapters, a remote extension registry, and a WASM lane. This file is the list, organised by IronClaw's own crate families so a gap can be traced to the crate that fills it upstream.
 
-Sources: IronClaw's `README.md`, `crates/Architecture.md`, and the `crates/` listing as of September 2026; jclaw's code on this checkout (282 tests, 0 failures). Where the upstream doc names a concept and jclaw has an equivalent under a different name, the mapping is given. Where the gap is uncertain it is marked *(unverified)*.
+Sources: IronClaw's `README.md`, `crates/Architecture.md`, and the `crates/` listing as of September 2026; jclaw's code on this checkout (286 tests, 0 failures). Where the upstream doc names a concept and jclaw has an equivalent under a different name, the mapping is given. Where the gap is uncertain it is marked *(unverified)*.
 
 Legend: ✅ at parity · 🟡 partial · ❌ missing · ➕ jclaw-only
 
@@ -69,12 +69,12 @@ IronClaw's premise is that already-authorized work runs **in isolation**. jclaw 
 | Process backend selected by policy (in-process worker vs container) | ✅ | 🟡 selected by configuration per lane: `jclaw.shell-backend` and `jclaw.mcp-backend`, each `host` or `docker` (`SandboxSpec`, with an image and network override for MCP). Not per capability, not per trust class |
 | Dynamic tool building (agent authors and installs new WASM tools) | ✅ | ❌ |
 | First-party executors routed through `RuntimeDispatcher` | ✅ | ✅ (`CapabilityHandler` lanes behind `DefaultCapabilityHost`) |
-| MCP over stdio | ✅ | ✅ |
-| MCP over HTTP / SSE / streamable HTTP | ✅ *(unverified which transports)* | ❌ |
-| MCP OAuth for authenticated servers | ✅ *(unverified)* | ❌ |
-| MCP resources, prompts, sampling, notifications | ✅ *(unverified)* | ❌ — only `initialize`, `tools/list`, `tools/call`; notifications are ignored |
-| MCP server lifecycle | lazy / managed *(unverified)* | 🟡 all enabled servers start eagerly at boot, on every CLI invocation |
-| Host-mediated egress for MCP servers | ✅ | 🟡 under `mcp-backend: docker` a server's network is what `mcp-sandbox-network` says: `none` (default) or a Docker network; its configured environment reaches it by name, never on a command line. On the host its sockets are unmediated. No per-host allowlist for a server process |
+| MCP over stdio | ✅ | ✅ `StdioTransport`, behind the same `McpTransport` port as HTTP |
+| MCP over HTTP / SSE / streamable HTTP | ✅ *(unverified which transports)* | ✅ `HttpTransport`: streamable HTTP (protocol `2025-03-26`), reading either a JSON body or an SSE stream, echoing the server's session id, never following a redirect |
+| MCP OAuth for authenticated servers | ✅ *(unverified)* | 🟡 an HTTP server authenticates with a bearer token held in the secret vault, bound to the capability `mcp.connect` and the endpoint's host; the app layer leases it and hands the transport a finished header. No OAuth 2.1 discovery, dynamic client registration, or authorization-code flow |
+| MCP resources, prompts, sampling, notifications | ✅ *(unverified)* | 🟡 tools, resources (`list_resources`, `read_resource`), and prompts (`list_prompts`, `get_prompt`), registered only for what the server declared in its handshake. No sampling; server notifications are still ignored |
+| MCP server lifecycle | lazy / managed *(unverified)* | ✅ lazy: `McpSurfaceCache` remembers what each server offered, keyed by a fingerprint of its command, URL, and environment names, so capabilities are published without a handshake and the server starts on first invocation. `mcp refresh` drops an entry; `jclaw.mcp-lazy=false` restores eager discovery |
+| Host-mediated egress for MCP servers | ✅ | 🟡 a remote server's endpoint goes through `EgressGuard` before a connection is opened, so an MCP URL is checked exactly as a tool's is. Under `mcp-backend: docker` a stdio server's network is what `mcp-sandbox-network` says: `none` (default) or a Docker network; its configured environment reaches it by name, never on a command line. On the host a stdio server's own sockets remain unmediated |
 
 ---
 
@@ -223,7 +223,7 @@ At parity on the trust model and on the gate mechanics, and on tenant isolation;
 | Structured tracing / metrics substrate (`ironclaw_observability`, `trace_commons`) | ✅ | 🟡 both projected from the event log rather than instrumented: `Telemetry` counts every written event into Prometheus-format metrics at `/metrics`; the pure `RunTrace` turns a run's events into spans (root, model calls, capability calls, gates, with measured latencies) served as OTLP/JSON at `/runs/{r}/trace`, printed by `status --trace`, and exported to `jclaw.otlp-endpoint` when a run finishes. No OpenTelemetry SDK in-process, no propagation into provider/MCP calls, no histograms |
 | Latency harness (`harness/latency/`) | ✅ | ❌ |
 | Deployment assets (`deploy/`, `docker/`, `infra/runner/`) | ✅ | ❌ — one jar or one binary, no Dockerfile; a GitLab release pipeline publishes both |
-| Test tooling (`test-tools/`, `tests/` integration suites) | ✅ | 🟡 282 unit + integration tests, including a child-JVM test for cross-process thread locking and a fake-docker test for the sandbox contract; no end-to-end suite against a live provider |
+| Test tooling (`test-tools/`, `tests/` integration suites) | ✅ | 🟡 286 unit + integration tests, including a child-JVM test for cross-process thread locking and a fake-docker test for the sandbox contract; no end-to-end suite against a live provider |
 | `doctor`-style preflight | *(unverified)* | ➕ `jclaw doctor` |
 
 ---
@@ -278,4 +278,4 @@ The twelve items of the original list and the six that followed are closed (sect
 7. ~~**Loop hooks and loop families**~~ — closed: `LoopHook` at the model and capability stages, `LoopFamily` with a second strategy. Still open under this heading: hooks on prompt assembly and gate raising, and families defined outside Java.
 8. ~~**Observability substrate**~~ — closed as projections of the audit log: Prometheus metrics, OTLP traces, collector export. Still open under this heading: an in-process OpenTelemetry SDK with context propagation into provider and MCP calls, and latency histograms.
 9. ~~**Triggers beyond cron**~~ — closed: the pure `Trigger` parses four forms and `RoutineSchedule` decides which the clock drives. Still open under this heading: filesystem watches, inbound-message triggers, and fan-out from one webhook to several routines.
-10. **MCP breadth** (§3) — HTTP/SSE transports, OAuth, resources and prompts, lazy server lifecycle, and host-mediated egress for server processes.
+10. ~~**MCP breadth**~~ — closed: streamable HTTP beside stdio behind one transport port, resources and prompts as capabilities, lazy start from a cached surface, and the egress guard on every remote endpoint. Still open under this heading: the OAuth 2.1 flow (a vault-held bearer token stands in), sampling, server-initiated notifications, and mediating a stdio server's own sockets.

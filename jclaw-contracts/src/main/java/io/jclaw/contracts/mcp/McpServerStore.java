@@ -16,27 +16,52 @@ public interface McpServerStore {
      *                {@code ; rm -rf} must be inert, not clever.
      * @param env     extra environment for the child, on top of a scrubbed allowlist
      */
-    record McpServer(String name, List<String> command, Map<String, String> env, boolean enabled) {
+    /**
+     * A registered server, reached one of two ways.
+     *
+     * @param command the child process to spawn, for a stdio server; empty for an HTTP one
+     * @param env     environment for that process; for an HTTP server, unused
+     * @param url     the endpoint of a remote server over streamable HTTP; blank for stdio
+     * @param authSecret name of a vault secret to send as a bearer token when connecting over
+     *                   HTTP; blank for none. The value never lives here
+     */
+    record McpServer(
+            String name, List<String> command, Map<String, String> env,
+            String url, String authSecret, boolean enabled) {
 
         public McpServer {
             Objects.requireNonNull(name, "name");
             command = List.copyOf(Objects.requireNonNull(command, "command"));
             env = Map.copyOf(Objects.requireNonNull(env, "env"));
+            url = Objects.requireNonNull(url, "url").trim();
+            authSecret = Objects.requireNonNull(authSecret, "authSecret").trim();
             if (name.isBlank()) {
                 throw new IllegalArgumentException("server name must not be blank");
             }
-            if (command.isEmpty()) {
-                throw new IllegalArgumentException("server command must not be empty");
+            if (command.isEmpty() == url.isBlank()) {
+                throw new IllegalArgumentException("a server needs either a command or a url, not both");
+            }
+            if (!url.isBlank() && !command.isEmpty()) {
+                throw new IllegalArgumentException("an http server has no command");
             }
         }
 
-        public McpServer withEnabled(boolean enabled) {
-            return new McpServer(name, command, env, enabled);
+        /** A stdio server: the common form, and what {@code mcp add} creates without {@code --url}. */
+        public McpServer(String name, List<String> command, Map<String, String> env, boolean enabled) {
+            this(name, command, env, "", "", enabled);
         }
 
-        /** Display form. Never re-parsed — the argv list is authoritative. */
+        public boolean isHttp() {
+            return !url.isBlank();
+        }
+
+        public McpServer withEnabled(boolean enabled) {
+            return new McpServer(name, command, env, url, authSecret, enabled);
+        }
+
+        /** How the server is reached, for listings. Never a credential. */
         public String commandLine() {
-            return String.join(" ", command);
+            return isHttp() ? url : String.join(" ", command);
         }
     }
 
