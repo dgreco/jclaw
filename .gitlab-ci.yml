@@ -25,6 +25,15 @@ variables:
   MAVEN_OPTS: "-Dmaven.repo.local=$CI_PROJECT_DIR/.m2/repository -Djava.awt.headless=true"
   MAVEN_VERSION: "3.9.11"
   GIT_DEPTH: "20"
+  # The runner's DNS intermittently fails to resolve the GitLab host, and the clone dies with
+  # "Could not resolve host ... (Timeout while contacting DNS servers)" before any script runs.
+  # GitLab reports that as `script_failure` — the same class as a failing test — so `retry:when`
+  # cannot tell the two apart and retrying on it would mask real breaks. These three make the
+  # *runner* retry the fetch itself, which is exactly the step that fails and nothing else.
+  # A mitigation, not a fix: the fix is on the runner host.
+  GET_SOURCES_ATTEMPTS: "3"
+  RESTORE_CACHE_ATTEMPTS: "3"
+  ARTIFACT_DOWNLOAD_ATTEMPTS: "3"
 
 default:
   interruptible: true
