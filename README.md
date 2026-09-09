@@ -154,13 +154,16 @@ Test totals by module (verified on this checkout): contracts 8 · domain 62 · k
 
 ### Continuous integration
 
-`.gitlab-ci.yml` defines three jobs for the GitLab remote:
+`.gitlab-ci.yml` defines four jobs for the GitLab remote:
 
 | Job | Stage | What it does |
 |---|---|---|
 | `byte-verify` | verify | `scripts/byte-verify.sh scan` — refuses stray control bytes in sources. |
 | `build-test` | build | `mvn verify` on Temurin 21; publishes JUnit reports to the merge-request widget and the uber jar as an artifact. Maven's local repository is cached per pom hash. |
 | `native-image` | native | Builds the GraalVM binary and smoke-tests it (`--version`, a mock-provider `run`). Mandatory on every pipeline: a broken native build fails the pipeline like a broken test. Needs a runner with several GB of memory. |
+| `release` | release | Tags only. Uploads the native binary (`jclaw-linux-<arch>`), the uber jar, and `SHA256SUMS` to the project's generic package registry and creates a GitLab Release for the tag linking them. |
+
+To cut a release, push a tag: `git tag v0.1.0 && git push origin v0.1.0`. The tag pipeline runs every job and ends by publishing the release at `/-/releases/v0.1.0`.
 
 One pipeline per change: pushes to a branch with an open merge request run only the merge-request pipeline. The jobs assume a Docker-executor runner and pull public images (`maven:3.9.11-eclipse-temurin-21`, `ghcr.io/graalvm/native-image-community:25`).
 

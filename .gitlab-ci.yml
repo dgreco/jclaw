@@ -5,6 +5,7 @@
 #   build    compile + full test suite, publishes JUnit reports and the uber jar
 #   native   GraalVM native image, built and smoke-tested on every pipeline; a broken native
 #            build fails the pipeline the same way a broken test does
+#   release  on tags only: publishes the native binary (and the uber jar) as a GitLab Release
 #
 # Assumes a Docker-executor runner. Maven's local repository is cached per branch so
 # a warm pipeline downloads nothing.
@@ -17,7 +18,7 @@ workflow:
     - if: $CI_COMMIT_BRANCH
     - if: $CI_COMMIT_TAG
 
-stages: [verify, build, native]
+stages: [verify, build, native, release]
 
 variables:
   MAVEN_CLI_OPTS: "--batch-mode --no-transfer-progress --errors --fail-at-end -Dstyle.color=always"
@@ -98,10 +99,62 @@ native-image:
     - ./jclaw-app/target/jclaw --version
     - ./jclaw-app/target/jclaw run "smoke test"          # mock provider, no network
     - ./jclaw-app/target/jclaw doctor || true            # informational in CI
+    - echo "NATIVE_ARCH=$(uname -m)" > native.env        # the release job names the asset by it
   artifacts:
     expire_in: 4 weeks
     paths: [jclaw-app/target/jclaw]
+    reports:
+      dotenv: native.env
   # Mandatory: no rules of its own, so it runs wherever the workflow admits a pipeline, and
   # no allow_failure, so a failure blocks the pipeline (and merge, with "pipelines must
   # succeed" enabled).
   timeout: 45m
+
+# Publishes a GitLab Release for the tag with the native binary and the uber jar attached.
+# The files go to the project's generic package registry (a release cannot host files itself)
+# and the release links to them. Plain curl against the REST API, authenticated with the job
+# token: the official release-cli image is amd64-only and the runner is arm64.
+release:
+  stage: release
+  image:
+    # Same image native-image already pulled: runs as root (the curl images run as an
+    # unprivileged user that may not be able to write the build directory), ships curl and
+    # sha256sum, and needs the same entrypoint override.
+    name: ghcr.io/graalvm/native-image-community:25
+    entrypoint: [""]
+  needs: [build-test, native-image]    # brings their artifacts and native-image's NATIVE_ARCH
+  variables:
+    GIT_STRATEGY: none                 # nothing here reads the sources
+    PKG_URL: "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/jclaw/${CI_COMMIT_TAG}"
+  script:
+    - |
+      set -eu
+      BIN="jclaw-linux-${NATIVE_ARCH}"
+      JAR="$(cd jclaw-app/target && ls jclaw-app-*.jar | head -1)"
+      cp "jclaw-app/target/jclaw" "$BIN"
+      cp "jclaw-app/target/$JAR" "$JAR"
+      sha256sum "$BIN" "$JAR" | tee SHA256SUMS
+      for f in "$BIN" "$JAR" SHA256SUMS; do
+        echo "uploading $f"
+        curl -fsS --header "JOB-TOKEN: ${CI_JOB_TOKEN}" --upload-file "$f" "${PKG_URL}/${f}"
+        echo
+      done
+      cat > release.json <<EOF
+      {
+        "name": "jclaw ${CI_COMMIT_TAG}",
+        "tag_name": "${CI_COMMIT_TAG}",
+        "ref": "${CI_COMMIT_SHA}",
+        "description": "jclaw ${CI_COMMIT_TAG} (commit ${CI_COMMIT_SHORT_SHA}).\\n\\n- ${BIN}: GraalVM native image, Linux ${NATIVE_ARCH}\\n- ${JAR}: uber jar, needs Java 21+\\n- SHA256SUMS\\n\\nBuilt by pipeline ${CI_PIPELINE_URL}",
+        "assets": { "links": [
+          { "name": "${BIN}", "url": "${PKG_URL}/${BIN}", "link_type": "package" },
+          { "name": "${JAR}", "url": "${PKG_URL}/${JAR}", "link_type": "package" },
+          { "name": "SHA256SUMS", "url": "${PKG_URL}/SHA256SUMS", "link_type": "other" }
+        ] }
+      }
+      EOF
+      curl -fsS --header "JOB-TOKEN: ${CI_JOB_TOKEN}" --header "Content-Type: application/json" \
+           --data @release.json "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/releases"
+      echo
+      echo "released ${CI_PROJECT_URL}/-/releases/${CI_COMMIT_TAG}"
+  rules:
+    - if: $CI_COMMIT_TAG
