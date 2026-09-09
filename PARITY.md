@@ -2,7 +2,7 @@
 
 An honest enumeration of what [IronClaw](https://github.com/nearai/ironclaw) (internally "Reborn") has that jclaw does not, and of what jclaw now has. jclaw is roughly 20k lines of Java (plus 6.5k of tests) against IronClaw's ~1.4M lines of Rust across ~63 crates. The **architecture** is equivalent — layer ladder, turn/run lifecycle, untrusted `LoopExit`, single `CapabilityHost` authority boundary, checkpoint-kind–driven recovery — and, after the September 2026 parity work, most of the runtime *mechanisms* are present in some form. What remains missing is breadth: channel adapters, a remote extension registry, and a WASM lane. This file is the list, organised by IronClaw's own crate families so a gap can be traced to the crate that fills it upstream.
 
-Sources: IronClaw's `README.md`, `crates/Architecture.md`, and the `crates/` listing as of September 2026; jclaw's code on this checkout (277 tests, 0 failures). Where the upstream doc names a concept and jclaw has an equivalent under a different name, the mapping is given. Where the gap is uncertain it is marked *(unverified)*.
+Sources: IronClaw's `README.md`, `crates/Architecture.md`, and the `crates/` listing as of September 2026; jclaw's code on this checkout (282 tests, 0 failures). Where the upstream doc names a concept and jclaw has an equivalent under a different name, the mapping is given. Where the gap is uncertain it is marked *(unverified)*.
 
 Legend: ✅ at parity · 🟡 partial · ❌ missing · ➕ jclaw-only
 
@@ -139,10 +139,10 @@ At parity on the trust model and on the gate mechanics, and on tenant isolation;
 | Capability | IronClaw | jclaw |
 |---|---|---|
 | Cron routines | ✅ | ✅ (five-field Vixie cron, zones, pause/resume, `run-due`, `worker`, `serve`) |
-| Event triggers | ✅ | ❌ |
-| Webhook triggers | ✅ | ❌ — the HTTP ingress enqueues turns; it does not route webhooks to routines |
-| Heartbeat / proactive triggers | ✅ | ❌ |
-| Agent creates its own triggers | ✅ | ✅ (`builtin.trigger_*`) |
+| Event triggers | ✅ | ✅ `--on run.finished\|gate.raised --when k=v`; `EventTriggerDispatcher` listens on the event log and enqueues the routine's turn with the event's attributes appended. Only those two types may drive a trigger, and an event from any routine's own thread fires nothing, so triggers cannot chase each other |
+| Webhook triggers | ✅ | ✅ `--webhook` mints a bearer secret (only its SHA-256 is stored) and `POST /hooks/{name}` on `serve` fires it, authenticated by that secret rather than the operator's token, with the body bounded to 16 KiB and appended to the prompt |
+| Heartbeat / proactive triggers | ✅ | ✅ `--every 30m` (or an ISO duration): due once the interval has passed since the last firing, so it drifts with execution instead of snapping to a wall-clock grid |
+| Agent creates its own triggers | ✅ | ✅ (`builtin.trigger_*`), time-driven only: a model may set a cron or an interval, never a webhook or an event trigger |
 | Embedded scheduler | ✅ | 🟡 `worker` and `serve` embed the poll loop; system cron remains an option |
 
 ---
@@ -223,7 +223,7 @@ At parity on the trust model and on the gate mechanics, and on tenant isolation;
 | Structured tracing / metrics substrate (`ironclaw_observability`, `trace_commons`) | ✅ | 🟡 both projected from the event log rather than instrumented: `Telemetry` counts every written event into Prometheus-format metrics at `/metrics`; the pure `RunTrace` turns a run's events into spans (root, model calls, capability calls, gates, with measured latencies) served as OTLP/JSON at `/runs/{r}/trace`, printed by `status --trace`, and exported to `jclaw.otlp-endpoint` when a run finishes. No OpenTelemetry SDK in-process, no propagation into provider/MCP calls, no histograms |
 | Latency harness (`harness/latency/`) | ✅ | ❌ |
 | Deployment assets (`deploy/`, `docker/`, `infra/runner/`) | ✅ | ❌ — one jar or one binary, no Dockerfile; a GitLab release pipeline publishes both |
-| Test tooling (`test-tools/`, `tests/` integration suites) | ✅ | 🟡 277 unit + integration tests, including a child-JVM test for cross-process thread locking and a fake-docker test for the sandbox contract; no end-to-end suite against a live provider |
+| Test tooling (`test-tools/`, `tests/` integration suites) | ✅ | 🟡 282 unit + integration tests, including a child-JVM test for cross-process thread locking and a fake-docker test for the sandbox contract; no end-to-end suite against a live provider |
 | `doctor`-style preflight | *(unverified)* | ➕ `jclaw doctor` |
 
 ---
@@ -277,5 +277,5 @@ The twelve items of the original list and the six that followed are closed (sect
 6. ~~**Extension ecosystem**~~ — closed at the package level: manifests, digests, signatures, trust decided at install, skill and MCP packages. Still open under this heading: a remote registry with versioned upgrades, profiles, channel packages, and a WASM tool kind.
 7. ~~**Loop hooks and loop families**~~ — closed: `LoopHook` at the model and capability stages, `LoopFamily` with a second strategy. Still open under this heading: hooks on prompt assembly and gate raising, and families defined outside Java.
 8. ~~**Observability substrate**~~ — closed as projections of the audit log: Prometheus metrics, OTLP traces, collector export. Still open under this heading: an in-process OpenTelemetry SDK with context propagation into provider and MCP calls, and latency histograms.
-9. **Triggers beyond cron** (§7) — event, webhook, and heartbeat triggers; the ingress could route webhooks to routines with little new machinery.
+9. ~~**Triggers beyond cron**~~ — closed: the pure `Trigger` parses four forms and `RoutineSchedule` decides which the clock drives. Still open under this heading: filesystem watches, inbound-message triggers, and fan-out from one webhook to several routines.
 10. **MCP breadth** (§3) — HTTP/SSE transports, OAuth, resources and prompts, lazy server lifecycle, and host-mediated egress for server processes.

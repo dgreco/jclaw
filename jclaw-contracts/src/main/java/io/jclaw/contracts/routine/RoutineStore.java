@@ -38,7 +38,9 @@ public interface RoutineStore {
     /**
      * One scheduled routine.
      *
-     * @param cronExpression five-field cron, evaluated in {@code zone}
+     * @param trigger        what makes this routine fire: a five-field cron expression
+     *                       (evaluated in {@code zone}), {@code every <interval>},
+     *                       {@code webhook sha256:<hex>}, or {@code on <event> k=v}
      * @param zone           IANA time zone id; stored explicitly because "09:00" means different
      *                       instants in different zones, and a routine that silently shifts by an
      *                       hour twice a year is a bug nobody attributes to the scheduler
@@ -48,7 +50,7 @@ public interface RoutineStore {
             RoutineId id,
             TurnScope scope,
             String name,
-            String cronExpression,
+            String trigger,
             String zone,
             String prompt,
             ThreadId thread,
@@ -60,7 +62,7 @@ public interface RoutineStore {
             Objects.requireNonNull(id, "id");
             Objects.requireNonNull(scope, "scope");
             Objects.requireNonNull(name, "name");
-            Objects.requireNonNull(cronExpression, "cronExpression");
+            Objects.requireNonNull(trigger, "trigger");
             Objects.requireNonNull(zone, "zone");
             Objects.requireNonNull(prompt, "prompt");
             Objects.requireNonNull(thread, "thread");
@@ -77,19 +79,19 @@ public interface RoutineStore {
         }
 
         public Routine withEnabled(boolean enabled) {
-            return new Routine(id, scope, name, cronExpression, zone, prompt, thread, enabled,
+            return new Routine(id, scope, name, trigger, zone, prompt, thread, enabled,
                     lastFiredAt, createdAt);
         }
 
         public Routine withLastFiredAt(Instant firedAt) {
-            return new Routine(id, scope, name, cronExpression, zone, prompt, thread, enabled,
+            return new Routine(id, scope, name, trigger, zone, prompt, thread, enabled,
                     Optional.of(firedAt), createdAt);
         }
     }
 
     /** Stores a routine and mints its id. */
     Routine create(
-            TurnScope scope, String name, String cronExpression, String zone,
+            TurnScope scope, String name, String trigger, String zone,
             String prompt, ThreadId thread);
 
     Optional<Routine> find(RoutineId id);

@@ -35,6 +35,26 @@ class RoutineScheduleTest {
     }
 
     @Test
+    @DisplayName("a heartbeat is due once its interval has passed since the anchor; a webhook never is")
+    void heartbeatAndWebhook() {
+        Routine beat = routine("every 30m", "UTC", at("2026-03-01T09:00:00Z"), Optional.empty(), true);
+        assertTrue(RoutineSchedule.due(List.of(beat), at("2026-03-01T09:20:00Z")).isEmpty());
+        assertEquals(1, RoutineSchedule.due(List.of(beat), at("2026-03-01T09:30:00Z")).size());
+        Routine fired = routine("every 30m", "UTC", at("2026-03-01T09:00:00Z"),
+                Optional.of(at("2026-03-01T09:30:00Z")), true);
+        assertTrue(RoutineSchedule.due(List.of(fired), at("2026-03-01T09:45:00Z")).isEmpty(),
+                "the interval restarts at the last firing");
+        assertTrue(RoutineSchedule.canFire(beat));
+
+        Routine hook = routine("webhook sha256:" + "0".repeat(64), "UTC", at("2026-03-01T09:00:00Z"), Optional.empty(), true);
+        assertTrue(RoutineSchedule.due(List.of(hook), at("2036-03-01T09:00:00Z")).isEmpty());
+        assertTrue(RoutineSchedule.nextFire(hook).isEmpty());
+        assertTrue(RoutineSchedule.canFire(hook), "a webhook fires when called, not when the clock says");
+        assertTrue(RoutineSchedule.canFire(routine("on run.finished", "UTC", at("2026-03-01T09:00:00Z"), Optional.empty(), true)));
+        assertTrue(!RoutineSchedule.canFire(routine("nonsense", "UTC", at("2026-03-01T09:00:00Z"), Optional.empty(), true)));
+    }
+
+    @Test
     @DisplayName("a routine is due once its next fire has passed")
     void dueAfterNextFire() {
         // Created at 09:00, fires hourly. At 09:30 the 10:00 slot has not arrived.

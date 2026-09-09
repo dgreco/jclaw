@@ -39,11 +39,11 @@ public final class JsonlRoutineStore implements RoutineStore {
 
     @Override
     public Routine create(
-            TurnScope scope, String name, String cronExpression, String zone,
+            TurnScope scope, String name, String trigger, String zone,
             String prompt, ThreadId thread) {
 
         Routine routine = new Routine(
-                RoutineId.fresh(), scope, name, cronExpression, zone, prompt, thread,
+                RoutineId.fresh(), scope, name, trigger, zone, prompt, thread,
                 true, Optional.empty(), clock.instant());
 
         Map<String, Object> row = new LinkedHashMap<>();
@@ -54,7 +54,7 @@ public final class JsonlRoutineStore implements RoutineStore {
         row.put("project", scope.project());
         row.put("scopeThread", scope.thread().value());
         row.put("name", name);
-        row.put("cron", cronExpression);
+        row.put("cron", trigger);
         row.put("zone", zone);
         row.put("prompt", prompt);
         row.put("thread", thread.value());

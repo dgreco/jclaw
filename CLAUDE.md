@@ -20,7 +20,7 @@ jclaw is a Java/Spring Boot reimplementation of the **architecture** of
 untrusted-`LoopExit` trust model, and the `CapabilityHost` authority boundary are faithful; the
 feature surface is a fraction of IronClaw's. See **Not built yet** for the honest list.
 
-277 tests pass across 9 modules, including 14 machine-checked architecture rules.
+282 tests pass across 9 modules, including 14 machine-checked architecture rules.
 
 ## Commands
 
@@ -54,7 +54,7 @@ The `native` profile lives in `jclaw-app/pom.xml`. The Boot parent contributes o
 | `approvals list [--all]\|approve\|deny` | resolve gates (approval, auth, process); approving resumes by default; expired gates are hidden and refuse decisions |
 | `resume <run-id>` | continue a parked run |
 | `memory write\|search\|list\|forget\|reindex` | durable memories, BM25 + recency + vector (when an embedding provider is configured) |
-| `routines add\|list\|remove\|pause\|resume\|run-due` | scheduled agent work |
+| `routines add\|list\|remove\|pause\|resume\|run-due` | agent work fired by a trigger: `--cron`, `--every`, `--webhook`, or `--on <event> --when k=v` |
 | `worker [--concurrency N]` | long-lived: fires routines, sweeps leases, executes queued runs under a cap |
 | `skills list\|show` | installed skills |
 | `extensions install\|list\|remove\|enable\|disable\|keygen\|sign` | signed extension packages (skills, MCP servers); a trusted publisher's signature makes an install `VERIFIED` |
@@ -440,8 +440,10 @@ architecture and most runtime mechanisms are equivalent, the breadth is not. PAR
   OTLP/JSON, optional export to `otlp-endpoint`) are projections of the event log, computed
   when an event is written or a run finishes; there is no in-process OpenTelemetry SDK, no
   context propagation into provider or MCP calls, and no histograms (count, sum, max only).
-- **Triggers beyond cron** — no event, webhook, or heartbeat triggers; the ingress does not route
-  webhooks to routines.
+- **Triggers beyond the four forms** — a routine fires on cron, an interval, a webhook
+  (`POST /hooks/{name}`, bearer secret, SHA-256 stored), or an audit event (`run.finished`,
+  `gate.raised`). There is no filesystem watch, no inbound-message trigger, no fan-out to several
+  routines from one webhook, and event triggers see only what the audit log records.
 - **MCP breadth** — stdio only; no HTTP/SSE transports, no OAuth, no resources or prompts, eager
   server lifecycle.
 - **Smaller items** — `repl` does not resolve gates inline; OpenRouter routing preferences are not

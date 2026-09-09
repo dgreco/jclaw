@@ -22,6 +22,8 @@ public final class ObservedEventLog implements EventLog {
     private final EventLog delegate;
     private final Telemetry telemetry;
     private final Optional<OtlpExporter> exporter;
+    private final List<java.util.function.Consumer<JclawEvent>> listeners =
+            new java.util.concurrent.CopyOnWriteArrayList<>();
 
     public ObservedEventLog(EventLog delegate, Telemetry telemetry, Optional<OtlpExporter> exporter) {
         this.delegate = Objects.requireNonNull(delegate, "delegate");
@@ -29,10 +31,16 @@ public final class ObservedEventLog implements EventLog {
         this.exporter = Objects.requireNonNull(exporter, "exporter");
     }
 
+    /** Registers a listener called after every event is durable. Listeners must not block. */
+    public void addListener(java.util.function.Consumer<JclawEvent> listener) {
+        listeners.add(Objects.requireNonNull(listener, "listener"));
+    }
+
     @Override
     public void append(JclawEvent event) {
         delegate.append(event);
         telemetry.record(event);
+        listeners.forEach(listener -> listener.accept(event));
         if (event instanceof JclawEvent.RunFinished finished) {
             exporter.ifPresent(e -> e.export(finished.run(),
                     delegate.readRun(finished.run()).stream().map(Entry::event).toList()));

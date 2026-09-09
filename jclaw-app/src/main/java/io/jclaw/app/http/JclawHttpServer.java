@@ -5,6 +5,8 @@ import com.sun.net.httpserver.HttpServer;
 import io.jclaw.app.observability.Telemetry;
 import io.jclaw.app.runtime.JclawRuntime;
 import io.jclaw.domain.observability.RunTrace;
+import io.jclaw.domain.trigger.Trigger;
+import io.jclaw.contracts.routine.RoutineStore;
 import io.jclaw.contracts.model.ModelProvider;
 import io.jclaw.contracts.Result;
 import io.jclaw.contracts.capability.ApprovalStore;
@@ -69,6 +71,8 @@ public final class JclawHttpServer {
     private static final Pattern RUN_EVENTS = Pattern.compile("^/runs/([^/]+)/events$");
     private static final Pattern RUN_TRACE = Pattern.compile("^/runs/([^/]+)/trace$");
     private static final Pattern APPROVAL = Pattern.compile("^/approvals/([^/]+)$");
+    private static final Pattern HOOK = Pattern.compile("^/hooks/([^/]+)$");
+    private static final int MAX_WEBHOOK_BODY = 16 * 1024;
 
     /** How often the event stream polls the log. */
     private static final long STREAM_POLL_MILLIS = 250;
@@ -83,6 +87,7 @@ public final class JclawHttpServer {
     private final Map<String, String> tokensToUsers;
     private final String model;
     private final Telemetry telemetry;
+    private final Optional<RoutineStore> routines;
     private final JsonMapper mapper = JsonMapper.builder().build();
     private HttpServer server;
 
@@ -108,6 +113,15 @@ public final class JclawHttpServer {
             JclawRuntime runtime, RunStore runs, EventLog events, ThreadService threads,
             JsonlApprovalStore approvals, Clock clock, Optional<String> token,
             Map<String, String> users, String model, Telemetry telemetry) {
+        this(runtime, runs, events, threads, approvals, clock, token, users, model, telemetry, null);
+    }
+
+    /** @param routines the routine store, so {@code POST /hooks/{name}} can fire webhook routines */
+    public JclawHttpServer(
+            JclawRuntime runtime, RunStore runs, EventLog events, ThreadService threads,
+            JsonlApprovalStore approvals, Clock clock, Optional<String> token,
+            Map<String, String> users, String model, Telemetry telemetry, RoutineStore routines) {
+        this.routines = Optional.ofNullable(routines);
         this.telemetry = Objects.requireNonNull(telemetry, "telemetry");
         this.runtime = Objects.requireNonNull(runtime, "runtime");
         this.runs = Objects.requireNonNull(runs, "runs");
@@ -154,6 +168,13 @@ public final class JclawHttpServer {
 
     private void dispatch(HttpExchange exchange) throws IOException {
         try {
+            Matcher hook = HOOK.matcher(exchange.getRequestURI().getPath());
+            if (exchange.getRequestMethod().equals("POST") && hook.matches()) {
+                // A webhook authenticates with its own secret, never with the operator's token:
+                // the caller is an outside system that must be able to reach exactly one routine.
+                webhook(exchange, hook.group(1));
+                return;
+            }
             Optional<Principal> who = authenticate(exchange);
             if (who.isEmpty()) {
                 send(exchange, 401, Map.of("error", "unauthorized"));
@@ -359,6 +380,47 @@ public final class JclawHttpServer {
     private static void writeSse(OutputStream out, String json) throws IOException {
         out.write(("data: " + json + "\n\n").getBytes(StandardCharsets.UTF_8));
         out.flush();
+    }
+
+    /**
+     * Fires a webhook routine: the routine named in the path, in the local project, whose trigger
+     * is a webhook accepting the presented bearer secret. The body, bounded, joins the prompt.
+     */
+    private void webhook(HttpExchange exchange, String name) throws IOException {
+        Optional<RoutineStore.Routine> routine = routines.flatMap(store ->
+                store.list(runtime.scopeFor(new ThreadId("routines"))).stream()
+                        .filter(r -> r.name().equals(name))
+                        .filter(r -> Trigger.parse(r.trigger()).toOptional().orElse(null) instanceof Trigger.Webhook)
+                        .findFirst());
+        if (routine.isEmpty()) {
+            send(exchange, 404, Map.of("error", "no such webhook"));
+            return;
+        }
+        Trigger.Webhook trigger = (Trigger.Webhook) Trigger.parse(routine.get().trigger()).orElseThrow();
+        String header = exchange.getRequestHeaders().getFirst("Authorization");
+        String presented = header != null && header.startsWith("Bearer ")
+                ? header.substring("Bearer ".length()).trim() : null;
+        if (!trigger.accepts(presented)) {
+            send(exchange, 401, Map.of("error", "unauthorized"));
+            return;
+        }
+        if (!routine.get().enabled()) {
+            send(exchange, 409, Map.of("error", "routine is paused"));
+            return;
+        }
+        byte[] body;
+        try (InputStream in = exchange.getRequestBody()) {
+            body = in.readNBytes(MAX_WEBHOOK_BODY + 1);
+        }
+        boolean truncated = body.length > MAX_WEBHOOK_BODY;
+        String payload = new String(body, 0, Math.min(body.length, MAX_WEBHOOK_BODY), StandardCharsets.UTF_8);
+        String prompt = routine.get().prompt() + "\n\nWebhook payload"
+                + (truncated ? " (truncated to " + MAX_WEBHOOK_BODY + " bytes)" : "") + ":\n```\n"
+                + payload + "\n```";
+        routines.get().recordFiring(routine.get().id(), clock.instant());
+        TurnRunId run = runtime.enqueue(routine.get().thread(), ChatMessage.user(prompt));
+        send(exchange, 202, Map.of("run", run.value(), "thread", routine.get().thread().value(),
+                "status", "QUEUED"));
     }
 
     private void sendText(HttpExchange exchange, String contentType, String text) throws IOException {

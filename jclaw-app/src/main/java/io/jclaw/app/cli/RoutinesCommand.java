@@ -4,8 +4,8 @@ import io.jclaw.app.runtime.JclawRuntime;
 import io.jclaw.app.runtime.RoutineRunner;
 import io.jclaw.contracts.routine.RoutineStore;
 import io.jclaw.contracts.turn.ThreadId;
-import io.jclaw.domain.cron.CronSpec;
 import io.jclaw.domain.cron.RoutineSchedule;
+import io.jclaw.domain.trigger.Trigger;
 import org.springframework.stereotype.Component;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
@@ -61,9 +61,20 @@ public class RoutinesCommand implements Runnable {
         @Option(names = "--name", required = true, description = "Human-readable name.")
         private String name;
 
-        @Option(names = "--cron", required = true,
-                description = "Five-field cron, e.g. '0 9 * * MON-FRI'.")
+        @Option(names = "--cron", description = "Five-field cron, e.g. '0 9 * * MON-FRI'.")
         private String cron;
+
+        @Option(names = "--every", description = "A heartbeat interval instead of cron: 30m, 2h, 1d, or PT30M.")
+        private String every;
+
+        @Option(names = "--webhook", description = "Fire on POST /hooks/<name> with a bearer secret, printed once.")
+        private boolean webhook;
+
+        @Option(names = "--on", description = "Fire on an audit event: run.finished or gate.raised.")
+        private String on;
+
+        @Option(names = "--when", description = "With --on: attribute filters, e.g. status=FAILED. Repeatable.")
+        private String[] when = new String[0];
 
         @Option(names = "--zone", description = "IANA time zone. Defaults to the system zone.")
         private String zone = java.time.ZoneId.systemDefault().getId();
@@ -81,12 +92,30 @@ public class RoutinesCommand implements Runnable {
 
         @Override
         public Integer call() {
-            // Validate the schedule before storing it: a routine that can never fire is a routine
+            // Validate the trigger before storing it: a routine that can never fire is a routine
             // whose absence nobody notices until they go looking for its output.
-            try {
-                CronSpec.parse(cron);
-            } catch (IllegalArgumentException e) {
-                System.err.println("jclaw: invalid cron expression: " + e.getMessage());
+            int forms = (cron != null ? 1 : 0) + (every != null ? 1 : 0) + (webhook ? 1 : 0) + (on != null ? 1 : 0);
+            if (forms != 1) {
+                System.err.println("jclaw: give exactly one of --cron, --every, --webhook, --on");
+                return 1;
+            }
+            String secret = null;
+            String expression;
+            if (cron != null) {
+                expression = cron;
+            } else if (every != null) {
+                expression = "every " + every;
+            } else if (webhook) {
+                byte[] bytes = new byte[24];
+                new java.security.SecureRandom().nextBytes(bytes);
+                secret = java.util.HexFormat.of().formatHex(bytes);
+                expression = "webhook sha256:" + Trigger.hashSecret(secret);
+            } else {
+                expression = "on " + on + java.util.Arrays.stream(when).map(w -> " " + w).reduce("", String::concat);
+            }
+            var parsed = Trigger.parse(expression);
+            if (parsed.isErr()) {
+                System.err.println("jclaw: invalid trigger: " + parsed.errorAsOptional().orElse("?"));
                 return 1;
             }
             try {
@@ -99,20 +128,30 @@ public class RoutinesCommand implements Runnable {
             RoutineStore.Routine routine = store.create(
                     runtime.scopeFor(SCOPE_THREAD),
                     name,
-                    cron,
+                    expression,
                     zone,
                     String.join(" ", prompt),
                     new ThreadId(thread == null ? name.replaceAll("\\s+", "-").toLowerCase() : thread));
 
-            if (!RoutineSchedule.isSchedulable(routine)) {
-                System.err.println("jclaw: that schedule can never fire; routine not usable: " + cron);
+            if (!RoutineSchedule.canFire(routine)) {
+                System.err.println("jclaw: that schedule can never fire; routine not usable: " + expression);
                 store.delete(routine.id());
                 return 1;
             }
 
-            System.out.println("Created " + routine.id().value());
+            String form = switch (parsed.orElseThrow()) {
+                case Trigger.Cron ignored -> "cron: " + expression;
+                case Trigger.Heartbeat heartbeat -> "heartbeat: every " + heartbeat.interval();
+                case Trigger.Webhook ignored -> "webhook";
+                case Trigger.OnEvent event -> "event: " + expression.substring("on ".length());
+            };
+            System.out.println("Created " + routine.id().value() + " (" + form + ")");
             RoutineSchedule.nextFire(routine)
                     .ifPresent(next -> System.out.println("Next fire: " + next));
+            if (secret != null) {
+                System.out.println("Webhook: POST /hooks/" + name + " with 'Authorization: Bearer " + secret + "'");
+                System.out.println("This secret is shown once; only its hash is stored.");
+            }
             return 0;
         }
     }
@@ -147,13 +186,16 @@ public class RoutinesCommand implements Runnable {
                 System.out.printf("%s  %-20s %-18s %s%n",
                         routine.id().value(),
                         routine.name(),
-                        routine.cronExpression(),
+                        Trigger.parse(routine.trigger()).toOptional()
+                                .map(t -> t instanceof Trigger.Webhook ? "webhook" : routine.trigger())
+                                .orElse(routine.trigger()),
                         routine.enabled() ? (due ? "DUE" : "scheduled") : "paused");
                 System.out.println("    prompt: " + routine.prompt());
                 RoutineSchedule.nextFire(routine)
                         .ifPresentOrElse(
                                 next -> System.out.println("    next:   " + next),
-                                () -> System.out.println("    next:   (never - unschedulable)"));
+                                () -> System.out.println("    next:   " + (RoutineSchedule.canFire(routine)
+                                        ? "(when its webhook or event arrives)" : "(never - unschedulable)")));
             }
             return 0;
         }

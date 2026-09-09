@@ -1,6 +1,7 @@
 package io.jclaw.domain.cron;
 
 import io.jclaw.contracts.routine.RoutineStore.Routine;
+import io.jclaw.domain.trigger.Trigger;
 
 import java.time.Instant;
 import java.time.ZoneId;
@@ -65,11 +66,31 @@ public final class RoutineSchedule {
         Objects.requireNonNull(routine, "routine");
         try {
             ZoneId zone = ZoneId.of(routine.zone());
-            CronSpec spec = CronSpec.parse(routine.cronExpression());
-            return spec.nextFireAfter(ZonedDateTime.ofInstant(routine.anchor(), zone));
+            Trigger trigger = Trigger.parse(routine.trigger()).toOptional().orElse(null);
+            return switch (trigger) {
+                case Trigger.Cron cron -> CronSpec.parse(cron.expression())
+                        .nextFireAfter(ZonedDateTime.ofInstant(routine.anchor(), zone));
+                case Trigger.Heartbeat heartbeat ->
+                        Optional.of(ZonedDateTime.ofInstant(routine.anchor().plus(heartbeat.interval()), zone));
+                // A webhook or an event decides when these fire; the clock never does.
+                case Trigger.Webhook ignored -> Optional.empty();
+                case Trigger.OnEvent ignored -> Optional.empty();
+                case null -> Optional.empty();
+            };
         } catch (RuntimeException e) {
             return Optional.empty();
         }
+    }
+
+    /**
+     * Whether the routine can fire at all: a time-driven trigger with a next fire, or a
+     * request- or event-driven trigger, which fires when its cause arrives.
+     */
+    public static boolean canFire(Routine routine) {
+        Objects.requireNonNull(routine, "routine");
+        return Trigger.parse(routine.trigger()).toOptional()
+                .map(trigger -> !trigger.timeDriven() || nextFire(routine).isPresent())
+                .orElse(false);
     }
 
     /** Whether a routine's schedule is valid and can fire at least once. Used to reject input early. */

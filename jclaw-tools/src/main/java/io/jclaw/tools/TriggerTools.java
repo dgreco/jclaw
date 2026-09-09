@@ -8,7 +8,7 @@ import io.jclaw.contracts.capability.EffectClass;
 import io.jclaw.contracts.capability.HandlerError;
 import io.jclaw.contracts.routine.RoutineStore;
 import io.jclaw.contracts.turn.ThreadId;
-import io.jclaw.domain.cron.CronSpec;
+import io.jclaw.domain.trigger.Trigger;
 import io.jclaw.domain.cron.RoutineSchedule;
 
 import java.time.ZoneId;
@@ -50,10 +50,11 @@ public final class TriggerTools {
                 Schemas.object(
                         Schemas.properties(
                                 "name", Schemas.string("Short name for the schedule."),
-                                "cron", Schemas.string("Five-field cron, e.g. '0 9 * * MON-FRI'."),
+                                "cron", Schemas.string("Five-field cron, e.g. '0 9 * * MON-FRI'. Give this or 'every'."),
+                                "every", Schemas.string("An interval instead of cron, e.g. '30m', '2h', '1d'."),
                                 "prompt", Schemas.string("The prompt to run on each firing."),
                                 "zone", Schemas.string("IANA time zone. Defaults to UTC.")),
-                        List.of("name", "cron", "prompt")));
+                        List.of("name", "prompt")));
 
         private final RoutineStore store;
 
@@ -70,24 +71,32 @@ public final class TriggerTools {
         public Result<String, HandlerError> execute(CapabilityInvocation invocation, HandlerContext context) {
             String name = invocation.stringArg("name", "");
             String cron = invocation.stringArg("cron", "");
+            String every = invocation.stringArg("every", "");
             String prompt = invocation.stringArg("prompt", "");
             String zone = invocation.stringArg("zone", "UTC");
 
-            if (name.isBlank() || cron.isBlank() || prompt.isBlank()) {
-                return Result.err(HandlerError.failed("name_cron_and_prompt_required"));
+            if (name.isBlank() || prompt.isBlank() || (cron.isBlank() == every.isBlank())) {
+                return Result.err(HandlerError.failed("name_prompt_and_one_of_cron_or_every_required"));
+            }
+            // The agent may create time-driven triggers only. Webhooks and event triggers are
+            // the operator's: one grants an outside caller a way in, the other reacts to other
+            // runs, and neither should be something a model can set up for itself.
+            String expression = cron.isBlank() ? "every " + every : cron;
+            Trigger trigger = Trigger.parse(expression).toOptional().orElse(null);
+            if (trigger == null || !trigger.timeDriven()) {
+                return Result.err(HandlerError.failed("invalid_schedule"));
             }
             try {
-                CronSpec.parse(cron);
                 ZoneId.of(zone);
             } catch (RuntimeException e) {
                 return Result.err(HandlerError.failed("invalid_schedule"));
             }
 
             RoutineStore.Routine routine = store.create(
-                    invocation.scope(), name, cron, zone, prompt,
+                    invocation.scope(), name, expression, zone, prompt,
                     new ThreadId(name.replaceAll("\\s+", "-").toLowerCase(java.util.Locale.ROOT)));
 
-            if (!RoutineSchedule.isSchedulable(routine)) {
+            if (!RoutineSchedule.canFire(routine)) {
                 // A schedule that can never match would sit there looking configured forever.
                 store.delete(routine.id());
                 return Result.err(HandlerError.failed("schedule_never_fires"));
@@ -127,7 +136,7 @@ public final class TriggerTools {
             }
             return Result.ok(routines.stream()
                     .map(routine -> "- " + routine.id().value() + " '" + routine.name() + "' "
-                            + routine.cronExpression()
+                            + routine.trigger()
                             + (routine.enabled() ? "" : " (paused)")
                             + RoutineSchedule.nextFire(routine)
                             .map(next -> " next=" + next)

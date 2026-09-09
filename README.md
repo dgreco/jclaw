@@ -61,7 +61,7 @@ jclaw reimplements the **architecture** of IronClaw — the seven-layer ladder, 
 
 Everything is durable JSONL under `~/.jclaw`: a run can park in one process, be approved in a second, and resume in a third. There is no database, and no server unless you start one (`jclaw serve`).
 
-**Status.** Milestones M0–M7 plus subagents (synchronous or asynchronous), MCP, streaming on every provider, lease-based crash recovery, a per-thread run lock, context compaction with model summaries, vector memory, configurable denials and egress lists, per-tool rate limits, injection heuristics, auth and process gates with expiry, a scheduler with `submit` and `worker`, an HTTP surface with run projections, event streams, and per-user tenants, attachments, store retention, an encrypted secret vault with host-side credential injection, a container sandbox for the shell lane, a SQL storage backend (embedded H2 or PostgreSQL) with schema migrations, signed extension packages, execution-stage hooks, a second loop family, and Prometheus metrics with OTLP trace export. 277 tests pass across the modules, including 14 machine-checked architecture rules (ArchUnit). Both the uber jar and the native image are verified end to end, including subprocess spawning for MCP servers and shell tools. [PARITY.md](PARITY.md) lists what IronClaw still has that jclaw does not.
+**Status.** Milestones M0–M7 plus subagents (synchronous or asynchronous), MCP, streaming on every provider, lease-based crash recovery, a per-thread run lock, context compaction with model summaries, vector memory, configurable denials and egress lists, per-tool rate limits, injection heuristics, auth and process gates with expiry, a scheduler with `submit` and `worker`, an HTTP surface with run projections, event streams, and per-user tenants, attachments, store retention, an encrypted secret vault with host-side credential injection, a container sandbox for the shell lane, a SQL storage backend (embedded H2 or PostgreSQL) with schema migrations, signed extension packages, execution-stage hooks, a second loop family, Prometheus metrics with OTLP trace export, and webhook, heartbeat, and event triggers. 282 tests pass across the modules, including 14 machine-checked architecture rules (ArchUnit). Both the uber jar and the native image are verified end to end, including subprocess spawning for MCP servers and shell tools. [PARITY.md](PARITY.md) lists what IronClaw still has that jclaw does not.
 
 ---
 
@@ -444,6 +444,7 @@ jclaw serve --concurrency 4 --per-user 1 \
 | `GET /runs/{run}/events` | Server-sent events following that run's audit log, replaying what exists and pushing new entries until the run is terminal; each `data:` is the same redacted record the JSONL file holds. |
 | `GET /threads/{thread}/messages` | The transcript. |
 | `GET /approvals`, `POST /approvals/{gate}` `{"approved": true}` | Pending gates; decide one and requeue its run for the scheduler. |
+| `POST /hooks/{name}` | Fires the webhook routine of that name, authenticated by its own bearer secret rather than the operator's token. Returns `202 {"run": "run_…"}`; the body joins the prompt. |
 | `GET /runs/{run}/trace` | The run as an OTLP/JSON trace: a root span with a child per model call, capability call, and gate, projected from the same events. |
 | `GET /metrics` | Process metrics in Prometheus text format: runs, model calls and tokens, capability calls by outcome, gates, injections, hooks, latencies. |
 | `GET /health` | Liveness. |
@@ -517,19 +518,33 @@ jclaw skills show release-notes
 
 ### Scheduled routines: `routines` and `worker`
 
-A routine is a prompt that runs on a cron schedule, on its own thread, under your configured provider and approval mode.
+A routine is a prompt that runs on its own thread, under your configured provider and approval mode, when something makes it fire. Exactly one trigger per routine, in four forms:
 
 ```bash
 jclaw routines add --name "morning triage" --cron "0 9 * * MON-FRI" --zone Europe/Rome \
   "list open TODO comments added since yesterday and write a summary to TRIAGE.md"
-jclaw routines list            # id, status (DUE / scheduled / paused), next fire
+jclaw routines add --name pulse --every 30m "check the build queue and report anything stuck"
+jclaw routines add --name deploy --webhook "summarise this deploy notification"
+jclaw routines add --name onfail --on run.finished --when status=FAILED \
+  "a run just failed; read its trace and suggest what to look at"
+
+jclaw routines list            # id, trigger, status (DUE / scheduled / paused), next fire
 jclaw routines list --due
 jclaw routines pause <id>
 jclaw routines resume <id>
 jclaw routines remove <id>
 ```
 
-Cron is the classic five fields (`minute hour day-of-month month day-of-week`) with `*`, lists, ranges, `/step`, `SUN…SAT` names, and Vixie semantics (day-of-month and day-of-week are a union when both are restricted). A schedule that can never fire is rejected. `--thread` defaults to the name lower-cased with hyphens; `--zone` to the system zone.
+| Trigger | Fires when |
+|---|---|
+| `--cron "0 9 * * MON-FRI"` | The classic five fields (`minute hour day-of-month month day-of-week`) with `*`, lists, ranges, `/step`, `SUN…SAT` names, and Vixie semantics (day-of-month and day-of-week are a union when both are restricted), evaluated in `--zone`. |
+| `--every 30m` | An interval (`30m`, `2h`, `1d`, or an ISO duration like `PT30M`) has passed since the last firing, or since creation. A heartbeat drifts with execution rather than snapping to a wall-clock grid, which is what you want for "check every so often". |
+| `--webhook` | Someone `POST`s to `/hooks/<name>` on `serve` with the bearer secret printed once at creation. Only its SHA-256 is stored. The body, bounded to 16 KiB, is appended to the prompt. |
+| `--on run.finished --when status=FAILED` | A matching audit event is written. The event types a trigger may name are `run.finished` and `gate.raised`; `--when` adds attribute equalities (`status`, `failure`, `thread`, `kind`). The event's attributes are appended to the prompt. |
+
+A trigger that can never fire is rejected at creation. `--thread` defaults to the name lower-cased with hyphens; `--zone` to the system zone. The agent's own `builtin.trigger_create` may set a cron or an interval, never a webhook or an event trigger: one grants an outside caller a way in, the other reacts to other runs, and neither is something a model should arrange for itself.
+
+Two rules stop event triggers chasing their own tails: only those two event types may drive one, and an event from a run on any routine's thread never fires anything, so a routine's own run finishing cannot re-trigger it or a sibling.
 
 **Nothing fires routines on its own.** Choose one of two drivers:
 
