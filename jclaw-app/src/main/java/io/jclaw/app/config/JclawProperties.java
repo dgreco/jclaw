@@ -161,6 +161,11 @@ public record JclawProperties(
         return stateDir.resolve("repl-history");
     }
 
+    /** Per-thread run locks. OS file locks, so a crashed worker's lock dies with it. */
+    public Path locksPath() {
+        return stateDir.resolve("locks");
+    }
+
     /** Whether the configured provider needs outbound credentials. */
     public boolean requiresCredentials() {
         return credentialEnvVar().isPresent();

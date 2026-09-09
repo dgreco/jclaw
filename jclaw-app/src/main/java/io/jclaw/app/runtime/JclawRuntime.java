@@ -14,6 +14,7 @@ import io.jclaw.contracts.model.ModelProvider;
 import io.jclaw.contracts.thread.ThreadService;
 import io.jclaw.contracts.turn.RunStore;
 import io.jclaw.contracts.turn.ThreadId;
+import io.jclaw.contracts.turn.ThreadLock;
 import io.jclaw.contracts.turn.TurnRef.LoopMessageRef;
 import io.jclaw.contracts.turn.TurnRunId;
 import io.jclaw.contracts.turn.TurnScope;
@@ -61,6 +62,7 @@ public class JclawRuntime {
     private final CapabilityHost capabilities;
     private final CheckpointStore checkpoints;
     private final RunStore runs;
+    private final ThreadLock threadLocks;
     private final LoopStateCodec codec;
     private final EventLog events;
     private final JclawProperties properties;
@@ -86,6 +88,7 @@ public class JclawRuntime {
             CapabilityHost capabilities,
             CheckpointStore checkpoints,
             RunStore runs,
+            ThreadLock threadLocks,
             LoopStateCodec codec,
             EventLog events,
             JclawProperties properties,
@@ -97,6 +100,7 @@ public class JclawRuntime {
         this.capabilities = Objects.requireNonNull(capabilities, "capabilities");
         this.checkpoints = Objects.requireNonNull(checkpoints, "checkpoints");
         this.runs = Objects.requireNonNull(runs, "runs");
+        this.threadLocks = Objects.requireNonNull(threadLocks, "threadLocks");
         this.codec = Objects.requireNonNull(codec, "codec");
         this.events = Objects.requireNonNull(events, "events");
         this.properties = Objects.requireNonNull(properties, "properties");
@@ -157,6 +161,31 @@ public class JclawRuntime {
                 policy.tools().size(), policy.systemPrompt().length());
         log.trace("run {}: user text ({} chars): {}", run.value(), userText.length(), userText);
 
+        // One active run per thread, decided before anything is written. A refused submission
+        // leaves no inbound message and no run record: there is nothing to undo, and the second
+        // process simply learns the thread is busy. Two runs interleaving on one thread would
+        // corrupt the transcript in a way no later check could repair.
+        Optional<ThreadLock.Held> held = threadLocks.tryAcquire(scope);
+        if (held.isEmpty()) {
+            log.debug("run {}: thread {} is held by another run -> refused at admission",
+                    run.value(), thread.value());
+            return threadBusy(run, thread);
+        }
+        try (ThreadLock.Held ignored = held.get()) {
+            return admit(run, scope, thread, userText, policy, cancelled, streamSink);
+        }
+    }
+
+    /** The admitted path of {@link #submit}: everything after the thread lock is held. */
+    private TurnResult admit(
+            TurnRunId run,
+            TurnScope scope,
+            ThreadId thread,
+            String userText,
+            LoopPolicy policy,
+            AtomicBoolean cancelled,
+            Optional<Consumer<ModelProvider.StreamEvent>> streamSink) {
+
         // The inbound message is durable before any run exists, so a crash cannot lose what the
         // user asked for. The run's resolved profile is recorded at the same moment so a resume
         // replays the same model rather than whatever the config says later.
@@ -208,6 +237,21 @@ public class JclawRuntime {
                     Optional.empty(), Optional.empty(), Optional.empty(), 0, 0);
         }
 
+        // Resuming executes on the thread just as a fresh submission does, so it takes the same
+        // lock. Held for the rest of the method; released whatever the outcome.
+        Optional<ThreadLock.Held> held = threadLocks.tryAcquire(record.scope());
+        if (held.isEmpty()) {
+            log.debug("run {}: thread {} is held by another run -> resume refused",
+                    run.value(), record.scope().thread().value());
+            return threadBusy(run, record.scope().thread());
+        }
+        try (ThreadLock.Held ignored = held.get()) {
+            return resumeHeld(run, record, cancelled);
+        }
+    }
+
+    /** The rest of {@link #resume}, executed while the thread lock is held. */
+    private TurnResult resumeHeld(TurnRunId run, RunStore.RunRecord record, AtomicBoolean cancelled) {
         Optional<CheckpointStore.Checkpoint> checkpoint = checkpoints.latestFor(run);
         if (checkpoint.isEmpty()) {
             // Without a checkpoint there is no safe continuation point; restarting could repeat
@@ -343,6 +387,15 @@ public class JclawRuntime {
     private TurnResult failed(TurnRunId run, FailureKind kind) {
         return new TurnResult(run, TurnStatus.FAILED, Optional.empty(), Optional.of(kind),
                 Optional.empty(), Optional.empty(), 0, 0);
+    }
+
+    /** Refused at admission: the run id was never recorded, and the detail says what to do. */
+    private static TurnResult threadBusy(TurnRunId run, ThreadId thread) {
+        return new TurnResult(run, TurnStatus.FAILED, Optional.empty(),
+                Optional.of(FailureKind.THREAD_BUSY),
+                Optional.of("another run is active on thread '" + thread.value()
+                        + "'; wait for it to finish or use a different thread"),
+                Optional.empty(), 0, 0);
     }
 
     /**

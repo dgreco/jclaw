@@ -27,11 +27,13 @@ import io.jclaw.providers.failover.FailoverModelProvider;
 import io.jclaw.providers.mock.MockModelProvider;
 import io.jclaw.providers.openai.OpenAiCompatibleModelProvider;
 import io.jclaw.contracts.turn.RunStore;
+import io.jclaw.contracts.turn.ThreadLock;
 import io.jclaw.storage.approval.JsonlApprovalStore;
 import io.jclaw.storage.checkpoint.JsonlCheckpointStore;
 import io.jclaw.storage.checkpoint.JsonLoopStateCodec;
 import io.jclaw.storage.event.JsonlEventLog;
 import io.jclaw.storage.jsonl.JsonlFile;
+import io.jclaw.storage.lock.FileThreadLock;
 import io.jclaw.storage.mcp.JsonlMcpServerStore;
 import io.jclaw.storage.memory.JsonlMemoryStore;
 import io.jclaw.storage.skill.FilesystemSkillCatalog;
@@ -210,6 +212,15 @@ public class JclawConfiguration {
     @Bean
     public RunStore runStore(JclawProperties properties, Clock clock) {
         return new JsonlRunStore(new JsonlFile(properties.runsPath()), clock);
+    }
+
+    /**
+     * One active run per thread, enforced with OS file locks. The lock is taken before the inbound
+     * message is made durable and dies with the process, so a crash leaves no thread locked.
+     */
+    @Bean
+    public ThreadLock threadLock(JclawProperties properties) {
+        return new FileThreadLock(properties.locksPath());
     }
 
     @Bean

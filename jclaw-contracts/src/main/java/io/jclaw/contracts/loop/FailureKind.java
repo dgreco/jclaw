@@ -49,6 +49,14 @@ public enum FailureKind {
     /** The loop produced no reply and had nothing further to do. */
     NO_PROGRESS("no_progress", false),
 
+    /**
+     * Another run is active on the same thread, so this one was refused at admission.
+     *
+     * <p>Nothing was recorded: no inbound message, no run. Retryable in the plain sense, since
+     * the same submission succeeds once the other run finishes.
+     */
+    THREAD_BUSY("thread_busy", true),
+
     /** Host-side defect: a store, port, or invariant failed. */
     INTERNAL("internal", true);
 
