@@ -1,6 +1,6 @@
 # jclaw vs IronClaw — Parity
 
-An honest enumeration of what [IronClaw](https://github.com/nearai/ironclaw) (internally "Reborn") has that jclaw does not, and of what jclaw now has. jclaw is roughly 20k lines of Java (plus 6.5k of tests) against IronClaw's ~1.4M lines of Rust across ~63 crates. The **architecture** is equivalent — layer ladder, turn/run lifecycle, untrusted `LoopExit`, single `CapabilityHost` authority boundary, checkpoint-kind–driven recovery — and, after the September 2026 parity work, most of the runtime *mechanisms* are present in some form. What remains missing is breadth, not mechanism: the long tail catalogued in section 16. This file is the list, organised by IronClaw's own crate families so a gap can be traced to the crate that fills it upstream.
+An honest enumeration of what [IronClaw](https://github.com/nearai/ironclaw) (internally "Reborn") has that jclaw does not, and of what jclaw now has. jclaw is roughly 32k lines of Java (plus 13k of tests) against IronClaw's ~1.4M lines of Rust across ~63 crates. The **architecture** is equivalent — layer ladder, turn/run lifecycle, untrusted `LoopExit`, single `CapabilityHost` authority boundary, checkpoint-kind–driven recovery — and, after the September 2026 parity work, most of the runtime *mechanisms* are present in some form. What remains missing is breadth, not mechanism: section 16 records what each closed item delivered, and section 17 is the ranked list of what is left. This file is the list, organised by IronClaw's own crate families so a gap can be traced to the crate that fills it upstream.
 
 Sources: IronClaw's `README.md`, `crates/Architecture.md`, and the `crates/` listing as of September 2026; jclaw's code on this checkout (392 tests, 0 failures). Where the upstream doc names a concept and jclaw has an equivalent under a different name, the mapping is given. Where the gap is uncertain it is marked *(unverified)*.
 
@@ -266,18 +266,18 @@ Listed so the comparison is not read as one-directional:
 
 ---
 
-## 16. What is still missing, ranked
+## 16. The September 2026 ranked list, closed
 
 Every item of the four earlier lists is closed — the twelve of the original, the six that
-followed, and the ten ranked here in September 2026, which are now struck through below. None of
-that makes jclaw IronClaw: it makes the *mechanisms* comparable. What is left is the long tail
-each mechanism leaves behind, and being precise about it is the point of this file, because
-"closed" has never meant "as broad as upstream".
+followed, and the ten ranked here in September 2026, struck through below. None of that makes
+jclaw IronClaw: it makes the *mechanisms* comparable. **What is left is [section 17](#17-what-is-left-ranked)**;
+this section is kept as the record of what each item actually delivered, because "closed" has
+never meant "as broad as upstream" and the difference is the interesting part.
 
-Each entry below records what was built **and what it deliberately did not build**. Several of
-those omissions are decisions rather than gaps — the OpenTelemetry SDK, the OAuth
-authorization-code flow, a configurable review-pass count — and each says why, so a later reader
-can disagree with the reasoning rather than assume it was an oversight.
+Each entry records what was built **and what it deliberately did not build**. Three of those
+omissions are decisions rather than gaps — the OpenTelemetry SDK, the OAuth authorization-code
+flow, and a configurable review-pass count — and each says why, so a later reader can disagree
+with the reasoning rather than assume an oversight.
 
 Ranked, as they were, by what a deployment beyond one operator's machine would hit first:
 
@@ -336,7 +336,80 @@ Ranked, as they were, by what a deployment beyond one operator's machine would h
     one). Still open: no trigger on an external queue or a git ref, and a watch's latency is one
     tick rather than an OS notification.
 
-Two things that are structurally different rather than merely narrower, and are unlikely to
-change: jclaw is single-host (the thread lock is an OS file lock, the scheduler runs in one
-process, and there is no cross-host coordination), and it is one agent (no agent-to-agent
-protocol beyond subagents on the same machinery).
+---
+
+## 17. What is left, ranked
+
+The residue of section 16, plus the long tail that was never on it. Ranked, again, by what a
+deployment beyond one operator's machine would hit first — an order that **closing section 16
+changed**, because channels and login put untrusted people in front of the agent and that
+promoted two items nobody would have ranked highly before.
+
+Three entries below are *decisions* rather than gaps, marked **(by choice)**. They are listed so
+the list is complete, not so someone closes them without re-reading the reasoning in section 16.
+
+1. **A second host.** Less structural than it sounds, and worth stating precisely. The run store,
+   leases (`RunStore.claim` is already worker-scoped with a TTL), approvals, and every other store
+   coordinate correctly through `storage=sql`. Two things do not: `FileThreadLock` is the only
+   `ThreadLock` and is an OS file lock, which is unreliable on a shared filesystem and invisible
+   to another host; and `TurnRunScheduler` is per-process, so two workers would each schedule
+   under their own concurrency cap rather than a shared one. Closing it is one `ThreadLock` over
+   a SQL advisory lock plus a shared notion of capacity — but nothing today tests two hosts, and
+   an untested exclusion is not an exclusion.
+2. **Inbound content is never scanned.** `InjectionHeuristics` runs in exactly one place —
+   `DefaultCapabilityHost.succeed`, on capability *output*. A user's message, a Slack message
+   routed by a channel adapter, and a webhook body all reach the prompt unexamined, and there is
+   no review queue to hold a suspicious one. This was a defensible gap while the only way in was
+   a local terminal. Sections 16.1 and 16.2 are what made it reachable by strangers, so closing
+   them moved this up the list rather than down it.
+3. **Secret rotation and key custody.** Every tenant's vault shares one AES key, there is no
+   rotation, no expiry, and no re-encryption path, so a compromised key is a full re-provision.
+   The `secret-leak-scan` hook matches exact substrings of eight characters or more, which means a
+   credential that is re-encoded, split, or shorter than the threshold passes — a deliberate
+   blind spot, but a blind spot.
+4. **Documents as attachments.** `Attachments` accepts `png`, `jpeg`, `gif`, and `webp` and
+   refuses everything else. The first PDF someone drops into a Slack thread is rejected, which is
+   a far more likely event now that a Slack thread is a way in.
+5. **Identity breadth.** No user directory and no groups: roles are per-user strings in
+   configuration, so a team of thirty is thirty lines. Id token signatures are unverified, which
+   is sound for the authorization-code flow that delivers them over an authenticated back channel
+   and would not be for any other flow.
+6. **MCP: notifications and stdio egress.** Server-initiated notifications (`tools/list_changed`)
+   need a transport that reads outside a request, so a server's surface can go stale until
+   `mcp refresh`. A stdio server's network is all-or-nothing unless containerised, rather than
+   host-mediated per host. No dynamic client registration. The interactive authorization-code
+   flow is **(by choice)** — see 16.9.
+7. **Embedding providers.** Only the OpenAI-compatible shape. Voyage and Cohere need their own
+   adapter, so vector memory is simply unavailable to a deployment standardised on either;
+   `MemoryRanking` degrades to BM25 and recency, which works but is not what was asked for.
+8. **Extension distribution.** No signed index, no publisher-side `publish`, and no channel
+   package kind. The index is trusted only for the digest — which is the right minimum, since a
+   lying index is caught before install — but it means *discovery* is unauthenticated: a
+   substituted index can hide a package or offer an older signed one.
+9. **Channel breadth.** Slack and Telegram only; no Discord, Matrix, or email. No
+   outbound-initiated message: jclaw answers, it never starts a conversation. No platform-native
+   slash commands, and adapters are compiled in rather than installable.
+10. **SQL shape.** Rows are JSON documents rather than typed columns, so a query about a run's
+    contents still means decoding bodies. The run view is the only materialised projection, and
+    there is no read replica or partitioning.
+11. **Pipeline and family breadth.** No hook on checkpoint writes. No hook on exit validation, and
+    that one is **(by choice)**: an exit claim is validated by re-resolving refs against the
+    stores that minted them, and a hook there could only weaken the check that makes `LoopExit`
+    untrusted. A configured family varies only the review instruction **(by choice** — the pass
+    count would need a checkpoint codec change; see 16.8**)**. Hooks are Java beans, not anything
+    loadable at runtime.
+12. **Telemetry export.** The OTLP/JSON export is best-effort and unbatched, with no retry, and
+    there is no auto-instrumentation. Both follow from not adopting the OpenTelemetry SDK, which
+    is **(by choice)** — see 16.7.
+13. **Trigger sources.** No trigger on an external queue or a git ref. A watch's latency is one
+    worker tick rather than an OS notification, and its fingerprint walk skips the usual noisy
+    directories rather than honouring `.gitignore`.
+14. **The WASM lane's surroundings.** Modules run metered and capped, but there is no sandbox
+    orchestrator with per-job tokens, no LLM proxying through the host, and no path for the agent
+    to author and install a module of its own.
+15. **Smaller.** OpenRouter routing preferences (`provider`, `route`, `transforms`) are never
+    sent. Retention drops rows and has no archival step, so history is lost rather than moved.
+
+One thing remains structurally different rather than merely narrower: jclaw is **one agent**.
+Subagents are child runs on the same machinery, which is a different idea from an agent-to-agent
+protocol, and nothing here is a step toward one.

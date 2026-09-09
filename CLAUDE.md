@@ -436,18 +436,26 @@ the Anthropic SDK, and tool lanes may not read the process environment.
 
 ## Not built yet
 
-Honest gaps against IronClaw's surface. jclaw is ~20k lines against IronClaw's ~1.4M; the
+Honest gaps against IronClaw's surface. jclaw is ~32k lines against IronClaw's ~1.4M; the
 architecture and most runtime mechanisms are equivalent, the breadth is not. PARITY.md section
-16 ranks these.
+17 ranks these; section 16 records what the closed items actually delivered.
 
+- **A second host** — less structural than "single-host" suggests. The run store, leases
+  (`RunStore.claim` is worker-scoped with a TTL), approvals, and every other store coordinate
+  correctly through `storage=sql`. Two things do not: `FileThreadLock` is the only `ThreadLock`
+  and is an OS file lock, unreliable on a shared filesystem and invisible to another host; and
+  `TurnRunScheduler` is per-process, so two workers would each schedule under their own
+  concurrency cap. Closing it is one `ThreadLock` over a SQL advisory lock plus a shared notion
+  of capacity — but nothing today tests two hosts, and an untested exclusion is not an exclusion.
 - **Channel adapters beyond two** — Slack and Telegram work over `POST /channels/{adapter}`,
   with reply-target bindings that survive gates and restarts. There is no Discord, Matrix, or
   email adapter, and no outbound-initiated message: jclaw answers, it does not start a
   conversation.
 - **Identity beyond one provider** — sessions, three roles, an OIDC authorization code flow with
   PKCE, per-tenant policy and token budgets, and agents that give `TurnScope.agent()` meaning.
-  There is no user directory, no group or team, no per-tenant vault, and the id token's
-  signature is not verified because the code flow authenticates it by channel.
+  There is no user directory and no group or team — roles are per-user strings in
+  configuration, so a team of thirty is thirty lines — and the id token's signature is not
+  verified because the code flow authenticates it by channel.
 - **Secret custody breadth** — values are leased into arguments under a capability + host
   binding, staged into a child's environment under a `--subprocess` binding, scanned out of
   outbound model requests by the optional `secret-leak-scan` hook, and held in a vault per
@@ -487,12 +495,22 @@ architecture and most runtime mechanisms are equivalent, the breadth is not. PAR
   (`run.finished`, `gate.raised`, `turn.submitted` — the last being the inbound-message
   trigger). Event triggers still see only what the audit log records, a watch's latency is one
   tick rather than an OS notification, and there is no trigger on an external queue or a git ref.
-- **MCP auth beyond a bearer token** — servers reach over stdio or streamable HTTP, expose
-  tools, resources, and prompts, and start on first use from a cached surface. An HTTP server
-  authenticates with a vault-held bearer token bound to `mcp.connect` and its host; there is no
-  OAuth 2.1 discovery, dynamic client registration, or authorization-code flow, and no sampling
-  or server-initiated notifications.
-- **Smaller items** — OpenRouter routing preferences are not
-  sent; embedding providers beyond the OpenAI-compatible shape (Voyage, Cohere) need their own
-  adapter; PDFs and other documents are refused as attachments; inbound content is not scanned
-  for injection and there is no review queue; retention has no archival step.
+- **MCP breadth** — servers reach over stdio or streamable HTTP, expose tools, resources, and
+  prompts, and start on first use from a cached surface. An HTTP server authenticates with a
+  vault-held bearer token or by **OAuth 2.1 client credentials** (RFC 8414 discovery, cached and
+  refreshed), and **sampling** is answered behind a per-server cap with no tools, the host's
+  model, and a bounded conversation. Missing: server-initiated *notifications*
+  (`tools/list_changed`), which need a transport that reads outside a request, so a surface can
+  go stale until `mcp refresh`; dynamic client registration; and host-mediated per-host egress
+  for a stdio server, whose network is all-or-nothing unless containerised. The interactive
+  authorization-code flow is deliberate — an agent has nobody at a keyboard to consent.
+- **Inbound content is never scanned** — `InjectionHeuristics` runs in exactly one place,
+  `DefaultCapabilityHost.succeed`, on capability *output*. A user's message, a Slack message
+  routed by a channel adapter, and a webhook body all reach the prompt unexamined, and there is
+  no review queue. This was defensible while the only way in was a local terminal; channel
+  adapters and login are what made it reachable by strangers, so it went up the list rather than
+  down when they landed.
+- **Smaller items** — OpenRouter routing preferences are not sent; embedding providers beyond
+  the OpenAI-compatible shape (Voyage, Cohere) need their own adapter, so vector memory is
+  unavailable to a deployment standardised on either; PDFs and other documents are refused as
+  attachments; retention drops rows with no archival step.

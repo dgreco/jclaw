@@ -49,7 +49,7 @@ jclaw-domain/src/main/java/io/jclaw/domain/loop/TurnMachine.java ...
 
 ## What it is
 
-jclaw reimplements the **architecture** of IronClaw — the seven-layer ladder, the turn/run lifecycle, the untrusted-exit trust model, and the single capability-authority boundary — in about 15k lines of Java. It is not a port: the feature surface is a fraction of IronClaw's (see [PARITY.md](PARITY.md)), but the load-bearing ideas are intact:
+jclaw reimplements the **architecture** of IronClaw — the seven-layer ladder, the turn/run lifecycle, the untrusted-exit trust model, and the single capability-authority boundary — in about 32k lines of Java. It is not a port: the feature surface is a fraction of IronClaw's (see [PARITY.md](PARITY.md)), but the load-bearing ideas are intact:
 
 | Idea | What it means for you |
 |---|---|
@@ -490,7 +490,7 @@ Every route requires `Authorization: Bearer <token>` when `serve-token` or `serv
 
 **Agents and tenant policies.** An agent is a named model and system prompt; the one a tenant uses becomes `TurnScope.agent()`, so a run records the configuration that produced it and a resume replays that one rather than whatever config says later. A tenant policy sets an approval mode and extra denials for one tenant, and can only narrow what the host permits. A tenant token budget is checked at admission, never mid-run, since stopping a turn halfway spends the tokens and produces nothing.
 
-**Users are tenants.** A caller presenting a `serve-users` token runs as that user: thread `work` is really `alice:work`, so two users on the same thread name hold two conversations; their runs carry the user as the tenant of their `TurnScope`, and everything that keys on scope, memories, routines, approvals, the thread lock, separates by it without the stores knowing about HTTP. A user sees only their own runs and gates (another user's is a 404). The operator token is the `local` tenant, the one the CLI uses, so what you do in a terminal and in the browser is one conversation, and the operator reads every tenant's runs. `--per-user N` caps how many of one tenant's runs execute at once, so one busy user cannot take every slot. What this surface is *not*: a Slack or Telegram adapter, or a login system; tokens are static (see PARITY.md).
+**Users are tenants.** A caller presenting a `serve-users` token runs as that user: thread `work` is really `alice:work`, so two users on the same thread name hold two conversations; their runs carry the user as the tenant of their `TurnScope`, and everything that keys on scope, memories, routines, approvals, the thread lock, separates by it without the stores knowing about HTTP. A user sees only their own runs and gates (another user's is a 404). The operator token is the `local` tenant, the one the CLI uses, so what you do in a terminal and in the browser is one conversation, and the operator reads every tenant's runs. `--per-user N` caps how many of one tenant's runs execute at once, so one busy user cannot take every slot. Static tokens are still the simplest way in, and `serve-users` is that. Beyond them there is an OIDC login flow with roles and per-tenant policy (**Signing in**, below) and Slack and Telegram adapters that route a platform message onto a thread ([Messaging channels](#messaging-channels)).
 
 ### Messaging channels
 
