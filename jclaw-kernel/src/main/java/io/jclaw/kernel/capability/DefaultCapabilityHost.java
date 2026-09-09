@@ -16,6 +16,7 @@ import io.jclaw.contracts.loop.GateKind;
 import io.jclaw.contracts.turn.TurnRef.LoopGateRef;
 import io.jclaw.contracts.turn.TurnRef.LoopResultRef;
 import io.jclaw.contracts.turn.TurnScope;
+import io.jclaw.domain.policy.RateLimit;
 import io.jclaw.domain.redact.Redaction;
 import io.jclaw.domain.safety.InjectionHeuristics;
 import org.slf4j.Logger;
@@ -23,6 +24,10 @@ import org.slf4j.LoggerFactory;
 
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
+import java.util.ArrayDeque;
+import java.util.Deque;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -42,6 +47,7 @@ import java.util.function.Supplier;
  * <ol>
  *   <li>existence — an unknown capability is denied, never dispatched;</li>
  *   <li>hard denial by policy;</li>
+ *   <li>rate limit — a per-capability cap, checked before a human is bothered with a gate;</li>
  *   <li>approval — auto-approved, matched against an existing exact-invocation grant, or gated;</li>
  *   <li>dispatch to the runtime lane;</li>
  *   <li>redact, bound, store, and only then mint a result ref.</li>
@@ -67,6 +73,9 @@ public final class DefaultCapabilityHost implements CapabilityHost {
     private final CapabilityHandler.HandlerContext context;
     private final Supplier<Set<String>> knownSecrets;
     private final Clock clock;
+
+    /** Dispatch instants per rate-limited capability; per process, like the limit itself. */
+    private final Map<CapabilityId, Deque<Instant>> dispatches = new ConcurrentHashMap<>();
 
     public DefaultCapabilityHost(
             List<CapabilityHandler> handlers,
@@ -139,12 +148,50 @@ public final class DefaultCapabilityHost implements CapabilityHost {
             return denied(invocation, descriptor, "capability_denied_by_policy");
         }
 
+        Optional<CapabilityOutcome> limited = evaluateRateLimit(invocation, descriptor);
+        if (limited.isPresent()) {
+            return limited.get();
+        }
+
         Optional<CapabilityOutcome> gate = evaluateApproval(invocation, descriptor);
         if (gate.isPresent()) {
             return gate.get();
         }
 
         return dispatch(invocation, descriptor, handler);
+    }
+
+    /**
+     * Refuses a call that would exceed the capability's rate limit.
+     *
+     * <p>Checked before approval so a runaway loop of gated calls does not flood a human with
+     * gates, and counted at dispatch rather than here so a call that parks on a gate does not
+     * spend a permit it never used.
+     */
+    private Optional<CapabilityOutcome> evaluateRateLimit(
+            CapabilityInvocation invocation, CapabilityDescriptor descriptor) {
+
+        RateLimit limit = policy.rateLimits().get(descriptor.id());
+        if (limit == null) {
+            return Optional.empty();
+        }
+        Deque<Instant> history = dispatches.computeIfAbsent(descriptor.id(), ignored -> new ArrayDeque<>());
+        Instant now = clock.instant();
+        synchronized (history) {
+            while (!history.isEmpty() && !history.peekFirst().isAfter(now.minus(limit.window()))) {
+                history.pollFirst();
+            }
+            if (!limit.permits(List.copyOf(history), now)) {
+                log.debug("capability {}: rate limited ({})", descriptor.id().value(), limit.describe());
+                return Optional.of(new CapabilityOutcome.Denied(
+                        "rate_limited", Optional.of("limit is " + limit.describe())))
+                        .map(outcome -> {
+                            emit(invocation, descriptor, "denied", 0);
+                            return outcome;
+                        });
+            }
+        }
+        return Optional.empty();
     }
 
     /**
@@ -161,17 +208,30 @@ public final class DefaultCapabilityHost implements CapabilityHost {
         }
 
         String fingerprint = invocation.fingerprint();
-        Optional<ApprovalStore.Gate> existing = approvals.findGrant(invocation.scope(), fingerprint);
-        if (existing.isPresent()) {
-            ApprovalStore.Gate grant = existing.get();
-            if (grant.isApproved()) {
-                log.debug("capability {}: prior grant matches fingerprint {} -> approved",
+        Optional<ApprovalStore.Gate> latest = approvals.findGrant(invocation.scope(), fingerprint);
+        if (latest.isPresent()) {
+            ApprovalStore.Gate gate = latest.get();
+            if (gate.approved().isPresent()) {
+                if (gate.isApproved()) {
+                    log.debug("capability {}: prior grant matches fingerprint {} -> approved",
+                            descriptor.id().value(), fingerprint);
+                    return Optional.empty(); // exact invocation already approved
+                }
+                log.debug("capability {}: prior decision for fingerprint {} is a denial",
                         descriptor.id().value(), fingerprint);
-                return Optional.empty(); // exact invocation already approved
+                return Optional.of(denied(invocation, descriptor, "approval_denied"));
             }
-            log.debug("capability {}: prior decision for fingerprint {} is a denial",
-                    descriptor.id().value(), fingerprint);
-            return Optional.of(denied(invocation, descriptor, "approval_denied"));
+            if (!gate.isExpiredAt(clock.instant())) {
+                // The same question is still open. Park on it again rather than asking twice:
+                // a human who has not answered yet should not find a second copy of the gate.
+                log.debug("capability {}: gate {} still pending -> parking on it again",
+                        descriptor.id().value(), gate.id().value());
+                return Optional.of(new CapabilityOutcome.NeedsApproval(
+                        GateKind.APPROVAL, LoopGateRef.of(gate.id()), gate.prompt()));
+            }
+            // A stale question is not an answer. Ask again with a fresh gate.
+            log.debug("capability {}: pending gate {} expired at {} -> raising a fresh one",
+                    descriptor.id().value(), gate.id().value(), gate.expiresAt());
         }
 
         if (!policy.interactive()) {
@@ -200,10 +260,23 @@ public final class DefaultCapabilityHost implements CapabilityHost {
         log.debug("capability {}: dispatching to {}",
                 descriptor.id().value(), handler.getClass().getSimpleName());
 
+        RateLimit limit = policy.rateLimits().get(descriptor.id());
+        if (limit != null) {
+            Deque<Instant> history = dispatches.computeIfAbsent(descriptor.id(), ignored -> new ArrayDeque<>());
+            synchronized (history) {
+                history.addLast(clock.instant());
+            }
+        }
+        // A tool with its own egress allowlist gets a context that applies it after the host's
+        // checks; every other tool gets the host context unchanged.
+        Set<String> toolHosts = policy.toolEgress().get(descriptor.id());
+        CapabilityHandler.HandlerContext scoped =
+                toolHosts == null ? context : new ToolScopedContext(context, toolHosts);
+
         long startedAt = clock.millis();
         Result<String, HandlerError> executed;
         try {
-            executed = handler.execute(invocation, context);
+            executed = handler.execute(invocation, scoped);
         } catch (RuntimeException e) {
             // A lane that throws is a lane bug. It must not take the run down, and its exception
             // text must not escape — it can carry paths, arguments, or credentials.

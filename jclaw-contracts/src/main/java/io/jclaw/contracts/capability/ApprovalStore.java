@@ -37,6 +37,7 @@ public interface ApprovalStore {
             String fingerprint,
             String prompt,
             Instant raisedAt,
+            Instant expiresAt,
             Optional<Boolean> approved) {
 
         public Gate {
@@ -48,11 +49,21 @@ public interface ApprovalStore {
             Objects.requireNonNull(fingerprint, "fingerprint");
             Objects.requireNonNull(prompt, "prompt");
             Objects.requireNonNull(raisedAt, "raisedAt");
+            Objects.requireNonNull(expiresAt, "expiresAt");
             Objects.requireNonNull(approved, "approved");
         }
 
         public boolean isPending() {
             return approved.isEmpty();
+        }
+
+        /**
+         * Whether an <em>undecided</em> gate has lapsed. A decision, once made, does not expire:
+         * an exact-invocation grant stays a grant. What lapses is the open question, so a resume
+         * after the TTL raises a fresh gate instead of answering a stale one.
+         */
+        public boolean isExpiredAt(Instant now) {
+            return isPending() && !now.isBefore(expiresAt);
         }
 
         public boolean isApproved() {
@@ -84,13 +95,15 @@ public interface ApprovalStore {
     Optional<Gate> find(GateId gate);
 
     /**
-     * An approval already granted for this exact invocation in this scope, if any.
+     * The most recent gate for this exact invocation in this scope, decided or not.
      *
-     * <p>This is what lets a resumed run proceed without asking twice — and, because the match is
-     * on fingerprint, what stops it from proceeding with anything else.
+     * <p>A decided gate is what lets a resumed run proceed without asking twice — and, because
+     * the match is on fingerprint, what stops it from proceeding with anything else. An undecided
+     * one lets the kernel park on the same open question rather than raise a duplicate, unless it
+     * has expired.
      */
     Optional<Gate> findGrant(TurnScope scope, String fingerprint);
 
-    /** Gates still awaiting a decision, newest first. */
+    /** Gates still awaiting a decision and not yet expired, newest first. */
     List<Gate> pending(TurnScope scope);
 }

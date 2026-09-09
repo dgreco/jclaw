@@ -63,13 +63,22 @@ public final class ContextCompaction {
      * @param omittedMessages how many real messages of the thread are not in the view, including
      *                        those dropped by earlier passes
      * @param estimatedTokens estimated size of {@code messages}
+     * @param dropped         the messages this pass removed, in order, including any notice from
+     *                        an earlier pass; what a summariser is handed
      */
-    public record Compacted(List<ChatMessage> messages, int omittedMessages, int estimatedTokens) {
+    public record Compacted(
+            List<ChatMessage> messages, int omittedMessages, int estimatedTokens, List<ChatMessage> dropped) {
+
         public Compacted {
             messages = List.copyOf(Objects.requireNonNull(messages, "messages"));
+            dropped = List.copyOf(Objects.requireNonNull(dropped, "dropped"));
             if (omittedMessages < 0 || estimatedTokens < 0) {
                 throw new IllegalArgumentException("counts must be non-negative");
             }
+        }
+
+        public Compacted(List<ChatMessage> messages, int omittedMessages, int estimatedTokens) {
+            this(messages, omittedMessages, estimatedTokens, List.of());
         }
 
         public boolean compacted() {
@@ -128,13 +137,26 @@ public final class ContextCompaction {
             }
         }
 
-        List<ChatMessage> kept = new ArrayList<>(messages.subList(cut, n));
+        List<ChatMessage> kept = withNotice(messages.subList(cut, n), notice(omitted));
+        return new Compacted(kept, omitted, estimateTokens(kept), messages.subList(0, cut));
+    }
+
+    /**
+     * Places a notice at the front of a window: folded into the first message when it is a user
+     * message (replacing any notice already there rather than stacking one), or as a synthetic
+     * user message when the window opens with the assistant.
+     */
+    static List<ChatMessage> withNotice(List<ChatMessage> window, String noticeText) {
+        List<ChatMessage> kept = new ArrayList<>(window);
+        ContentBlock.Text notice = new ContentBlock.Text(noticeText);
+        if (kept.isEmpty()) {
+            kept.add(new ChatMessage(ChatMessage.Role.USER, List.of(notice)));
+            return List.copyOf(kept);
+        }
         ChatMessage first = kept.get(0);
-        ContentBlock.Text notice = new ContentBlock.Text(notice(omitted));
         if (first.role() == ChatMessage.Role.USER) {
             List<ContentBlock> content = new ArrayList<>();
             content.add(notice);
-            // Replace an existing notice rather than stacking a second one in front of it.
             content.addAll(carriesNotice(first)
                     ? first.content().subList(1, first.content().size())
                     : first.content());
@@ -142,7 +164,7 @@ public final class ContextCompaction {
         } else {
             kept.add(0, new ChatMessage(ChatMessage.Role.USER, List.of(notice)));
         }
-        return new Compacted(kept, omitted, estimateTokens(kept));
+        return List.copyOf(kept);
     }
 
     /** Estimated tokens for one message: characters over four, plus framing. */

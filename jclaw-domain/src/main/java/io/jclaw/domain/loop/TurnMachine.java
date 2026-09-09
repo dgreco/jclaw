@@ -12,6 +12,7 @@ import io.jclaw.contracts.model.ModelExchange.ModelResponse;
 import io.jclaw.domain.budget.Budget;
 import io.jclaw.domain.loop.LoopExecutionState.Phase;
 import io.jclaw.domain.prompt.ContextCompaction;
+import io.jclaw.domain.prompt.ContextSummary;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -76,6 +77,7 @@ public final class TurnMachine {
             case RESUMING -> onResumed(state, observation, now);
             case AWAITING_CHECKPOINT -> onCheckpointed(state, observation, policy);
             case AWAITING_MODEL -> onModel(state, observation, policy, now);
+            case AWAITING_SUMMARY -> onSummary(state, observation, policy);
             case AWAITING_CAPABILITIES -> onCapabilities(state, observation, now);
             case AWAITING_REPLY_PERSIST -> onReplyPersisted(state, observation);
             case DONE -> protocolViolation(state, "observation after terminal state");
@@ -137,9 +139,7 @@ public final class TurnMachine {
         // The checkpoint kind says what the loop parked in front of, so it also says what
         // happens next. No extra flag needed.
         return switch (checkpointed.kind()) {
-            case BEFORE_MODEL -> new LoopStep(
-                    recorded.withPhase(Phase.AWAITING_MODEL),
-                    new LoopDecision.CallModel(buildRequest(recorded, policy)));
+            case BEFORE_MODEL -> summariseOrCall(recorded, policy);
 
             case BEFORE_BLOCK -> recorded.pendingBlock()
                     .map(block -> finish(recorded, new LoopExit.Blocked(
@@ -148,6 +148,59 @@ public final class TurnMachine {
 
             case BEFORE_CAPABILITY, AFTER_CAPABILITY, AFTER_MODEL, UNKNOWN ->
                     protocolViolation(recorded, "unexpected checkpoint kind " + checkpointed.kind());
+        };
+    }
+
+    /**
+     * Before a model call: if the context policy would drop history and asks for summaries, ask
+     * the model to summarise the dropped span first; otherwise call the model directly.
+     *
+     * <p>The summary call is itself an effect, decided here and performed by the interpreter like
+     * any other. It is not user-facing, so nothing streams from it, and it offers no tools.
+     */
+    private static LoopStep summariseOrCall(LoopExecutionState state, LoopPolicy policy) {
+        if (policy.context().summarise()) {
+            ContextCompaction.Compacted view =
+                    ContextCompaction.compact(state.messages(), policy.context());
+            Optional<ModelRequest> summary = ContextSummary.request(
+                    policy.model(), view, policy.context().summaryMaxTokens());
+            if (summary.isPresent()) {
+                return new LoopStep(
+                        state.withPhase(Phase.AWAITING_SUMMARY),
+                        new LoopDecision.CallModel(summary.get(), false));
+            }
+        }
+        return new LoopStep(
+                state.withPhase(Phase.AWAITING_MODEL),
+                new LoopDecision.CallModel(buildRequest(state, policy)));
+    }
+
+    /**
+     * The summary came back (or did not). Either way the real model call follows: with the
+     * dropped span replaced by the summary, or, if the summary failed, with plain truncation.
+     * A failed summary never fails the run; the truncation path is the baseline it improves on.
+     */
+    private static LoopStep onSummary(
+            LoopExecutionState state, Observation observation, LoopPolicy policy) {
+
+        return switch (observation) {
+            case Observation.ModelReplied replied -> {
+                LoopExecutionState charged = state
+                        .withBudget(state.budget().charge(replied.response().usage()))
+                        .withModelSuccess();
+                ContextCompaction.Compacted view =
+                        ContextCompaction.compact(charged.messages(), policy.context());
+                LoopExecutionState summarised = charged.withMessages(
+                        ContextSummary.apply(view, replied.response().text()));
+                yield new LoopStep(
+                        summarised.withPhase(Phase.AWAITING_MODEL),
+                        new LoopDecision.CallModel(buildRequest(summarised, policy)));
+            }
+            case Observation.ModelFailed ignored -> new LoopStep(
+                    state.withPhase(Phase.AWAITING_MODEL),
+                    new LoopDecision.CallModel(buildRequest(state, policy)));
+            case Observation.AuthRequired auth -> onAuthRequired(state, auth);
+            default -> protocolViolation(state, "expected a summary reply");
         };
     }
 

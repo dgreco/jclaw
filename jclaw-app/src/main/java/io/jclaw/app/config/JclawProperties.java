@@ -4,7 +4,9 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.DefaultValue;
 
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 
 /**
  * All externalized configuration, bound from {@code application.yaml}, environment, or CLI flags.
@@ -40,6 +42,15 @@ import java.util.List;
  * @param injectionPolicy      what the kernel does with tool output that looks like a prompt
  *                             injection: {@code off}, {@code warn}, {@code sanitize} (default), or
  *                             {@code block}
+ * @param contextSummarise     whether history the context window drops is summarised by a model
+ *                             call before each request, rather than only counted
+ * @param contextSummaryMaxTokens output cap for that summary call
+ * @param approvalTtl          how long an unanswered approval or auth gate stays answerable; a
+ *                             resume after that asks afresh
+ * @param toolEgress           per-capability egress allowlists, capability id to a comma-separated
+ *                             host list ({@code *.suffix} allowed); applied on top of the host guard
+ * @param toolRateLimits       per-capability invocation caps, capability id to {@code N/window}
+ *                             ({@code 5/1m}, {@code 100/1h}); enforced per process
  */
 @ConfigurationProperties(prefix = "jclaw")
 public record JclawProperties(
@@ -115,7 +126,23 @@ public record JclawProperties(
 
         @DefaultValue("") List<String> egressDenylist,
 
-        @DefaultValue("sanitize") String injectionPolicy) {
+        @DefaultValue("sanitize") String injectionPolicy,
+
+        @DefaultValue("true") boolean contextSummarise,
+
+        @DefaultValue("1024") int contextSummaryMaxTokens,
+
+        @DefaultValue("24h") Duration approvalTtl,
+
+        Map<String, String> toolEgress,
+
+        Map<String, String> toolRateLimits) {
+
+    public JclawProperties {
+        // Constructor binding leaves an absent map null; an absent map means no limits.
+        toolEgress = toolEgress == null ? Map.of() : Map.copyOf(toolEgress);
+        toolRateLimits = toolRateLimits == null ? Map.of() : Map.copyOf(toolRateLimits);
+    }
 
     /**
      * Properties with every default applied, for programmatic construction.
@@ -149,7 +176,12 @@ public record JclawProperties(
                 List.of(),
                 List.of(),
                 List.of(),
-                "sanitize");
+                "sanitize",
+                true,
+                1024,
+                Duration.ofHours(24),
+                Map.of(),
+                Map.of());
     }
 
     /**

@@ -31,6 +31,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -63,6 +64,79 @@ class TurnMachineTest {
 
     private static LoopStep step(LoopExecutionState state, Observation observation) {
         return TurnMachine.step(state, observation, POLICY, T0);
+    }
+
+    @Nested
+    @DisplayName("context summarisation")
+    class Summarisation {
+
+        private LoopExecutionState longState() {
+            List<ChatMessage> history = new ArrayList<>();
+            for (int i = 0; i < 6; i++) {
+                history.add(ChatMessage.user("question " + i));
+                history.add(ChatMessage.assistant("answer " + i));
+            }
+            history.add(ChatMessage.user("latest"));
+            return LoopExecutionState.start(history, Budget.interactive(T0));
+        }
+
+        private final LoopPolicy summarising = POLICY.withContext(
+                new ContextPolicy(3, 100_000, true, 256));
+
+        @Test
+        @DisplayName("a dropped span is summarised first, then the real call carries the summary")
+        void summarisesThenCalls() {
+            LoopStep started = TurnMachine.step(longState(), new Observation.Start(), summarising, T0);
+            LoopStep afterCheckpoint = TurnMachine.step(
+                    started.state(), checkpointed(CheckpointKind.BEFORE_MODEL), summarising, T0);
+
+            LoopDecision.CallModel summary =
+                    assertInstanceOf(LoopDecision.CallModel.class, afterCheckpoint.decision());
+            assertFalse(summary.userFacing(), "a summary is not the agent speaking");
+            assertTrue(summary.request().tools().isEmpty());
+            assertTrue(summary.request().messages().get(0).displayText().contains("question 0"));
+            assertEquals(Phase.AWAITING_SUMMARY, afterCheckpoint.state().phase());
+
+            LoopStep afterSummary = TurnMachine.step(afterCheckpoint.state(),
+                    new Observation.ModelReplied(textReply("Earlier: six questions were answered.")),
+                    summarising, T0);
+            LoopDecision.CallModel real =
+                    assertInstanceOf(LoopDecision.CallModel.class, afterSummary.decision());
+            assertTrue(real.userFacing());
+            String first = real.request().messages().get(0).displayText();
+            assertTrue(first.contains("Summary of the omitted messages: Earlier: six questions were answered."));
+            assertEquals("latest", real.request().messages().get(real.request().messages().size() - 1).displayText());
+            assertEquals(Phase.AWAITING_MODEL, afterSummary.state().phase());
+            assertTrue(afterSummary.state().messages().size() < 13, "the state itself shrank");
+            assertEquals(15, afterSummary.state().budget().spent().total(), "the summary call is charged");
+        }
+
+        @Test
+        @DisplayName("a failed summary falls back to truncation without failing the run")
+        void failedSummaryFallsBack() {
+            LoopStep started = TurnMachine.step(longState(), new Observation.Start(), summarising, T0);
+            LoopStep afterCheckpoint = TurnMachine.step(
+                    started.state(), checkpointed(CheckpointKind.BEFORE_MODEL), summarising, T0);
+
+            LoopStep afterFailure = TurnMachine.step(afterCheckpoint.state(),
+                    new Observation.ModelFailed(FailureKind.PROVIDER_ERROR, true), summarising, T0);
+
+            LoopDecision.CallModel real =
+                    assertInstanceOf(LoopDecision.CallModel.class, afterFailure.decision());
+            assertTrue(real.userFacing());
+            assertTrue(real.request().messages().get(0).displayText().startsWith("[Context notice:"));
+            assertFalse(real.request().messages().get(0).displayText().contains("Summary of"));
+        }
+
+        @Test
+        @DisplayName("nothing to drop means no summary call")
+        void noSummaryWhenNothingDropped() {
+            LoopStep started = TurnMachine.step(fresh(), new Observation.Start(), summarising, T0);
+            LoopStep afterCheckpoint = TurnMachine.step(
+                    started.state(), checkpointed(CheckpointKind.BEFORE_MODEL), summarising, T0);
+            assertTrue(assertInstanceOf(LoopDecision.CallModel.class, afterCheckpoint.decision()).userFacing());
+            assertEquals(Phase.AWAITING_MODEL, afterCheckpoint.state().phase());
+        }
     }
 
     @Nested

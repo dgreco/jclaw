@@ -25,6 +25,12 @@ class PolicyWiringTest {
 
     private static JclawProperties properties(
             List<String> denied, List<String> allow, List<String> deny) {
+        return properties(denied, allow, deny, java.util.Map.of(), java.util.Map.of());
+    }
+
+    private static JclawProperties properties(
+            List<String> denied, List<String> allow, List<String> deny,
+            java.util.Map<String, String> toolEgress, java.util.Map<String, String> toolRateLimits) {
         return new JclawProperties(
                 Path.of("."),
                 Path.of("build", "test-state"),
@@ -49,7 +55,12 @@ class PolicyWiringTest {
                 denied,
                 allow,
                 deny,
-                "sanitize");
+                "sanitize",
+                true,
+                1024,
+                java.time.Duration.ofHours(24),
+                toolEgress,
+                toolRateLimits);
     }
 
     @Test
@@ -72,6 +83,23 @@ class PolicyWiringTest {
         IllegalArgumentException failure = assertThrows(IllegalArgumentException.class,
                 () -> configuration.capabilityPolicy(properties(List.of("shell"), List.of(), List.of())));
         assertTrue(failure.getMessage().contains("'shell'"));
+    }
+
+    @Test
+    @DisplayName("per-tool egress and rate limits reach the policy, keyed by capability")
+    void perToolLimits() {
+        CapabilityPolicy policy = configuration.capabilityPolicy(properties(
+                List.of(), List.of(), List.of(),
+                java.util.Map.of("builtin.http_fetch", "api.github.com, *.example.com"),
+                java.util.Map.of("builtin.shell", "5/1m")));
+
+        assertEquals(java.util.Set.of("api.github.com", "*.example.com"),
+                policy.toolEgress().get(CapabilityId.builtin("http_fetch")));
+        assertEquals(io.jclaw.domain.policy.RateLimit.parse("5/1m"),
+                policy.rateLimits().get(CapabilityId.builtin("shell")));
+
+        assertThrows(IllegalArgumentException.class, () -> configuration.capabilityPolicy(properties(
+                List.of(), List.of(), List.of(), java.util.Map.of(), java.util.Map.of("builtin.shell", "lots"))));
     }
 
     @Test

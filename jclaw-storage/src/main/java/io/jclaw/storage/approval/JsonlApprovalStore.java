@@ -11,6 +11,7 @@ import io.jclaw.contracts.turn.TurnScope;
 import io.jclaw.storage.jsonl.JsonlFile;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -37,12 +38,30 @@ public final class JsonlApprovalStore implements ApprovalStore {
     private static final String KIND_RAISED = "raised";
     private static final String KIND_RESOLVED = "resolved";
 
+    /** How long an unanswered gate stays answerable when no TTL is configured. */
+    public static final Duration DEFAULT_TTL = Duration.ofHours(24);
+
     private final JsonlFile file;
     private final Clock clock;
+    private final Duration ttl;
 
     public JsonlApprovalStore(JsonlFile file, Clock clock) {
+        this(file, clock, DEFAULT_TTL);
+    }
+
+    /** @param ttl how long a raised gate may go unanswered before a resume asks afresh */
+    public JsonlApprovalStore(JsonlFile file, Clock clock, Duration ttl) {
         this.file = Objects.requireNonNull(file, "file");
         this.clock = Objects.requireNonNull(clock, "clock");
+        this.ttl = Objects.requireNonNull(ttl, "ttl");
+        if (ttl.isZero() || ttl.isNegative()) {
+            throw new IllegalArgumentException("approval ttl must be positive, got " + ttl);
+        }
+    }
+
+    /** Whether a gate has lapsed by this store's clock. */
+    public boolean expired(Gate gate) {
+        return gate.isExpiredAt(clock.instant());
     }
 
     @Override
@@ -61,6 +80,7 @@ public final class JsonlApprovalStore implements ApprovalStore {
                 invocation.fingerprint(),
                 prompt,
                 clock.instant(),
+                clock.instant().plus(ttl),
                 Optional.empty());
         append(gate);
         return gate;
@@ -84,6 +104,7 @@ public final class JsonlApprovalStore implements ApprovalStore {
                 credentialHint,
                 prompt,
                 clock.instant(),
+                clock.instant().plus(ttl),
                 Optional.empty());
         append(gate);
         return gate;
@@ -104,6 +125,7 @@ public final class JsonlApprovalStore implements ApprovalStore {
         record.put("fingerprint", gate.fingerprint());
         record.put("prompt", gate.prompt());
         record.put("raisedAt", gate.raisedAt().toString());
+        record.put("expiresAt", gate.expiresAt().toString());
         file.append(record);
     }
 
@@ -138,17 +160,26 @@ public final class JsonlApprovalStore implements ApprovalStore {
     @Override
     public List<Gate> pending(TurnScope scope) {
         Objects.requireNonNull(scope, "scope");
+        Instant now = clock.instant();
         return replay().values().stream()
                 .filter(gate -> gate.scope().equals(scope))
                 .filter(Gate::isPending)
+                .filter(gate -> !gate.isExpiredAt(now))
                 .sorted(Comparator.comparing(Gate::raisedAt).reversed())
                 .toList();
     }
 
-    /** Every pending gate across all scopes, newest first. Backs {@code jclaw approvals list}. */
+    /** Every answerable pending gate across all scopes, newest first. Backs {@code approvals list}. */
     public List<Gate> allPending() {
+        return allPending(false);
+    }
+
+    /** As {@link #allPending()}, optionally including gates that have lapsed. */
+    public List<Gate> allPending(boolean includeExpired) {
+        Instant now = clock.instant();
         return replay().values().stream()
                 .filter(Gate::isPending)
+                .filter(gate -> includeExpired || !gate.isExpiredAt(now))
                 .sorted(Comparator.comparing(Gate::raisedAt).reversed())
                 .toList();
     }
@@ -181,7 +212,8 @@ public final class JsonlApprovalStore implements ApprovalStore {
         return gates;
     }
 
-    private static Gate toGate(Map<String, Object> record, String id) {
+    private Gate toGate(Map<String, Object> record, String id) {
+        Instant raisedAt = Instant.parse(String.valueOf(record.get("raisedAt")));
         return new Gate(
                 new GateId(id),
                 // Rows written before auth gates existed carry no kind and are approvals.
@@ -195,14 +227,16 @@ public final class JsonlApprovalStore implements ApprovalStore {
                 CapabilityId.of(String.valueOf(record.get("capability"))),
                 String.valueOf(record.get("fingerprint")),
                 String.valueOf(record.get("prompt")),
-                Instant.parse(String.valueOf(record.get("raisedAt"))),
+                raisedAt,
+                // Rows written before expiry existed get the current TTL from when they were raised.
+                record.get("expiresAt") instanceof String at ? Instant.parse(at) : raisedAt.plus(ttl),
                 Optional.empty());
     }
 
     private static Gate withDecision(Gate gate, boolean approved) {
         return new Gate(
                 gate.id(), gate.kind(), gate.run(), gate.scope(), gate.capability(), gate.fingerprint(),
-                gate.prompt(), gate.raisedAt(), Optional.of(approved));
+                gate.prompt(), gate.raisedAt(), gate.expiresAt(), Optional.of(approved));
     }
 
     /** Gates for one run, oldest first. */

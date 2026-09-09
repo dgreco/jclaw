@@ -4,6 +4,9 @@ import io.jclaw.contracts.capability.CapabilityDescriptor;
 import io.jclaw.contracts.capability.CapabilityId;
 import io.jclaw.contracts.capability.EffectClass;
 
+import io.jclaw.domain.policy.RateLimit;
+
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
@@ -20,22 +23,36 @@ import java.util.Set;
  *                           need approval is <em>denied</em> rather than parked — a gate nobody can
  *                           answer is just a hung run, and failing closed is the honest outcome.
  * @param injection          what to do with tool output that looks like a prompt injection
+ * @param toolEgress         per-capability egress allowlists, applied on top of the host guard;
+ *                           a tool absent here keeps the host-wide posture
+ * @param rateLimits         per-capability invocation limits, enforced per process
  */
 public record CapabilityPolicy(
         EffectClass autoApproveCeiling,
         Set<CapabilityId> denied,
         boolean interactive,
-        InjectionPolicy injection) {
+        InjectionPolicy injection,
+        Map<CapabilityId, Set<String>> toolEgress,
+        Map<CapabilityId, RateLimit> rateLimits) {
 
     public CapabilityPolicy {
         Objects.requireNonNull(autoApproveCeiling, "autoApproveCeiling");
         denied = Set.copyOf(Objects.requireNonNull(denied, "denied"));
         Objects.requireNonNull(injection, "injection");
+        toolEgress = Map.copyOf(Objects.requireNonNull(toolEgress, "toolEgress"));
+        rateLimits = Map.copyOf(Objects.requireNonNull(rateLimits, "rateLimits"));
     }
 
-    /** With the default injection policy, {@link InjectionPolicy#SANITIZE}. */
+    /** With the default injection policy and no per-tool limits. */
     public CapabilityPolicy(EffectClass autoApproveCeiling, Set<CapabilityId> denied, boolean interactive) {
-        this(autoApproveCeiling, denied, interactive, InjectionPolicy.SANITIZE);
+        this(autoApproveCeiling, denied, interactive, InjectionPolicy.SANITIZE, Map.of(), Map.of());
+    }
+
+    /** With no per-tool limits. */
+    public CapabilityPolicy(
+            EffectClass autoApproveCeiling, Set<CapabilityId> denied, boolean interactive,
+            InjectionPolicy injection) {
+        this(autoApproveCeiling, denied, interactive, injection, Map.of(), Map.of());
     }
 
     /**
@@ -62,15 +79,23 @@ public record CapabilityPolicy(
     }
 
     public CapabilityPolicy withDenied(Set<CapabilityId> denied) {
-        return new CapabilityPolicy(autoApproveCeiling, denied, interactive, injection);
+        return new CapabilityPolicy(autoApproveCeiling, denied, interactive, injection, toolEgress, rateLimits);
     }
 
     public CapabilityPolicy withInteractive(boolean interactive) {
-        return new CapabilityPolicy(autoApproveCeiling, denied, interactive, injection);
+        return new CapabilityPolicy(autoApproveCeiling, denied, interactive, injection, toolEgress, rateLimits);
     }
 
     public CapabilityPolicy withInjection(InjectionPolicy injection) {
-        return new CapabilityPolicy(autoApproveCeiling, denied, interactive, injection);
+        return new CapabilityPolicy(autoApproveCeiling, denied, interactive, injection, toolEgress, rateLimits);
+    }
+
+    public CapabilityPolicy withToolEgress(Map<CapabilityId, Set<String>> toolEgress) {
+        return new CapabilityPolicy(autoApproveCeiling, denied, interactive, injection, toolEgress, rateLimits);
+    }
+
+    public CapabilityPolicy withRateLimits(Map<CapabilityId, RateLimit> rateLimits) {
+        return new CapabilityPolicy(autoApproveCeiling, denied, interactive, injection, toolEgress, rateLimits);
     }
 
     public boolean isDenied(CapabilityId id) {

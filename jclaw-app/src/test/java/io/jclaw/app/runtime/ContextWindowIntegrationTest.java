@@ -47,6 +47,7 @@ class ContextWindowIntegrationTest {
         registry.add("jclaw.workspace", () -> workspace.toString());
         registry.add("jclaw.state-dir", () -> workspace.resolve(".state").toString());
         registry.add("jclaw.context-max-messages", () -> "2");
+        registry.add("jclaw.context-summarise", () -> "false");
     }
 
     @TestConfiguration

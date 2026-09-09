@@ -18,6 +18,7 @@ import io.jclaw.contracts.capability.SubagentHost;
 import io.jclaw.contracts.skill.SkillCatalog;
 import io.jclaw.contracts.thread.ThreadService;
 import io.jclaw.domain.loop.LoopStateCodec;
+import io.jclaw.domain.policy.RateLimit;
 import io.jclaw.kernel.capability.CapabilityPolicy;
 import io.jclaw.kernel.capability.DefaultCapabilityHost;
 import io.jclaw.kernel.capability.GuardedHandlerContext;
@@ -62,6 +63,7 @@ import java.nio.file.Path;
 import java.time.Clock;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -230,7 +232,32 @@ public class JclawConfiguration {
                                 + "(expected e.g. builtin.shell)", e);
             }
         }
-        return posture.withDenied(denied).withInjection(InjectionPolicy.parse(properties.injectionPolicy()));
+        Map<CapabilityId, Set<String>> toolEgress = new java.util.LinkedHashMap<>();
+        properties.toolEgress().forEach((capability, hosts) -> toolEgress.put(
+                capabilityId("jclaw.tool-egress", capability),
+                Set.copyOf(JclawProperties.nonBlank(List.of(hosts.split(","))))));
+        Map<CapabilityId, RateLimit> rateLimits = new java.util.LinkedHashMap<>();
+        properties.toolRateLimits().forEach((capability, spec) -> {
+            try {
+                rateLimits.put(capabilityId("jclaw.tool-rate-limits", capability), RateLimit.parse(spec));
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException(
+                        "jclaw.tool-rate-limits entry for '" + capability + "': " + e.getMessage(), e);
+            }
+        });
+        return posture.withDenied(denied)
+                .withInjection(InjectionPolicy.parse(properties.injectionPolicy()))
+                .withToolEgress(toolEgress)
+                .withRateLimits(rateLimits);
+    }
+
+    private static CapabilityId capabilityId(String property, String raw) {
+        try {
+            return CapabilityId.of(raw.trim());
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException(
+                    property + " key '" + raw + "' is not a capability id (expected e.g. builtin.shell)", e);
+        }
     }
 
     @Bean
@@ -255,7 +282,7 @@ public class JclawConfiguration {
      */
     @Bean
     public JsonlApprovalStore approvalStore(JclawProperties properties, Clock clock) {
-        return new JsonlApprovalStore(new JsonlFile(properties.approvalsPath()), clock);
+        return new JsonlApprovalStore(new JsonlFile(properties.approvalsPath()), clock, properties.approvalTtl());
     }
 
     /**

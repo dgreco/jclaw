@@ -49,7 +49,12 @@ class LocalProviderWiringTest {
                 List.of(),
                 List.of(),
                 List.of(),
-                "sanitize");
+                "sanitize",
+                true,
+                1024,
+                java.time.Duration.ofHours(24),
+                java.util.Map.of(),
+                java.util.Map.of());
     }
 
     @Test

@@ -12,10 +12,13 @@ package io.jclaw.domain.prompt;
  * is model-specific and this policy has to be pure and provider-neutral. The estimate errs
  * generous for English prose and tight for code; leave headroom under the model's real limit.
  *
- * @param maxMessages    most recent messages retained per request
- * @param maxInputTokens estimated token budget for the retained messages
+ * @param maxMessages      most recent messages retained per request
+ * @param maxInputTokens   estimated token budget for the retained messages
+ * @param summarise        whether the span that compaction drops is summarised by a model call
+ *                         and folded into the notice, rather than merely counted
+ * @param summaryMaxTokens output cap for that summary call
  */
-public record ContextPolicy(int maxMessages, int maxInputTokens) {
+public record ContextPolicy(int maxMessages, int maxInputTokens, boolean summarise, int summaryMaxTokens) {
 
     /**
      * Sensible for current frontier models (200k+ contexts): a hundred thousand estimated tokens
@@ -31,5 +34,17 @@ public record ContextPolicy(int maxMessages, int maxInputTokens) {
         if (maxInputTokens <= 0) {
             throw new IllegalArgumentException("maxInputTokens must be positive, got " + maxInputTokens);
         }
+        if (summaryMaxTokens <= 0) {
+            throw new IllegalArgumentException("summaryMaxTokens must be positive, got " + summaryMaxTokens);
+        }
+    }
+
+    /** Truncation only: the span is counted, not summarised. */
+    public ContextPolicy(int maxMessages, int maxInputTokens) {
+        this(maxMessages, maxInputTokens, false, 1024);
+    }
+
+    public ContextPolicy withSummarisation(boolean summarise, int summaryMaxTokens) {
+        return new ContextPolicy(maxMessages, maxInputTokens, summarise, summaryMaxTokens);
     }
 }

@@ -387,8 +387,7 @@ public class JclawRuntime {
             runs.releaseLease(run);
             return failed(run, FailureKind.INTERNAL);
         }
-        LoopExecutionState initial = LoopExecutionState.start(
-                ContextCompaction.compact(history, policy.context()).messages(), budget());
+        LoopExecutionState initial = LoopExecutionState.start(seedFrom(history, policy), budget());
         log.debug("run {}: queued run started with {} message(s) of history", run.value(),
                 initial.messages().size());
         LoopExit exit = interpreter.run(run, record.scope(), initial, policy, cancelled,
@@ -534,7 +533,27 @@ public class JclawRuntime {
      * same reasoning applies to the tool surface above.
      */
     private ContextPolicy contextPolicy() {
-        return new ContextPolicy(properties.contextMaxMessages(), properties.contextMaxTokens());
+        return new ContextPolicy(properties.contextMaxMessages(), properties.contextMaxTokens(),
+                properties.contextSummarise(), properties.contextSummaryMaxTokens());
+    }
+
+    /**
+     * The seed for a fresh run.
+     *
+     * <p>With summarisation on, the whole history is handed to the machine, which summarises what
+     * its window drops before the first model call; the first checkpoint is correspondingly
+     * larger, once. With it off, the seed is truncated here and the checkpoint stays bounded.
+     */
+    private List<ChatMessage> seedFrom(List<ChatMessage> history, LoopPolicy policy) {
+        if (policy.context().summarise()) {
+            return history;
+        }
+        ContextCompaction.Compacted seed = ContextCompaction.compact(history, policy.context());
+        if (seed.compacted()) {
+            log.debug("seed compacted, {} of {} message(s) omitted (~{} tokens kept)",
+                    seed.omittedMessages(), history.size(), seed.estimatedTokens());
+        }
+        return seed.messages();
     }
 
     /**
@@ -568,12 +587,7 @@ public class JclawRuntime {
         if (history.isEmpty()) {
             return List.of(ChatMessage.user(userText));
         }
-        ContextCompaction.Compacted seed = ContextCompaction.compact(history, policy.context());
-        if (seed.compacted()) {
-            log.debug("thread {}: seed compacted, {} of {} message(s) omitted (~{} tokens kept)",
-                    thread.value(), seed.omittedMessages(), history.size(), seed.estimatedTokens());
-        }
-        return seed.messages();
+        return seedFrom(history, policy);
     }
 
     private Budget budget() {

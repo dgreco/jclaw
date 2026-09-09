@@ -53,21 +53,25 @@ public class ApprovalsCommand implements Runnable {
 
         private final JsonlApprovalStore approvals;
 
+        @Option(names = "--all", description = "Include gates that have expired.")
+        private boolean all;
+
         public ListGates(JsonlApprovalStore approvals) {
             this.approvals = approvals;
         }
 
         @Override
         public Integer call() {
-            List<ApprovalStore.Gate> pending = approvals.allPending();
+            List<ApprovalStore.Gate> pending = approvals.allPending(all);
             if (pending.isEmpty()) {
-                System.out.println("(no pending approvals)");
+                System.out.println(all ? "(no pending approvals)" : "(no pending approvals; --all includes expired ones)");
                 return 0;
             }
             for (ApprovalStore.Gate gate : pending) {
-                System.out.printf("%s  %s  %s  [%s]%n",
+                System.out.printf("%s  %s  %s  [%s]%s%n",
                         gate.id().value(), gate.raisedAt(), gate.capability().value(),
-                        gate.kind().name().toLowerCase(java.util.Locale.ROOT));
+                        gate.kind().name().toLowerCase(java.util.Locale.ROOT),
+                        approvals.expired(gate) ? "  (expired " + gate.expiresAt() + ")" : "");
                 System.out.println("    run:    " + gate.run().value());
                 System.out.println("    scope:  " + gate.scope().lockKey());
                 if (gate.isAuth()) {
@@ -151,6 +155,13 @@ public class ApprovalsCommand implements Runnable {
         ApprovalStore.Gate gate = found.get();
         if (!gate.isPending()) {
             System.err.println("jclaw: gate already resolved (approved=" + gate.isApproved() + ")");
+            return 1;
+        }
+        if (approvals.expired(gate)) {
+            // Answering a stale question would grant something nobody re-read. Resuming raises
+            // a fresh gate with the current arguments in front of the human.
+            System.err.println("jclaw: gate expired at " + gate.expiresAt()
+                    + "; resume the run to raise a fresh one: jclaw resume " + gate.run().value());
             return 1;
         }
 

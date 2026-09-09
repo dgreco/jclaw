@@ -163,7 +163,9 @@ class ApprovalResumeIntegrationTest {
 
         assertFalse(Files.exists(workspace.resolve("undecided.txt")),
                 "resuming must not grant authority the human never gave");
-        assertTrue(resumed.status().isBlocked() || resumed.status() == TurnStatus.COMPLETED,
-                "expected the run to park again or finish without the effect, got " + resumed.status());
+        assertEquals(TurnStatus.BLOCKED_APPROVAL, resumed.status(),
+                "an open question parks the run again");
+        assertEquals(parked.gatePrompt(), resumed.gatePrompt(),
+                "on the same gate: the human must not find a duplicate");
     }
 }

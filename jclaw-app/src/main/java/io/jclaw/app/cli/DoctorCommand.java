@@ -78,6 +78,11 @@ public class DoctorCommand implements Callable<Integer> {
         System.out.println("  private networks     "
                 + (egress.privateNetworksAllowed() ? "ALLOWED" : "blocked"));
         System.out.println("  injection policy     " + policy.injection().name().toLowerCase(java.util.Locale.ROOT));
+        System.out.println("  approval ttl         " + properties.approvalTtl());
+        System.out.println("  context summaries    " + (properties.contextSummarise() ? "on" : "off"));
+        System.out.println("  per-tool limits      " + (policy.toolEgress().isEmpty() && policy.rateLimits().isEmpty()
+                ? "none"
+                : policy.toolEgress().size() + " egress allowlist(s), " + policy.rateLimits().size() + " rate limit(s)"));
         System.out.println("  denied capabilities  " + (policy.denied().isEmpty() ? "none"
                 : policy.denied().stream().map(id -> id.value()).sorted()
                         .collect(java.util.stream.Collectors.joining(", "))));

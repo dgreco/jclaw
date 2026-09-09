@@ -22,10 +22,20 @@ import java.util.Objects;
  */
 public sealed interface LoopDecision {
 
-    /** Send a request to the model. Preceded by a {@link CheckpointKind#BEFORE_MODEL} checkpoint. */
-    record CallModel(ModelRequest request) implements LoopDecision {
+    /**
+     * Send a request to the model. Preceded by a {@link CheckpointKind#BEFORE_MODEL} checkpoint.
+     *
+     * @param userFacing whether the reply is part of the conversation the user is watching. A
+     *                   context-summary call is not: its output must not be streamed to a
+     *                   terminal as if the agent were speaking.
+     */
+    record CallModel(ModelRequest request, boolean userFacing) implements LoopDecision {
         public CallModel {
             Objects.requireNonNull(request, "request");
+        }
+
+        public CallModel(ModelRequest request) {
+            this(request, true);
         }
     }
 

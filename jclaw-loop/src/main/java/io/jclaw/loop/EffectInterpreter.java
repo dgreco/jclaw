@@ -284,7 +284,9 @@ public final class EffectInterpreter {
         long startedAt = clock.millis();
         // Streaming and non-streaming produce the same ModelResponse, so the machine is unaware
         // of the difference — presentation must not change the agent's behaviour.
+        // A summary call is not the agent speaking, so it is never streamed to the user.
         var result = hooks.streamSink()
+                .filter(sink -> call.userFacing())
                 .map(sink -> provider.stream(call.request(), sink))
                 .orElseGet(() -> provider.complete(call.request()));
         long elapsed = clock.millis() - startedAt;
@@ -412,7 +414,7 @@ public final class EffectInterpreter {
 
     private static String describe(LoopDecision decision) {
         return switch (decision) {
-            case LoopDecision.CallModel ignored -> "call-model";
+            case LoopDecision.CallModel call -> call.userFacing() ? "call-model" : "call-model(summary)";
             case LoopDecision.InvokeCapabilities invoke ->
                     "invoke-capabilities[" + invoke.calls().size() + "]";
             case LoopDecision.PersistReply persist ->

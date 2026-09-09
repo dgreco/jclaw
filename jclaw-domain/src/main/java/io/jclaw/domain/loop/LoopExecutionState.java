@@ -42,6 +42,11 @@ public record LoopExecutionState(
         START,
         /** A model call is in flight. */
         AWAITING_MODEL,
+        /**
+         * A context-summary call is in flight. Its reply rewrites the message list rather than
+         * joining it, and the real model call follows.
+         */
+        AWAITING_SUMMARY,
         /** Capability invocations are in flight. */
         AWAITING_CAPABILITIES,
         /** The final assistant message is being written to the transcript. */
@@ -105,6 +110,12 @@ public record LoopExecutionState(
     public LoopExecutionState withMessageAppended(ChatMessage message) {
         List<ChatMessage> next = new ArrayList<>(messages);
         next.add(message);
+        return new LoopExecutionState(phase, iteration, next, budget, assistantRefs, resultRefs,
+                pendingBlock, pendingReply, consecutiveModelFailures, lastCheckpoint);
+    }
+
+    /** Replaces the message list wholesale; used when a summary stands in for an earlier span. */
+    public LoopExecutionState withMessages(List<ChatMessage> next) {
         return new LoopExecutionState(phase, iteration, next, budget, assistantRefs, resultRefs,
                 pendingBlock, pendingReply, consecutiveModelFailures, lastCheckpoint);
     }
