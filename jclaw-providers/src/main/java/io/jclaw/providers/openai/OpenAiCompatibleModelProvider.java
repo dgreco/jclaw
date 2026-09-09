@@ -14,11 +14,15 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -26,6 +30,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.TreeMap;
+import java.util.function.Consumer;
 import java.util.function.Predicate;
 
 /**
@@ -34,7 +40,7 @@ import java.util.function.Predicate;
  * <p>One adapter covers OpenAI itself, Ollama, vLLM, LM Studio, and most local inference servers,
  * because they all converged on the same wire format. Written against raw HTTP rather than an SDK:
  * there is no single official client for "OpenAI-compatible", and the surface used here is one
- * endpoint.
+ * endpoint, in two modes (buffered and server-sent events).
  *
  * <p><b>On egress policy.</b> This provider does not consult the egress guard, and that is
  * deliberate rather than an oversight. The guard exists to stop <em>model-controlled</em> URLs from
@@ -240,10 +246,20 @@ public final class OpenAiCompatibleModelProvider implements ModelProvider {
         return supportsModel.test(model);
     }
 
-    @Override
-    public Result<ModelResponse, ProviderFailure> complete(ModelRequest request) {
-        Objects.requireNonNull(request, "request");
+    // --- request preparation, shared by both modes ---
 
+    /** A request ready to send: the wire body and the tool-name mapping needed to decode replies. */
+    private record Prepared(Map<String, String> toolNames, HttpRequest http) {
+    }
+
+    /**
+     * Validates credentials and tool names, then encodes the request.
+     *
+     * <p>Everything that can fail <em>before</em> the network does so here, identically for the
+     * buffered and streaming paths, so a missing key or an ambiguous tool name produces the same
+     * failure whichever way the loop asked.
+     */
+    private Result<Prepared, ProviderFailure> prepare(ModelRequest request, boolean streaming) {
         if (apiKey.isEmpty() && credentialHint.isPresent()) {
             // Reported here rather than thrown at construction, so a missing key is an actionable
             // turn failure instead of a context that refuses to start.
@@ -265,15 +281,23 @@ public final class OpenAiCompatibleModelProvider implements ModelProvider {
 
         String body;
         try {
-            body = mapper.writeValueAsString(toWireRequest(request));
+            Map<String, Object> wire = toWireRequest(request);
+            if (streaming) {
+                wire.put("stream", true);
+                // Ask for the usage chunk at the end of the stream. OpenAI, OpenRouter, vLLM and
+                // Ollama honour it; servers that do not simply omit usage, and accounting falls
+                // back to zero rather than guessing.
+                wire.put("stream_options", Map.of("include_usage", true));
+            }
+            body = mapper.writeValueAsString(wire);
         } catch (RuntimeException e) {
             return Result.err(ProviderFailure.of(
                     ProviderFailure.Kind.INVALID_REQUEST, "could not encode request"));
         }
 
-        log.debug("{}: POST {} model {} ({} messages, {} tools, {} header(s))",
+        log.debug("{}: POST {} model {} ({} messages, {} tools, {} header(s), streaming {})",
                 id, endpoint, request.model(), request.messages().size(),
-                request.tools().size(), extraHeaders.size());
+                request.tools().size(), extraHeaders.size(), streaming);
         if (log.isTraceEnabled()) {
             // The body's message content already passed the kernel's redaction on its way into
             // the transcript; the Authorization header is never logged.
@@ -284,12 +308,29 @@ public final class OpenAiCompatibleModelProvider implements ModelProvider {
                 .timeout(TIMEOUT)
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(body));
+        if (streaming) {
+            http.header("Accept", "text/event-stream");
+        }
         apiKey.ifPresent(key -> http.header("Authorization", "Bearer " + key));
         extraHeaders.forEach(http::header);
+        return Result.ok(new Prepared(toolNames, http.build()));
+    }
+
+    // --- buffered mode ---
+
+    @Override
+    public Result<ModelResponse, ProviderFailure> complete(ModelRequest request) {
+        Objects.requireNonNull(request, "request");
+
+        Result<Prepared, ProviderFailure> prepared = prepare(request, false);
+        if (prepared instanceof Result.Err<Prepared, ProviderFailure> err) {
+            return Result.err(err.error());
+        }
+        Prepared ready = ((Result.Ok<Prepared, ProviderFailure>) prepared).value();
 
         HttpResponse<String> response;
         try {
-            response = client.send(http.build(), HttpResponse.BodyHandlers.ofString());
+            response = client.send(ready.http(), HttpResponse.BodyHandlers.ofString());
         } catch (IOException e) {
             log.debug("{}: transport failure ({})", id, e.getClass().getSimpleName());
             return Result.err(ProviderFailure.of(ProviderFailure.Kind.TRANSPORT, "transport failure"));
@@ -306,7 +347,7 @@ public final class OpenAiCompatibleModelProvider implements ModelProvider {
             return Result.err(failure);
         }
         try {
-            ModelResponse decoded = fromWireResponse(response.body(), request.model(), toolNames);
+            ModelResponse decoded = fromWireResponse(response.body(), request.model(), ready.toolNames());
             log.debug("{}: decoded reply from {} (stop {}, in {} out {} tokens, {} tool use(s))",
                     id, decoded.modelId(), decoded.stopReason(), decoded.usage().inputTokens(),
                     decoded.usage().outputTokens(), decoded.toolUses().size());
@@ -316,6 +357,237 @@ public final class OpenAiCompatibleModelProvider implements ModelProvider {
             log.debug("{}: unparseable response ({})", id, e.getClass().getSimpleName());
             return Result.err(ProviderFailure.of(
                     ProviderFailure.Kind.UPSTREAM, "unparseable response"));
+        }
+    }
+
+    // --- streaming mode ---
+
+    /**
+     * Streams over server-sent events.
+     *
+     * <p>Same request as {@link #complete} plus {@code stream: true}; the reply arrives as
+     * {@code data:} lines, each a chunk with a {@code delta} of prose and/or partial tool calls,
+     * ending with {@code data: [DONE]}. Prose deltas reach the sink as they arrive. Tool-call
+     * arguments do not: they stream as fragments of JSON, unparseable until the last one lands,
+     * so the sink is told a call <em>started</em> and gets the complete call in the final
+     * response, which is the same {@link ModelResponse} the buffered path would have produced.
+     *
+     * <p>A failure once bytes have started flowing is reported like any other transport failure.
+     * The failover chain knows not to retry a stream that already showed the user text.
+     */
+    @Override
+    public Result<ModelResponse, ProviderFailure> stream(
+            ModelRequest request, Consumer<StreamEvent> sink) {
+
+        Objects.requireNonNull(request, "request");
+        Objects.requireNonNull(sink, "sink");
+
+        Result<Prepared, ProviderFailure> prepared = prepare(request, true);
+        if (prepared instanceof Result.Err<Prepared, ProviderFailure> err) {
+            return Result.err(err.error());
+        }
+        Prepared ready = ((Result.Ok<Prepared, ProviderFailure>) prepared).value();
+
+        HttpResponse<InputStream> response;
+        try {
+            response = client.send(ready.http(), HttpResponse.BodyHandlers.ofInputStream());
+        } catch (IOException e) {
+            log.debug("{}: transport failure ({})", id, e.getClass().getSimpleName());
+            return Result.err(ProviderFailure.of(ProviderFailure.Kind.TRANSPORT, "transport failure"));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return Result.err(ProviderFailure.of(ProviderFailure.Kind.TRANSPORT, "interrupted"));
+        }
+
+        int status = response.statusCode();
+        log.debug("{}: HTTP {} (event stream)", id, status);
+        try (InputStream body = response.body()) {
+            if (status >= 400) {
+                String text = new String(body.readAllBytes(), StandardCharsets.UTF_8);
+                ProviderFailure failure = OpenAiCompatibleFailures.classify(status, text, mapper);
+                log.debug("{}: classified as {} (retryable={})", id, failure.kind(), failure.retryable());
+                return Result.err(failure);
+            }
+
+            StreamAssembler assembler = new StreamAssembler(request.model(), ready.toolNames(), sink);
+            readEvents(body, assembler);
+            ModelResponse assembled = assembler.finish();
+            log.debug("{}: stream complete from {} (stop {}, in {} out {} tokens, {} tool use(s), "
+                            + "{} chunk(s))",
+                    id, assembled.modelId(), assembled.stopReason(), assembled.usage().inputTokens(),
+                    assembled.usage().outputTokens(), assembled.toolUses().size(), assembler.chunks);
+            sink.accept(new StreamEvent.Completed(assembled));
+            return Result.ok(assembled);
+        } catch (IOException e) {
+            log.debug("{}: stream broke ({})", id, e.getClass().getSimpleName());
+            return Result.err(ProviderFailure.of(ProviderFailure.Kind.TRANSPORT, "stream interrupted"));
+        } catch (RuntimeException e) {
+            log.debug("{}: unparseable stream ({})", id, e.getClass().getSimpleName());
+            return Result.err(ProviderFailure.of(ProviderFailure.Kind.UPSTREAM, "unparseable stream"));
+        }
+    }
+
+    /**
+     * Reads server-sent events until {@code [DONE]} or end of stream.
+     *
+     * <p>Follows the SSE framing rather than assuming one line per event: an event's data may
+     * span several {@code data:} lines, is terminated by a blank line, and {@code event:},
+     * {@code id:}, and comment lines are ignored.
+     */
+    @SuppressWarnings("unchecked")
+    private void readEvents(InputStream body, StreamAssembler assembler) throws IOException {
+        BufferedReader reader = new BufferedReader(new InputStreamReader(body, StandardCharsets.UTF_8));
+        StringBuilder data = new StringBuilder();
+        String line;
+        while ((line = reader.readLine()) != null) {
+            if (line.isEmpty()) {
+                if (!dispatch(data, assembler)) {
+                    return;
+                }
+                continue;
+            }
+            if (line.startsWith("data:")) {
+                if (!data.isEmpty()) {
+                    data.append('\n');
+                }
+                data.append(line.substring("data:".length()).stripLeading());
+            }
+        }
+        dispatch(data, assembler);
+    }
+
+    /** Feeds one buffered event to the assembler. Returns false on the terminal sentinel. */
+    @SuppressWarnings("unchecked")
+    private boolean dispatch(StringBuilder data, StreamAssembler assembler) {
+        if (data.isEmpty()) {
+            return true;
+        }
+        String event = data.toString();
+        data.setLength(0);
+        if ("[DONE]".equals(event.strip())) {
+            return false;
+        }
+        assembler.accept(mapper.readValue(event, Map.class));
+        return true;
+    }
+
+    /**
+     * Rebuilds a complete response from streamed chunks.
+     *
+     * <p>Tool calls are keyed by the chunk's {@code index}: OpenAI's format sends a call's id and
+     * name in its first fragment and appends argument text in the rest, and several calls may
+     * interleave. Fragments are concatenated per index and parsed once, at the end.
+     */
+    private final class StreamAssembler {
+
+        private final String requestedModel;
+        private final Map<String, String> toolNames;
+        private final Consumer<StreamEvent> sink;
+
+        private final StringBuilder text = new StringBuilder();
+        private final Map<Integer, PartialToolCall> toolCalls = new TreeMap<>();
+        private String modelId;
+        private String finishReason;
+        private Usage usage = Usage.ZERO;
+        private int chunks;
+
+        private StreamAssembler(String requestedModel, Map<String, String> toolNames, Consumer<StreamEvent> sink) {
+            this.requestedModel = requestedModel;
+            this.toolNames = toolNames;
+            this.sink = sink;
+        }
+
+        @SuppressWarnings("unchecked")
+        void accept(Map<String, Object> chunk) {
+            chunks++;
+            if (chunk.get("model") instanceof String model && !model.isBlank()) {
+                modelId = model;
+            }
+            if (chunk.get("usage") instanceof Map<?, ?> reported) {
+                usage = toUsage((Map<String, Object>) reported);
+            }
+            if (!(chunk.get("choices") instanceof List<?> choices) || choices.isEmpty()) {
+                return; // the usage-only trailer, or a keepalive
+            }
+            Map<String, Object> choice = (Map<String, Object>) choices.get(0);
+            if (choice.get("finish_reason") instanceof String reason) {
+                finishReason = reason;
+            }
+            if (!(choice.get("delta") instanceof Map<?, ?> delta)) {
+                return;
+            }
+            if (delta.get("content") instanceof String piece && !piece.isEmpty()) {
+                text.append(piece);
+                sink.accept(new StreamEvent.TextDelta(piece));
+            }
+            if (delta.get("tool_calls") instanceof List<?> fragments) {
+                for (Object fragment : fragments) {
+                    if (fragment instanceof Map<?, ?> call) {
+                        acceptToolFragment((Map<String, Object>) call);
+                    }
+                }
+            }
+        }
+
+        @SuppressWarnings("unchecked")
+        private void acceptToolFragment(Map<String, Object> fragment) {
+            int index = fragment.get("index") instanceof Number n ? n.intValue() : 0;
+            PartialToolCall call = toolCalls.computeIfAbsent(index, ignored -> new PartialToolCall());
+            if (fragment.get("id") instanceof String callId && !callId.isBlank()) {
+                call.id = callId;
+            }
+            if (fragment.get("function") instanceof Map<?, ?> function) {
+                Map<String, Object> fn = (Map<String, Object>) function;
+                if (fn.get("name") instanceof String name && !name.isBlank()) {
+                    call.name = name;
+                }
+                if (fn.get("arguments") instanceof String piece) {
+                    call.arguments.append(piece);
+                }
+            }
+            if (!call.announced && call.id != null && call.name != null) {
+                call.announced = true;
+                sink.accept(new StreamEvent.ToolUseStarted(
+                        call.id, ToolNames.fromWire(call.name, toolNames)));
+            }
+        }
+
+        ModelResponse finish() {
+            List<ContentBlock> blocks = new ArrayList<>();
+            if (!text.isEmpty()) {
+                blocks.add(new ContentBlock.Text(text.toString()));
+            }
+            for (Map.Entry<Integer, PartialToolCall> entry : toolCalls.entrySet()) {
+                PartialToolCall call = entry.getValue();
+                if (call.name == null) {
+                    continue; // a fragment with no name is not a call
+                }
+                Map<String, Object> function = new LinkedHashMap<>();
+                function.put("name", call.name);
+                function.put("arguments", call.arguments.toString());
+                Map<String, Object> wire = new LinkedHashMap<>();
+                wire.put("id", call.id != null ? call.id : "call_" + entry.getKey());
+                wire.put("function", function);
+                blocks.add(toToolUse(wire, toolNames));
+            }
+            if (blocks.isEmpty()) {
+                blocks.add(new ContentBlock.Text(""));
+            }
+            StopReason stop = finishReason != null
+                    ? toStopReason(finishReason)
+                    : (toolCalls.isEmpty() ? StopReason.END_TURN : StopReason.TOOL_USE);
+            return new ModelResponse(
+                    new ChatMessage(ChatMessage.Role.ASSISTANT, blocks),
+                    stop,
+                    usage,
+                    modelId != null ? modelId : requestedModel);
+        }
+
+        private final class PartialToolCall {
+            String id;
+            String name;
+            final StringBuilder arguments = new StringBuilder();
+            boolean announced;
         }
     }
 

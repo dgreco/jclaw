@@ -13,6 +13,10 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.function.Function;
+import java.util.function.Consumer;
+import java.util.function.BooleanSupplier;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -69,8 +73,44 @@ public final class FailoverModelProvider implements ModelProvider {
     @Override
     public Result<ModelResponse, ProviderFailure> complete(ModelRequest request) {
         Objects.requireNonNull(request, "request");
-        Instant now = clock.instant();
+        return attempt(request, provider -> provider.complete(request), () -> false);
+    }
 
+    /**
+     * Streams through the first provider that accepts the model, with one extra rule.
+     *
+     * <p>A provider that fails <em>after</em> it has already emitted prose must not be failed
+     * over: the user has seen the start of one answer, and a second provider would start another
+     * on top of it. The failure is returned as is, and the loop's own retry budget decides.
+     */
+    @Override
+    public Result<ModelResponse, ProviderFailure> stream(
+            ModelRequest request, Consumer<StreamEvent> sink) {
+        Objects.requireNonNull(request, "request");
+        Objects.requireNonNull(sink, "sink");
+        AtomicBoolean emitted = new AtomicBoolean(false);
+        Consumer<StreamEvent> guarded = event -> {
+            if (event instanceof StreamEvent.TextDelta || event instanceof StreamEvent.ToolUseStarted) {
+                emitted.set(true);
+            }
+            sink.accept(event);
+        };
+        return attempt(request, provider -> provider.stream(request, guarded), emitted::get);
+    }
+
+    /**
+     * Walks the chain.
+     *
+     * @param call           how to ask one provider
+     * @param partialOutput  whether the current attempt has already shown output to the caller,
+     *                       in which case a retryable failure is final anyway
+     */
+    private Result<ModelResponse, ProviderFailure> attempt(
+            ModelRequest request,
+            Function<ModelProvider, Result<ModelResponse, ProviderFailure>> call,
+            BooleanSupplier partialOutput) {
+
+        Instant now = clock.instant();
         ProviderFailure lastFailure = null;
         boolean attemptedAny = false;
 
@@ -88,7 +128,7 @@ public final class FailoverModelProvider implements ModelProvider {
             attemptedAny = true;
             log.debug("failover: trying '{}' for model {}", provider.id(), request.model());
 
-            Result<ModelResponse, ProviderFailure> result = provider.complete(request);
+            Result<ModelResponse, ProviderFailure> result = call.apply(provider);
             if (result.isOk()) {
                 cooldownUntil.remove(provider.id()); // recovered
                 log.debug("failover: '{}' succeeded", provider.id());
@@ -102,6 +142,11 @@ public final class FailoverModelProvider implements ModelProvider {
                 // A rejected request is rejected everywhere. Failing over would turn one bad
                 // request into N bad requests without changing the outcome.
                 log.debug("failover: '{}' failed non-retryably ({}); not advancing the chain",
+                        provider.id(), failure.kind());
+                return result;
+            }
+            if (partialOutput.getAsBoolean()) {
+                log.debug("failover: '{}' failed after streaming output ({}); not advancing the chain",
                         provider.id(), failure.kind());
                 return result;
             }
