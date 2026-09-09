@@ -53,4 +53,11 @@ final class ToolScopedContext implements CapabilityHandler.HandlerContext {
     public int maxOutputBytes() {
         return base.maxOutputBytes();
     }
+
+    @Override
+    public java.util.Map<String, String> stagedEnvironment() {
+        // Delegated, not defaulted: inheriting the empty default here would silently drop a
+        // staged credential for exactly the tools an operator bothered to narrow.
+        return base.stagedEnvironment();
+    }
 }

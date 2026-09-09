@@ -14,6 +14,7 @@ import io.jclaw.contracts.event.EventLog;
 import io.jclaw.contracts.event.JclawEvent;
 import io.jclaw.contracts.loop.GateKind;
 import io.jclaw.contracts.secret.SecretVault;
+import io.jclaw.contracts.secret.SecretVaults;
 import io.jclaw.contracts.turn.TurnRef.LoopGateRef;
 import io.jclaw.contracts.turn.TurnRef.LoopResultRef;
 import io.jclaw.contracts.turn.TurnScope;
@@ -21,6 +22,7 @@ import io.jclaw.domain.policy.RateLimit;
 import io.jclaw.domain.redact.Redaction;
 import io.jclaw.domain.safety.InjectionHeuristics;
 import io.jclaw.domain.secret.SecretInjection;
+import io.jclaw.domain.secret.SecretStaging;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -84,7 +86,7 @@ public final class DefaultCapabilityHost implements CapabilityHost {
     private final CapabilityPolicyResolver policies;
     private final CapabilityHandler.HandlerContext context;
     private final Supplier<Set<String>> knownSecrets;
-    private final SecretVault vault;
+    private final SecretVaults vaults;
     private final Clock clock;
 
     /** Dispatch instants per rate-limited capability; per process, like the limit itself. */
@@ -99,7 +101,8 @@ public final class DefaultCapabilityHost implements CapabilityHost {
             CapabilityHandler.HandlerContext context,
             Supplier<Set<String>> knownSecrets,
             Clock clock) {
-        this(handlers, approvals, results, events, policy, context, knownSecrets, SecretVault.empty(), clock);
+        this(handlers, approvals, results, events, CapabilityPolicyResolver.fixed(policy),
+                context, knownSecrets, SecretVaults.empty(), clock);
     }
 
     public DefaultCapabilityHost(
@@ -113,10 +116,9 @@ public final class DefaultCapabilityHost implements CapabilityHost {
             SecretVault vault,
             Clock clock) {
         this(handlers, approvals, results, events, CapabilityPolicyResolver.fixed(policy),
-                context, knownSecrets, vault, clock);
+                context, knownSecrets, SecretVaults.shared(vault), clock);
     }
 
-    /** @param policies the posture per scope, so one host can serve tenants trusted differently */
     public DefaultCapabilityHost(
             List<CapabilityHandler> handlers,
             ApprovalStore approvals,
@@ -127,10 +129,29 @@ public final class DefaultCapabilityHost implements CapabilityHost {
             Supplier<Set<String>> knownSecrets,
             SecretVault vault,
             Clock clock) {
+        this(handlers, approvals, results, events, policies, context, knownSecrets,
+                SecretVaults.shared(vault), clock);
+    }
+
+    /**
+     * @param policies the posture per scope, so one host can serve tenants trusted differently
+     * @param vaults   the credentials per tenant. The tenant is taken from the invocation's
+     *                 scope, never from an argument, so a run cannot name another's vault
+     */
+    public DefaultCapabilityHost(
+            List<CapabilityHandler> handlers,
+            ApprovalStore approvals,
+            CapabilityResultStore results,
+            EventLog events,
+            CapabilityPolicyResolver policies,
+            CapabilityHandler.HandlerContext context,
+            Supplier<Set<String>> knownSecrets,
+            SecretVaults vaults,
+            Clock clock) {
 
         Objects.requireNonNull(handlers, "handlers");
         this.policies = Objects.requireNonNull(policies, "policies");
-        this.vault = Objects.requireNonNull(vault, "vault");
+        this.vaults = Objects.requireNonNull(vaults, "vaults");
         this.handlers = index(handlers);
         this.approvals = Objects.requireNonNull(approvals, "approvals");
         this.results = Objects.requireNonNull(results, "results");
@@ -322,6 +343,10 @@ public final class DefaultCapabilityHost implements CapabilityHost {
         // fingerprinted, stored, and described to a human.
         CapabilityInvocation forLane = invocation;
         Set<String> leased = new HashSet<>();
+        // The tenant comes from the scope, which was fixed at admission and is not something
+        // the model can write. Naming another tenant's vault is therefore not a check that
+        // could fail; there is no argument that would express it.
+        SecretVault vault = vaults.forTenant(invocation.scope().tenant());
         Set<SecretVault.SecretName> references = SecretInjection.references(invocation.arguments());
         if (!references.isEmpty()) {
             Map<SecretVault.SecretName, String> values = new HashMap<>();
@@ -347,6 +372,41 @@ public final class DefaultCapabilityHost implements CapabilityHost {
                     invocation.scope(), invocation.run());
             for (SecretVault.SecretName name : references) {
                 events.append(new JclawEvent.SecretInjected(clock.instant(), invocation.run(), descriptor.id(), name.value()));
+            }
+        }
+
+        // Staging is the other handoff: a value that goes into a child process's environment and
+        // never into an argument, because an argument becomes a command line and a command line
+        // is readable by every process on the machine. The names stay in the invocation; only the
+        // values move, and only onto the context for this one call.
+        Result<Map<String, SecretVault.SecretName>, String> requested =
+                SecretStaging.requested(invocation.arguments().get(SecretStaging.ARGUMENT));
+        if (requested.isErr()) {
+            return denied(invocation, descriptor, requested.errorAsOptional().orElse("secret_env_invalid"));
+        }
+        Map<String, SecretVault.SecretName> wanted = requested.orElseThrow();
+        if (!wanted.isEmpty()) {
+            Map<String, String> staged = new LinkedHashMap<>();
+            for (Map.Entry<String, SecretVault.SecretName> entry : wanted.entrySet()) {
+                Optional<SecretVault.Lease> lease = vault.lease(entry.getValue());
+                if (lease.isEmpty()) {
+                    log.debug("capability {}: staged secret {} unknown -> denied",
+                            descriptor.id().value(), entry.getValue().value());
+                    return denied(invocation, descriptor, "secret_unknown");
+                }
+                Optional<String> refusal = SecretStaging.refuse(lease.get().info().binding(), descriptor.id());
+                if (refusal.isPresent()) {
+                    log.debug("capability {}: staged secret {} refused ({})",
+                            descriptor.id().value(), entry.getValue().value(), refusal.get());
+                    return denied(invocation, descriptor, refusal.get());
+                }
+                staged.put(entry.getKey(), lease.get().value());
+                leased.add(lease.get().value());
+            }
+            scoped = new StagedContext(scoped, staged);
+            for (SecretVault.SecretName name : wanted.values()) {
+                events.append(new JclawEvent.SecretInjected(
+                        clock.instant(), invocation.run(), descriptor.id(), name.value()));
             }
         }
 

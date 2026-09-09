@@ -29,6 +29,21 @@ public final class Schemas {
         return schema;
     }
 
+    /**
+     * A free-form object property whose values are strings: a map the caller fills in.
+     *
+     * <p>{@code additionalProperties} is a schema rather than {@code false} here, which is the
+     * opposite of {@link #object(Map, List)} and deliberately so: the keys are the caller's to
+     * choose (environment variable names, say), and only their shape is fixed.
+     */
+    public static Map<String, Object> stringMap(String description) {
+        Map<String, Object> property = new LinkedHashMap<>();
+        property.put("type", "object");
+        property.put("description", description);
+        property.put("additionalProperties", Map.of("type", "string"));
+        return property;
+    }
+
     /** A string property. */
     public static Map<String, Object> string(String description) {
         Map<String, Object> property = new LinkedHashMap<>();

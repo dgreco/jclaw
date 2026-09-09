@@ -117,6 +117,15 @@ native-image:
     - $JC extensions sign $SMOKE/pkg --key $SMOKE/keys/publisher.key
     - $JC extensions install $SMOKE/pkg --jclaw.trusted-publishers.ci="$(cat $SMOKE/keys/publisher.pub)"
     - $JC extensions list | grep -q VERIFIED
+    # Secret staging: a credential that reaches a child process's environment and never the
+    # command line. AES-GCM is already covered above; what is new here is the binding kind and
+    # the picocli flag, both of which AOT could plausibly have dropped.
+    - printf 'ghp-ci-staged-0123456789' | $JC secrets set ci-gh --capability builtin.shell --subprocess
+    - $JC secrets list | grep -q 'subprocess environment'
+    - $JC run "stage it" '--jclaw.mock-script[0]=tool:builtin.shell:command=printf %s "$CI_GH",secret_env={"CI_GH":"ci-gh"}' '--jclaw.mock-script[1]=text:done'
+    - $JC status -n 8 | grep -q secret.injected
+    - "! grep -rq ghp-ci-staged-0123456789 $SMOKE/state"   # the value is in no store
+    - $JC run "leak scan" --jclaw.hooks=budget-notice,secret-leak-scan --jclaw.mock-script=text:done
     # Registry: an index served from a file:// URL is refused by the egress guard, so the
     # reachable half is checked instead — a profile applied to the package just installed, and
     # the message a missing registry setting produces. Both exercise the picocli subcommands and

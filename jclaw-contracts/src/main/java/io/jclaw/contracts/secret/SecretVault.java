@@ -48,6 +48,19 @@ public interface SecretVault {
      * @param hosts exact host names, or {@code *.suffix} patterns; never empty
      */
     record Binding(CapabilityId capability, Set<String> hosts) {
+
+        /**
+         * The reserved host meaning "not a URL target at all".
+         *
+         * <p>A secret bound to it is for a subprocess environment, where there is no host to
+         * check because a child process can reach anything. {@link #permitsHost} therefore never
+         * matches it — including against a URL whose authority is literally {@code *}, which is
+         * a string a model can write and a manual URL parser will happily hand back. Without that
+         * exclusion the two handoffs would meet: a credential an operator staged for {@code gh}
+         * could be substituted into an argument, and an argument becomes a command line.
+         */
+        public static final String SUBPROCESS = "*";
+
         public Binding {
             Objects.requireNonNull(capability, "capability");
             hosts = Set.copyOf(Objects.requireNonNull(hosts, "hosts"));
@@ -65,8 +78,14 @@ public interface SecretVault {
         public boolean permitsHost(String host) {
             Objects.requireNonNull(host, "host");
             String lower = host.toLowerCase(java.util.Locale.ROOT);
+            if (lower.equals(SUBPROCESS)) {
+                return false;
+            }
             for (String bound : hosts) {
                 String candidate = bound.toLowerCase(java.util.Locale.ROOT);
+                if (candidate.equals(SUBPROCESS)) {
+                    continue;
+                }
                 if (candidate.startsWith("*.")) {
                     if (lower.endsWith(candidate.substring(1)) || lower.equals(candidate.substring(2))) {
                         return true;

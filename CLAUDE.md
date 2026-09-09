@@ -21,7 +21,7 @@ jclaw is a Java/Spring Boot reimplementation of the **architecture** of
 untrusted-`LoopExit` trust model, and the `CapabilityHost` authority boundary are faithful; the
 feature surface is a fraction of IronClaw's. See **Not built yet** for the honest list.
 
-314 tests pass across 9 modules, including 15 machine-checked architecture rules.
+332 tests pass across 9 modules, including 15 machine-checked architecture rules.
 
 ## Commands
 
@@ -64,7 +64,7 @@ The `native` profile lives in `jclaw-app/pom.xml`. The Boot parent contributes o
 | `mcp add\|list\|remove\|toggle\|test\|refresh` | external MCP tool servers over stdio or streamable HTTP; tools, resources, and prompts; started on first use from a cached surface |
 | `recover` | reconcile runs whose worker died |
 | `retain [--dry-run]` | drop old rows of finished runs from results, events, checkpoints |
-| `secrets set\|list\|remove` | encrypted vault of credentials tools use by `{{secret:NAME}}` reference, bound to one capability and a host list |
+| `secrets set\|list\|remove` | encrypted vault of credentials tools use by `{{secret:NAME}}` reference, bound to one capability and either a host list or `--subprocess` (staged into a child's environment, never an argument); one vault per tenant |
 | `tools` | capability surface with effect/trust/unattended |
 | `status [--run id [--trace]]` | recent activity from the event log, or one run's projection, or its spans |
 | `doctor` | config + security posture; non-zero on real problems |
@@ -263,11 +263,22 @@ the Anthropic SDK, and tool lanes may not read the process environment.
   `McpCredentials` leases the values in the app layer when the server starts; an HTTP server's
   bearer token is leased the same way. A secret used this way must be bound to `mcp.connect`,
   and to the declared hosts when the package declares any.
-- `tools` — no adapter holds a `SecretVault` handle; `HandlerContext` has no method to obtain one.
-  The kernel host substitutes `{{secret:NAME}}` references into the arguments a lane receives at
+- `tools` — no adapter holds a `SecretVault` handle; `HandlerContext` has no method to obtain
+  one. There are two handoffs, both decided by the kernel and neither reversible by a lane.
+  **Substitution:** the host replaces `{{secret:NAME}}` in the arguments a lane receives at
   dispatch, only when the secret's binding names that capability and every URL host in the
-  arguments; the fingerprint, approval prompt, checkpoints, and events keep the reference form,
-  and the leased value joins that call's redaction set.
+  arguments. **Staging:** for a `secret_env` request the host puts values on
+  `HandlerContext.stagedEnvironment()` — a map for this one call, chosen by the request and
+  permitted by a binding whose sole host is the reserved `*`, so a child process gets a
+  credential without it ever becoming a command line. `stagedEnvironment` is values, not a
+  lookup: a lane cannot ask for what it was not given, ask twice, or enumerate. The two are
+  disjoint because `Binding.permitsHost` never matches `*` — a staged secret cannot be
+  substituted and a host-bound one cannot be staged. Either way the fingerprint, approval
+  prompt, checkpoints, and events keep the name, and the leased value joins that call's
+  redaction set.
+- The vault is per tenant (`SecretVaults.forTenant`), resolved from the invocation's
+  `TurnScope` at dispatch. The tenant is fixed at admission, so naming another tenant's vault is
+  not a check that could fail — there is no argument that expresses it.
 - Events carry ids, refs, enums, and counters. There is no record component for a prompt, a tool
   argument, or a host path — redaction is structural, not remembered.
 - `HandlerError` separates `Denied` (a guard refused) from `Failed` (the lane broke). Collapsing
@@ -435,9 +446,11 @@ architecture and most runtime mechanisms are equivalent, the breadth is not. PAR
   PKCE, per-tenant policy and token budgets, and agents that give `TurnScope.agent()` meaning.
   There is no user directory, no group or team, no per-tenant vault, and the id token's
   signature is not verified because the code flow authenticates it by channel.
-- **Secrets beyond one tool call** — the vault leases values into `http_fetch` headers (and any
-  capability a binding names) but there is no staged handoff to subprocesses, no leak scan of
-  outbound model requests, and no per-tenant vaults.
+- **Secret custody breadth** — values are leased into arguments under a capability + host
+  binding, staged into a child's environment under a `--subprocess` binding, scanned out of
+  outbound model requests by the optional `secret-leak-scan` hook, and held in a vault per
+  tenant. Every tenant's vault shares one encryption key, there is no rotation or expiry, and
+  the leak scan is an exact-substring match that ignores values under eight characters.
 - **SQL beyond one table** — `storage=sql` keeps every store's rows in `jclaw_rows` with
   versioned migrations; there are no per-concept tables, no materialised projections (folds run
   on demand over indexed reads), and no connection pool (a connection per operation).

@@ -620,10 +620,22 @@ public class JclawConfiguration {
      * command hold this bean: tool lanes and providers are barred from it by the dependency law.
      */
     @Bean
-    public SecretVault secretVault(JclawProperties properties, StorageBackend backend, Clock clock) {
+    public io.jclaw.app.runtime.TenantVaults tenantVaults(
+            JclawProperties properties, StorageBackend backend, Clock clock) {
         byte[] key = VaultKey.parse(System.getenv("JCLAW_VAULT_KEY"))
                 .orElseGet(() -> VaultKey.loadOrCreate(properties.vaultKeyPath()));
-        return new FileSecretVault(backend.open("secrets", properties.secretsPath()), key, clock);
+        return new io.jclaw.app.runtime.TenantVaults(backend, properties.secretsPath(), key, clock);
+    }
+
+    /**
+     * The default tenant's vault: what {@code jclaw secrets} reads and writes.
+     *
+     * <p>The CLI has one tenant, so this is the whole vault there. Under {@code serve} it is one
+     * of several, and the kernel picks per run from the scope rather than from this bean.
+     */
+    @Bean
+    public SecretVault secretVault(io.jclaw.app.runtime.TenantVaults vaults) {
+        return vaults.primary();
     }
 
     @Bean
@@ -634,7 +646,7 @@ public class JclawConfiguration {
             EventLog eventLog,
             CapabilityPolicyResolver capabilityPolicyResolver,
             CapabilityHandler.HandlerContext handlerContext,
-            SecretVault secretVault,
+            io.jclaw.app.runtime.TenantVaults tenantVaults,
             Clock clock) {
 
         return new DefaultCapabilityHost(
@@ -647,7 +659,7 @@ public class JclawConfiguration {
                 // Credentials the redactor should mask if a tool ever echoes them back. Read
                 // lazily so a key exported after startup is still covered.
                 () -> credentialValues(),
-                secretVault,
+                tenantVaults,
                 clock);
     }
 
@@ -771,13 +783,17 @@ public class JclawConfiguration {
      * which is the seam a plugin uses.
      */
     @Bean
-    public List<LoopHook> loopHooks(JclawProperties properties, java.util.Optional<List<LoopHook>> extraHooks) {
+    public List<LoopHook> loopHooks(JclawProperties properties, java.util.Optional<List<LoopHook>> extraHooks,
+            SecretVault secretVault) {
         List<LoopHook> hooks = new ArrayList<>();
         for (String id : JclawProperties.nonBlank(properties.hooks())) {
             switch (id) {
                 case BudgetNoticeHook.ID -> hooks.add(new BudgetNoticeHook());
+                case io.jclaw.app.runtime.SecretLeakHook.ID ->
+                        hooks.add(new io.jclaw.app.runtime.SecretLeakHook(secretVault));
                 default -> throw new IllegalArgumentException(
-                        "unknown hook '" + id + "' in jclaw.hooks; known: " + BudgetNoticeHook.ID);
+                        "unknown hook '" + id + "' in jclaw.hooks; known: " + BudgetNoticeHook.ID
+                                + ", " + io.jclaw.app.runtime.SecretLeakHook.ID);
             }
         }
         extraHooks.ifPresent(hooks::addAll);
@@ -808,14 +824,15 @@ public class JclawConfiguration {
                 String[] parts = entry.substring("tool:".length()).split(":", 2);
                 java.util.Map<String, Object> arguments = new java.util.LinkedHashMap<>();
                 if (parts.length == 2 && !parts[1].isBlank()) {
-                    for (String pair : parts[1].split(",")) {
+                    for (String pair : splitArguments(parts[1])) {
                         int equals = pair.indexOf('=');
                         if (equals < 0) {
                             throw new IllegalArgumentException(
                                     "jclaw.mock-script entry " + index + ": argument '" + pair
                                             + "' is not k=v");
                         }
-                        arguments.put(pair.substring(0, equals).trim(), pair.substring(equals + 1));
+                        arguments.put(pair.substring(0, equals).trim(),
+                                parseArgumentValue(pair.substring(equals + 1), index));
                     }
                 }
                 script.add(new MockModelProvider.Script.ToolCall("mock" + index, parts[0], arguments));
@@ -826,6 +843,57 @@ public class JclawConfiguration {
             }
         }
         return List.copyOf(script);
+    }
+
+    /**
+     * Splits {@code k=v,k=v} on commas that are not inside a JSON value.
+     *
+     * <p>A flat split was enough while every argument was a string. It stopped being enough when
+     * a capability took a map — {@code secret_env={"A":"x","B":"y"}} would become three fragments,
+     * two of them not {@code k=v} — which made the whole staging path unreachable from the CLI,
+     * and the mock script is how the CLI is meant to be exercised without a network.
+     */
+    static List<String> splitArguments(String text) {
+        List<String> parts = new ArrayList<>();
+        int depth = 0;
+        boolean inString = false;
+        StringBuilder current = new StringBuilder();
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (inString) {
+                inString = c != '"' || (i > 0 && text.charAt(i - 1) == '\\');
+            } else if (c == '"') {
+                inString = true;
+            } else if (c == '{' || c == '[') {
+                depth++;
+            } else if (c == '}' || c == ']') {
+                depth--;
+            } else if (c == ',' && depth == 0) {
+                parts.add(current.toString());
+                current.setLength(0);
+                continue;
+            }
+            current.append(c);
+        }
+        if (!current.isEmpty()) {
+            parts.add(current.toString());
+        }
+        return parts;
+    }
+
+    /** A value is a string unless it opens a JSON object or array, in which case it is decoded. */
+    static Object parseArgumentValue(String value, int index) {
+        String trimmed = value.trim();
+        if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
+            return value;
+        }
+        try {
+            return tools.jackson.databind.json.JsonMapper.builder().build()
+                    .readValue(trimmed, Object.class);
+        } catch (RuntimeException e) {
+            throw new IllegalArgumentException(
+                    "jclaw.mock-script entry " + index + ": '" + trimmed + "' is not valid JSON");
+        }
     }
 
     /** Known credential values, masked wherever they appear in tool output. */

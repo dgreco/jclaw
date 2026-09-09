@@ -56,5 +56,21 @@ public interface CapabilityHandler {
 
         /** Maximum bytes a lane should return; larger payloads are truncated by the kernel. */
         int maxOutputBytes();
+
+        /**
+         * Credentials the kernel released into <em>this one call</em>, for a lane that starts a
+         * child process to put into its environment.
+         *
+         * <p>This is not a vault handle and cannot become one. It is a map of values the kernel
+         * already decided to release, for this invocation only, chosen by the staging request in
+         * the arguments and permitted by each secret's binding. A lane cannot ask for a secret it
+         * was not given, cannot ask again, and cannot enumerate what exists — which is the whole
+         * reason a lane is not allowed to hold the vault.
+         *
+         * <p>Empty for every lane that does not spawn anything, which is nearly all of them.
+         */
+        default java.util.Map<String, String> stagedEnvironment() {
+            return java.util.Map.of();
+        }
     }
 }

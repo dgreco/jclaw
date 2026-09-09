@@ -2,7 +2,7 @@
 
 An honest enumeration of what [IronClaw](https://github.com/nearai/ironclaw) (internally "Reborn") has that jclaw does not, and of what jclaw now has. jclaw is roughly 20k lines of Java (plus 6.5k of tests) against IronClaw's ~1.4M lines of Rust across ~63 crates. The **architecture** is equivalent — layer ladder, turn/run lifecycle, untrusted `LoopExit`, single `CapabilityHost` authority boundary, checkpoint-kind–driven recovery — and, after the September 2026 parity work, most of the runtime *mechanisms* are present in some form. What remains missing is breadth, not mechanism: the long tail catalogued in section 16. This file is the list, organised by IronClaw's own crate families so a gap can be traced to the crate that fills it upstream.
 
-Sources: IronClaw's `README.md`, `crates/Architecture.md`, and the `crates/` listing as of September 2026; jclaw's code on this checkout (314 tests, 0 failures). Where the upstream doc names a concept and jclaw has an equivalent under a different name, the mapping is given. Where the gap is uncertain it is marked *(unverified)*.
+Sources: IronClaw's `README.md`, `crates/Architecture.md`, and the `crates/` listing as of September 2026; jclaw's code on this checkout (332 tests, 0 failures). Where the upstream doc names a concept and jclaw has an equivalent under a different name, the mapping is given. Where the gap is uncertain it is marked *(unverified)*.
 
 Legend: ✅ at parity · 🟡 partial · ❌ missing · ➕ jclaw-only
 
@@ -180,7 +180,7 @@ At parity on the trust model and on the gate mechanics, and on tenant isolation;
 | Capability | IronClaw | jclaw |
 |---|---|---|
 | Encrypted secret vault (AES-256-GCM), leased/staged per runtime handoff | ✅ `ironclaw_secrets` | ✅ `FileSecretVault`: AES-256-GCM per value with the name as associated data, append-only JSONL, key from an owner-only file or `JCLAW_VAULT_KEY`. Leased per capability call, and staged into an MCP server's process environment at start (`McpCredentials`) or into an HTTP server's bearer header, under a `mcp.connect` binding. No store anywhere holds a credential value |
-| Secret references usable by tools without exposure | ✅ | ✅ `{{secret:NAME}}` in any tool argument, bound to one capability and a host list; `jclaw secrets set/list/remove`; the system prompt lists names and bindings, never values |
+| Secret references usable by tools without exposure | ✅ | ✅ `{{secret:NAME}}` in any tool argument, bound to one capability and a host list; `--subprocess` bindings stage a value into a child's environment instead, where an argument would become a command line; `secret-leak-scan` rewrites any value out of an outbound model request; one vault per tenant. `jclaw secrets set/list/remove`; the system prompt lists names and bindings, never values |
 | Multi-user identity (`ironclaw_identity`), per-user scoping | ✅ | 🟡 `jclaw.serve-users` names users with static bearer tokens; each is the tenant of its runs, with namespaced threads (`alice:work`), its own memories and approvals, and read access only to its own runs and gates. The operator (`serve-token`) is the `local` tenant the CLI uses and reads everything. No user directory, roles, or per-user policy |
 | Auth domain (`ironclaw_auth`): Google OAuth, NEAR AI login, WebUI login tokens | ✅ | ✅ an OpenID Connect authorization code flow with PKCE against any discovered provider, plus operator-minted sessions. Sessions name a person, carry a role, expire, and are stored as hashes. The id token is checked for issuer, audience, and expiry; its signature is not, since the code flow delivers it over an authenticated back channel |
 | Auth gates that park a run until credentials arrive | ✅ | ✅ (see §4); cleared by setting the credential and resuming, shown by `approvals list` |
@@ -292,10 +292,11 @@ Ranked, again, by what a deployment beyond one operator's machine would hit firs
    profiles enable exactly one named set. Still open under this heading: a channel package kind,
    a publisher-side `publish`, and a signed index (today the index is trusted only for the
    digest, which the download must match).
-5. **Secrets beyond one call** (§9, §10) — a vault secret is leased into one capability
-   invocation's arguments under a capability + host binding. There is no staged handoff into a
-   subprocess environment, no leak scan of outbound model requests for secrets that arrived
-   through a tool, and no per-tenant vault.
+5. ~~**Secrets beyond one call**~~ — closed: a `--subprocess` binding stages a value into a
+   child process's environment and never into an argument, the optional `secret-leak-scan` hook
+   rewrites any vault value out of an outbound request, and each tenant gets its own vault.
+   Still open under this heading: one encryption key across tenants, no rotation or expiry, and
+   a scan that matches exact substrings of eight characters or more.
 6. **SQL beyond one table** (§11) — every store's rows live in `jclaw_rows` with versioned
    migrations. Projections are folded on demand rather than materialised, there are no
    per-concept tables, and a connection is opened per operation.

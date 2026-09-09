@@ -53,9 +53,17 @@ public class SecretsCommand implements Runnable {
                 description = "The one capability the secret may be injected into, e.g. builtin.http_fetch.")
         private String capability;
 
-        @Option(names = "--host", required = true, split = ",",
-                description = "Hosts the capability may send it to (exact, or *.suffix). Comma-separated.")
-        private String[] hosts;
+        @Option(names = "--host", split = ",",
+                description = "Hosts the capability may send it to (exact, or *.suffix). Comma-separated. "
+                        + "Required unless --subprocess is given.")
+        private String[] hosts = new String[0];
+
+        @Option(names = "--subprocess",
+                description = "Bind for a child process's environment instead of a host. The value is "
+                        + "staged into the environment of a command the capability runs and never into "
+                        + "an argument. There is no host rule, because a child process can reach "
+                        + "anywhere: this is the operator saying that code may hold the credential.")
+        private boolean subprocess;
 
         public Set(SecretVault vault) {
             this.vault = vault;
@@ -68,9 +76,17 @@ public class SecretsCommand implements Runnable {
                 System.err.println("no value given: pipe it on stdin or type it at the prompt");
                 return 1;
             }
-            java.util.Set<String> bound = new LinkedHashSet<>(Arrays.asList(hosts));
+            if (subprocess == (hosts.length > 0)) {
+                System.err.println("jclaw: give either --host or --subprocess, not both and not neither");
+                return 1;
+            }
+            java.util.Set<String> bound = subprocess
+                    ? java.util.Set.of(Binding.SUBPROCESS)
+                    : new LinkedHashSet<>(Arrays.asList(hosts));
             vault.put(new SecretName(name), value, new Binding(CapabilityId.of(capability), bound));
-            System.out.println("stored " + name + " for " + capability + " to " + String.join(", ", new TreeSet<>(bound)));
+            System.out.println("stored " + name + " for " + capability
+                    + (subprocess ? " as a subprocess environment variable"
+                                  : " to " + String.join(", ", new TreeSet<>(bound))));
             return 0;
         }
 
@@ -105,9 +121,12 @@ public class SecretsCommand implements Runnable {
                 return 0;
             }
             for (SecretVault.SecretInfo info : infos) {
+                java.util.Set<String> hosts = info.binding().hosts();
+                String where = hosts.equals(java.util.Set.of(Binding.SUBPROCESS))
+                        ? "(subprocess environment)"
+                        : String.join(", ", new TreeSet<>(hosts));
                 System.out.printf("%-24s %-24s %s  (%s)%n", info.name().value(),
-                        info.binding().capability().value(),
-                        String.join(", ", new TreeSet<>(info.binding().hosts())), info.createdAt());
+                        info.binding().capability().value(), where, info.createdAt());
             }
             return 0;
         }
