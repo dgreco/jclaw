@@ -60,6 +60,15 @@ import java.util.Map;
  * @param retentionCheckpoints the same for {@code checkpoints.jsonl}
  * @param serveToken           bearer token {@code jclaw serve} requires on every request; blank
  *                             means no authentication, which is only sensible on loopback
+ * @param shellBackend         {@code host} (default) runs {@code builtin.shell} as a child
+ *                             process; {@code docker} runs it in a container per
+ *                             {@code jclaw.sandbox-*}
+ * @param sandboxDocker        the docker (or compatible) binary to invoke
+ * @param sandboxImage         the image commands run in
+ * @param sandboxNetwork       container network: {@code none} (default) or a docker network name
+ * @param sandboxMemory        container memory limit, e.g. {@code 512m}
+ * @param sandboxCpus          container CPU limit, e.g. {@code 1}
+ * @param sandboxPidsLimit     container pid limit
  */
 @ConfigurationProperties(prefix = "jclaw")
 public record JclawProperties(
@@ -155,7 +164,21 @@ public record JclawProperties(
 
         @DefaultValue("7d") Duration retentionCheckpoints,
 
-        @DefaultValue("") String serveToken) {
+        @DefaultValue("") String serveToken,
+
+        @DefaultValue("host") String shellBackend,
+
+        @DefaultValue("docker") String sandboxDocker,
+
+        @DefaultValue("alpine:3.20") String sandboxImage,
+
+        @DefaultValue("none") String sandboxNetwork,
+
+        @DefaultValue("512m") String sandboxMemory,
+
+        @DefaultValue("1") String sandboxCpus,
+
+        @DefaultValue("256") int sandboxPidsLimit) {
 
     public JclawProperties {
         // Constructor binding leaves an absent map null; an absent map means no limits.
@@ -205,7 +228,14 @@ public record JclawProperties(
                 Duration.ofDays(14),
                 Duration.ofDays(30),
                 Duration.ofDays(7),
-                "");
+                "",
+                "host",
+                "docker",
+                "alpine:3.20",
+                "none",
+                "512m",
+                "1",
+                256);
     }
 
     /**

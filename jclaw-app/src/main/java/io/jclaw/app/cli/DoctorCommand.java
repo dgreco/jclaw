@@ -81,6 +81,10 @@ public class DoctorCommand implements Callable<Integer> {
         System.out.println("  approval ttl         " + properties.approvalTtl());
         System.out.println("  context summaries    " + (properties.contextSummarise() ? "on" : "off"));
         System.out.println("  subagents            " + (properties.subagentsAsync() ? "async (needs a worker)" : "sync"));
+        System.out.println("  shell backend        " + ("docker".equals(properties.shellBackend())
+                ? "docker (" + properties.sandboxImage() + ", network " + properties.sandboxNetwork()
+                        + ", " + properties.sandboxMemory() + ", " + properties.sandboxCpus() + " cpu)"
+                : "host (no sandbox)"));
         System.out.println("  retention            results " + properties.retentionResults()
                 + ", events " + properties.retentionEvents() + ", checkpoints " + properties.retentionCheckpoints()
                 + " (0 = keep forever; transcript is never swept)");
@@ -101,7 +105,9 @@ public class DoctorCommand implements Callable<Integer> {
         }
         if (policy.autoApproveCeiling().atLeast(io.jclaw.contracts.capability.EffectClass.PROCESS)) {
             warnings.add("shell execution runs without approval; a prompt injection becomes "
-                    + "arbitrary code execution in this mode");
+                    + ("docker".equals(properties.shellBackend())
+                            ? "code execution inside the sandbox container in this mode"
+                            : "arbitrary code execution on this host in this mode; consider jclaw.shell-backend=docker"));
         }
 
         System.out.println();

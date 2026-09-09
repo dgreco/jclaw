@@ -59,7 +59,14 @@ class LocalProviderWiringTest {
                 java.time.Duration.ofDays(14),
                 java.time.Duration.ofDays(30),
                 java.time.Duration.ofDays(7),
-                "");
+                "",
+                "host",
+                "docker",
+                "alpine:3.20",
+                "none",
+                "512m",
+                "1",
+                256);
     }
 
     @Test

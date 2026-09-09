@@ -6,6 +6,7 @@ import io.jclaw.contracts.capability.CapabilityHandler;
 import io.jclaw.contracts.capability.CapabilityInvocation;
 import io.jclaw.contracts.capability.EffectClass;
 import io.jclaw.contracts.capability.HandlerError;
+import io.jclaw.domain.sandbox.SandboxSpec;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -13,11 +14,13 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Runs a shell command inside the workspace.
+ * Runs a shell command inside the workspace, on the host or in a container.
  *
  * <p>The most dangerous capability in the harness, and deliberately the least clever. It does
  * <em>not</em> try to parse commands, detect dangerous ones, or maintain a denylist of binaries —
@@ -33,6 +36,13 @@ import java.util.concurrent.TimeUnit;
  *   <li>a hard timeout, with the process tree destroyed on expiry;</li>
  *   <li>bounded output.</li>
  * </ul>
+ *
+ * <p>With a {@link SandboxSpec} the command additionally runs inside a container: no network,
+ * the workspace as the only mount, memory, CPU, and pid limits, a read-only root. That is the
+ * process backend IronClaw's sandbox lane selects by policy; here it is selected by
+ * configuration, and the host backend remains for machines without a container runtime. The
+ * timeout, environment scrub, and output bound apply to both, since the container runtime is
+ * itself a host process.
  *
  * <p>The environment scrub matters more than it looks. Without it, {@code env} is a credential
  * exfiltration tool and every other guard is decoration.
@@ -62,6 +72,23 @@ public final class ShellTool implements CapabilityHandler {
                                     "Seconds before the command is killed.", 1, MAX_TIMEOUT_SECONDS)),
                     List.of("command")));
 
+    private final Optional<SandboxSpec> sandbox;
+
+    /** Host backend: the command runs as a child of this process. */
+    public ShellTool() {
+        this(Optional.empty());
+    }
+
+    /** @param sandbox when present, every command runs in a container described by it */
+    public ShellTool(Optional<SandboxSpec> sandbox) {
+        this.sandbox = Objects.requireNonNull(sandbox, "sandbox");
+    }
+
+    /** Which backend this lane uses, for diagnostics. */
+    public String backend() {
+        return sandbox.map(spec -> "docker (" + spec.image() + ", network " + spec.network() + ")").orElse("host");
+    }
+
     @Override
     public CapabilityDescriptor descriptor() {
         return DESCRIPTOR;
@@ -80,7 +107,10 @@ public final class ShellTool implements CapabilityHandler {
     }
 
     private Result<String, HandlerError> run(String command, Path workdir, int timeoutSeconds) {
-        ProcessBuilder builder = new ProcessBuilder("/bin/sh", "-c", command);
+        List<String> argv = sandbox
+                .map(spec -> spec.argv(workdir, command))
+                .orElse(List.of("/bin/sh", "-c", command));
+        ProcessBuilder builder = new ProcessBuilder(argv);
         builder.directory(workdir.toFile());
         builder.redirectErrorStream(true); // interleaved, as a human would see it
 
@@ -107,7 +137,7 @@ public final class ShellTool implements CapabilityHandler {
                     : "exit status " + exitCode + "\n" + body);
 
         } catch (IOException e) {
-            return Result.err(HandlerError.failed("spawn_failed"));
+            return Result.err(HandlerError.failed(sandbox.isPresent() ? "sandbox_unavailable" : "spawn_failed"));
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return Result.err(HandlerError.failed("interrupted"));

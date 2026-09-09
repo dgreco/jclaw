@@ -129,7 +129,7 @@ public class JclawConfiguration {
         handlers.addAll(MemoryTools.all(memoryStore, clock, embeddingProvider));
         handlers.addAll(SkillTools.all(skillCatalog));
         handlers.addAll(TriggerTools.all(routineStore));
-        handlers.add(new ShellTool());
+        handlers.add(new ShellTool(sandboxSpec(properties)));
         handlers.add(new HttpTool());
         handlers.add(new SubagentTool(subagentHost, properties.subagentsAsync()));
         // External tools last: they are third-party and must never shadow a built-in. The
@@ -137,6 +137,24 @@ public class JclawConfiguration {
         // impossible anyway.
         handlers.addAll(mcp.handlers());
         return List.copyOf(handlers);
+    }
+
+    /**
+     * The shell lane's container contract, when configured.
+     *
+     * <p>{@code host} is the default because it needs nothing installed; {@code docker} is the
+     * posture for anything that runs commands the operator does not read first. A misspelt
+     * backend fails startup rather than silently running on the host.
+     */
+    static java.util.Optional<io.jclaw.domain.sandbox.SandboxSpec> sandboxSpec(JclawProperties properties) {
+        return switch (properties.shellBackend()) {
+            case "host" -> java.util.Optional.empty();
+            case "docker" -> java.util.Optional.of(new io.jclaw.domain.sandbox.SandboxSpec(
+                    properties.sandboxDocker(), properties.sandboxImage(), properties.sandboxNetwork(),
+                    properties.sandboxMemory(), properties.sandboxCpus(), properties.sandboxPidsLimit(), true));
+            default -> throw new IllegalArgumentException(
+                    "unknown jclaw.shell-backend '" + properties.shellBackend() + "'; expected host or docker");
+        };
     }
 
     /**
