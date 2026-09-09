@@ -10,6 +10,7 @@ import io.jclaw.contracts.model.ModelExchange.ModelRequest;
 import io.jclaw.contracts.model.ModelExchange.ModelResponse;
 import io.jclaw.domain.budget.Budget;
 import io.jclaw.domain.loop.LoopExecutionState.Phase;
+import io.jclaw.domain.prompt.ContextCompaction;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -267,11 +268,18 @@ public final class TurnMachine {
         return finish(state, LoopExit.Failed.of(FailureKind.DRIVER_PROTOCOL_VIOLATION, detail));
     }
 
+    /**
+     * The model's view of the conversation.
+     *
+     * <p>The state keeps every message; the request carries what the context policy admits. Doing
+     * this here, on every call, is what bounds a long tool-heavy run as well as a long thread:
+     * the seed is compacted at admission, but tool results accumulate inside a run too.
+     */
     private static ModelRequest buildRequest(LoopExecutionState state, LoopPolicy policy) {
         return new ModelRequest(
                 policy.model(),
                 policy.systemPrompt(),
-                state.messages(),
+                ContextCompaction.compact(state.messages(), policy.context()).messages(),
                 policy.tools(),
                 policy.maxOutputTokens(),
                 Optional.empty());

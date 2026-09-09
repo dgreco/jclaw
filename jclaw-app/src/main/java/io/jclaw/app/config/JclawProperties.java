@@ -22,6 +22,9 @@ import java.util.List;
  *                             it re-opens the SSRF surface the egress guard exists to close.
  * @param maxIterations        tick-cycle cap per run
  * @param maxTokens            token budget per run, 0 for unlimited
+ * @param contextMaxMessages   most recent transcript messages a model request may carry
+ * @param contextMaxTokens     estimated token budget (4 chars/token) for those messages; lower it
+ *                             for local models with small context windows
  * @param systemPrompt         system prompt prepended to every turn
  */
 @ConfigurationProperties(prefix = "jclaw")
@@ -70,6 +73,10 @@ public record JclawProperties(
 
         @DefaultValue("500000") long maxTokens,
 
+        @DefaultValue("200") int contextMaxMessages,
+
+        @DefaultValue("100000") int contextMaxTokens,
+
         @DefaultValue("You are jclaw, a helpful agent operating inside a bounded workspace. "
                 + "Use the provided tools when they help. Be concise and factual.")
         String systemPrompt,
@@ -107,6 +114,8 @@ public record JclawProperties(
                 false,
                 25,
                 500_000,
+                200,
+                100_000,
                 "You are jclaw, a helpful agent operating inside a bounded workspace.",
                 List.of());
     }

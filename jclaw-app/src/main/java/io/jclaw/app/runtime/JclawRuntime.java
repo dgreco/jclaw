@@ -23,6 +23,7 @@ import io.jclaw.domain.budget.Budget;
 import io.jclaw.domain.loop.LoopExecutionState;
 import io.jclaw.domain.loop.LoopPolicy;
 import io.jclaw.domain.loop.LoopStateCodec;
+import io.jclaw.domain.prompt.ContextPolicy;
 import io.jclaw.domain.prompt.PromptAssembly;
 import io.jclaw.contracts.skill.SkillCatalog;
 import io.jclaw.kernel.guard.WorkspaceGuard;
@@ -205,7 +206,8 @@ public class JclawRuntime {
                 clock.instant(), run, workerId, clock.instant().plus(LEASE_TTL)));
         log.debug("run {}: claimed by {} (lease {}s)", run.value(), workerId, LEASE_TTL.toSeconds());
 
-        LoopExecutionState initial = LoopExecutionState.start(seedMessages(thread, userText), budget());
+        LoopExecutionState initial =
+                LoopExecutionState.start(seedMessages(thread, userText, policy), budget());
         log.debug("run {}: seeded with {} message(s) of history; handing to interpreter",
                 run.value(), initial.messages().size());
         LoopExit exit = interpreter.run(run, scope, initial, policy, cancelled, hooks(run, streamSink));
@@ -410,7 +412,18 @@ public class JclawRuntime {
         List<ToolSpec> tools = capabilities.visibleSurface(scope).stream()
                 .map(CapabilityDescriptor::toToolSpec)
                 .toList();
-        return new LoopPolicy(model, systemPrompt, tools, 8192, 2);
+        return new LoopPolicy(model, systemPrompt, tools, 8192, 2, contextPolicy());
+    }
+
+    /**
+     * The context policy from configuration.
+     *
+     * <p>Not stored on the run: it bounds what the model sees, not what the run may do, so a
+     * resume picking up a retuned window is a presentation change, not an authority change. The
+     * same reasoning applies to the tool surface above.
+     */
+    private ContextPolicy contextPolicy() {
+        return new ContextPolicy(properties.contextMaxMessages(), properties.contextMaxTokens());
     }
 
     /**
@@ -427,9 +440,15 @@ public class JclawRuntime {
                 skills.list());
     }
 
-    /** Seeds the machine with prior conversation plus the new message. */
-    private List<ChatMessage> seedMessages(ThreadId thread, String userText) {
-        List<ChatMessage> history = threads.history(thread, 40).stream()
+    /**
+     * Seeds the machine with prior conversation plus the new message.
+     *
+     * <p>Reads as much history as the context policy could ever admit; the machine then compacts
+     * the view on every model call. Fetching more than the policy's message cap would only be
+     * dropped, and fetching less would starve a policy that has room.
+     */
+    private List<ChatMessage> seedMessages(ThreadId thread, String userText, LoopPolicy policy) {
+        List<ChatMessage> history = threads.history(thread, policy.context().maxMessages()).stream()
                 .map(ThreadService.ThreadMessage::message)
                 .toList();
         return history.isEmpty() ? List.of(ChatMessage.user(userText)) : history;

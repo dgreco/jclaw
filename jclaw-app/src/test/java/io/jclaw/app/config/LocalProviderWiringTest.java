@@ -40,6 +40,8 @@ class LocalProviderWiringTest {
                 false,
                 25,
                 500_000,
+                200,
+                100_000,
                 "system",
                 List.of());
     }

@@ -1,6 +1,7 @@
 package io.jclaw.domain.loop;
 
 import io.jclaw.contracts.model.ModelExchange.ToolSpec;
+import io.jclaw.domain.prompt.ContextPolicy;
 
 import java.util.List;
 import java.util.Objects;
@@ -20,18 +21,23 @@ import java.util.Objects;
  * @param tools                       capability surface published to the model
  * @param maxOutputTokens             per-call output cap
  * @param maxConsecutiveModelFailures retries before a run gives up on a flaky provider
+ * @param context                     how much history each model request may carry; applied by
+ *                                    the machine when it builds a request, so the loop state and
+ *                                    the transcript stay complete while the model's view is bounded
  */
 public record LoopPolicy(
         String model,
         String systemPrompt,
         List<ToolSpec> tools,
         int maxOutputTokens,
-        int maxConsecutiveModelFailures) {
+        int maxConsecutiveModelFailures,
+        ContextPolicy context) {
 
     public LoopPolicy {
         Objects.requireNonNull(model, "model");
         Objects.requireNonNull(systemPrompt, "systemPrompt");
         tools = List.copyOf(Objects.requireNonNull(tools, "tools"));
+        Objects.requireNonNull(context, "context");
         if (maxOutputTokens <= 0) {
             throw new IllegalArgumentException("maxOutputTokens must be positive");
         }
@@ -40,15 +46,33 @@ public record LoopPolicy(
         }
     }
 
+    /** Convenience with the default context policy. */
+    public LoopPolicy(
+            String model,
+            String systemPrompt,
+            List<ToolSpec> tools,
+            int maxOutputTokens,
+            int maxConsecutiveModelFailures) {
+        this(model, systemPrompt, tools, maxOutputTokens, maxConsecutiveModelFailures,
+                ContextPolicy.DEFAULT);
+    }
+
     public static LoopPolicy of(String model, String systemPrompt, List<ToolSpec> tools) {
         return new LoopPolicy(model, systemPrompt, tools, 4096, 2);
     }
 
     public LoopPolicy withTools(List<ToolSpec> tools) {
-        return new LoopPolicy(model, systemPrompt, tools, maxOutputTokens, maxConsecutiveModelFailures);
+        return new LoopPolicy(model, systemPrompt, tools, maxOutputTokens,
+                maxConsecutiveModelFailures, context);
     }
 
     public LoopPolicy withSystemPrompt(String systemPrompt) {
-        return new LoopPolicy(model, systemPrompt, tools, maxOutputTokens, maxConsecutiveModelFailures);
+        return new LoopPolicy(model, systemPrompt, tools, maxOutputTokens,
+                maxConsecutiveModelFailures, context);
+    }
+
+    public LoopPolicy withContext(ContextPolicy context) {
+        return new LoopPolicy(model, systemPrompt, tools, maxOutputTokens,
+                maxConsecutiveModelFailures, context);
     }
 }

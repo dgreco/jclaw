@@ -19,6 +19,7 @@ import io.jclaw.contracts.turn.TurnRef.LoopResultRef;
 import io.jclaw.domain.budget.Budget;
 import io.jclaw.domain.loop.LoopExecutionState.Phase;
 import io.jclaw.domain.loop.TurnMachine.LoopStep;
+import io.jclaw.domain.prompt.ContextPolicy;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -62,6 +63,36 @@ class TurnMachineTest {
 
     private static LoopStep step(LoopExecutionState state, Observation observation) {
         return TurnMachine.step(state, observation, POLICY, T0);
+    }
+
+    @Nested
+    @DisplayName("context policy")
+    class ContextPolicyView {
+
+        @Test
+        @DisplayName("the request carries the compacted view while the state keeps everything")
+        void requestIsCompactedStateIsNot() {
+            List<ChatMessage> longHistory = new ArrayList<>();
+            for (int i = 0; i < 10; i++) {
+                longHistory.add(ChatMessage.user("question " + i));
+                longHistory.add(ChatMessage.assistant("answer " + i));
+            }
+            longHistory.add(ChatMessage.user("latest"));
+            LoopExecutionState state = LoopExecutionState.start(longHistory, Budget.interactive(T0));
+            LoopPolicy narrow = POLICY.withContext(new ContextPolicy(3, 100_000));
+
+            LoopStep started = TurnMachine.step(state, new Observation.Start(), narrow, T0);
+            LoopStep called = TurnMachine.step(
+                    started.state(), checkpointed(CheckpointKind.BEFORE_MODEL), narrow, T0);
+
+            LoopDecision.CallModel call = assertInstanceOf(LoopDecision.CallModel.class, called.decision());
+            assertEquals(3, call.request().messages().size(), "the model sees the policy's window");
+            assertTrue(call.request().messages().get(0).displayText().contains("Context notice"),
+                    "the model is told history was omitted");
+            assertEquals("latest", call.request().messages().get(2).displayText());
+            assertEquals(longHistory, called.state().messages(),
+                    "the state is the full truth; only the request view is bounded");
+        }
     }
 
     @Nested
