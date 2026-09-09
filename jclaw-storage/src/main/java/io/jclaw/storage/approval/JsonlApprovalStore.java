@@ -8,7 +8,7 @@ import io.jclaw.contracts.turn.GateId;
 import io.jclaw.contracts.turn.ThreadId;
 import io.jclaw.contracts.turn.TurnRunId;
 import io.jclaw.contracts.turn.TurnScope;
-import io.jclaw.storage.jsonl.JsonlFile;
+import io.jclaw.storage.rows.RowStore;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -41,16 +41,16 @@ public final class JsonlApprovalStore implements ApprovalStore {
     /** How long an unanswered gate stays answerable when no TTL is configured. */
     public static final Duration DEFAULT_TTL = Duration.ofHours(24);
 
-    private final JsonlFile file;
+    private final RowStore file;
     private final Clock clock;
     private final Duration ttl;
 
-    public JsonlApprovalStore(JsonlFile file, Clock clock) {
+    public JsonlApprovalStore(RowStore file, Clock clock) {
         this(file, clock, DEFAULT_TTL);
     }
 
     /** @param ttl how long a raised gate may go unanswered before a resume asks afresh */
-    public JsonlApprovalStore(JsonlFile file, Clock clock, Duration ttl) {
+    public JsonlApprovalStore(RowStore file, Clock clock, Duration ttl) {
         this.file = Objects.requireNonNull(file, "file");
         this.clock = Objects.requireNonNull(clock, "clock");
         this.ttl = Objects.requireNonNull(ttl, "ttl");

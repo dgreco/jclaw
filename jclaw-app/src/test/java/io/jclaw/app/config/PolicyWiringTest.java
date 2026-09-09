@@ -73,7 +73,10 @@ class PolicyWiringTest {
                 "none",
                 "512m",
                 "1",
-                256);
+                256,
+                "jsonl",
+                "",
+                "sa");
     }
 
     @Test

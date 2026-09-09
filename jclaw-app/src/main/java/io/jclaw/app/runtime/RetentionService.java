@@ -4,7 +4,8 @@ import io.jclaw.app.config.JclawProperties;
 import io.jclaw.contracts.turn.RunStore;
 import io.jclaw.contracts.turn.TurnRunId;
 import io.jclaw.domain.retention.Retention;
-import io.jclaw.storage.jsonl.JsonlFile;
+import io.jclaw.app.config.StorageBackend;
+import io.jclaw.storage.rows.RowStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -46,11 +47,13 @@ public class RetentionService {
     }
 
     private final JclawProperties properties;
+    private final StorageBackend backend;
     private final RunStore runs;
     private final Clock clock;
 
-    public RetentionService(JclawProperties properties, RunStore runs, Clock clock) {
+    public RetentionService(JclawProperties properties, StorageBackend backend, RunStore runs, Clock clock) {
         this.properties = Objects.requireNonNull(properties, "properties");
+        this.backend = Objects.requireNonNull(backend, "backend");
         this.runs = Objects.requireNonNull(runs, "runs");
         this.clock = Objects.requireNonNull(clock, "clock");
     }
@@ -60,17 +63,17 @@ public class RetentionService {
         Instant now = clock.instant();
         Map<String, Boolean> finished = new HashMap<>();
         List<Swept> report = new ArrayList<>();
-        report.add(sweep("results", new JsonlFile(properties.resultsPath()), "storedAt",
+        report.add(sweep("results", backend.open("results", properties.resultsPath()), "storedAt",
                 properties.retentionResults(), now, finished, dryRun));
-        report.add(sweep("events", new JsonlFile(properties.eventLogPath()), "at",
+        report.add(sweep("events", backend.open("events", properties.eventLogPath()), "at",
                 properties.retentionEvents(), now, finished, dryRun));
-        report.add(sweep("checkpoints", new JsonlFile(properties.checkpointsPath()), "writtenAt",
+        report.add(sweep("checkpoints", backend.open("checkpoints", properties.checkpointsPath()), "writtenAt",
                 properties.retentionCheckpoints(), now, finished, dryRun));
         return List.copyOf(report);
     }
 
     private Swept sweep(
-            String name, JsonlFile file, String timestampField, Duration maxAge,
+            String name, RowStore file, String timestampField, Duration maxAge,
             Instant now, Map<String, Boolean> finished, boolean dryRun) {
 
         List<Map<String, Object>> rows = file.readAll();

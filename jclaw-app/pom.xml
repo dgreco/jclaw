@@ -20,6 +20,12 @@
     <dependency><groupId>io.jclaw</groupId><artifactId>jclaw-providers</artifactId></dependency>
     <dependency><groupId>io.jclaw</groupId><artifactId>jclaw-tools</artifactId></dependency>
     <dependency><groupId>io.jclaw</groupId><artifactId>jclaw-storage</artifactId></dependency>
+    <!-- The hosted database for jclaw.storage=sql. H2 (embedded) comes with jclaw-storage. -->
+    <dependency>
+      <groupId>org.postgresql</groupId>
+      <artifactId>postgresql</artifactId>
+      <scope>runtime</scope>
+    </dependency>
 
     <dependency>
       <groupId>info.picocli</groupId>

@@ -1,5 +1,6 @@
 package io.jclaw.storage.jsonl;
 
+import io.jclaw.storage.rows.RowStore;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.io.BufferedWriter;
@@ -30,7 +31,7 @@ import java.util.stream.Stream;
  * <p>Writes are synchronized and flushed per line. That is slower than batching and it is the right
  * trade: an event log that loses its tail on a crash cannot answer the question it exists to answer.
  */
-public final class JsonlFile {
+public final class JsonlFile implements RowStore {
 
     private final Path path;
     private final JsonMapper mapper;
@@ -62,6 +63,7 @@ public final class JsonlFile {
      * <p>Serialization happens before the file is opened, so a value that cannot be encoded fails
      * without leaving a truncated line behind.
      */
+    @Override
     public void append(Map<String, Object> record) {
         Objects.requireNonNull(record, "record");
         String line = mapper.writeValueAsString(record);
@@ -86,6 +88,7 @@ public final class JsonlFile {
      * a crash must not make the entire history unreadable.
      */
     @SuppressWarnings("unchecked")
+    @Override
     public List<Map<String, Object>> readAll() {
         List<Map<String, Object>> records = new ArrayList<>();
         try (Stream<String> lines = Files.lines(path, StandardCharsets.UTF_8)) {
@@ -112,6 +115,7 @@ public final class JsonlFile {
      * written to a sibling temp file and moved over the original, so a reader never sees a
      * half-written file: it sees the old one or the new one.
      */
+    @Override
     public void rewrite(List<Map<String, Object>> records) {
         Objects.requireNonNull(records, "records");
         StringBuilder content = new StringBuilder();
@@ -135,6 +139,7 @@ public final class JsonlFile {
     }
 
     /** Number of well-formed records currently stored. */
+    @Override
     public int size() {
         return readAll().size();
     }

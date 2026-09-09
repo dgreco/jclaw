@@ -61,7 +61,7 @@ jclaw reimplements the **architecture** of IronClaw — the seven-layer ladder, 
 
 Everything is durable JSONL under `~/.jclaw`: a run can park in one process, be approved in a second, and resume in a third. There is no database, and no server unless you start one (`jclaw serve`).
 
-**Status.** Milestones M0–M7 plus subagents (synchronous or asynchronous), MCP, streaming on every provider, lease-based crash recovery, a per-thread run lock, context compaction with model summaries, vector memory, configurable denials and egress lists, per-tool rate limits, injection heuristics, auth and process gates with expiry, a scheduler with `submit` and `worker`, an HTTP surface with run projections, event streams, and per-user tenants, attachments, store retention, an encrypted secret vault with host-side credential injection, and a container sandbox for the shell lane. 255 tests pass across the modules, including 14 machine-checked architecture rules (ArchUnit). Both the uber jar and the native image are verified end to end, including subprocess spawning for MCP servers and shell tools. [PARITY.md](PARITY.md) lists what IronClaw still has that jclaw does not.
+**Status.** Milestones M0–M7 plus subagents (synchronous or asynchronous), MCP, streaming on every provider, lease-based crash recovery, a per-thread run lock, context compaction with model summaries, vector memory, configurable denials and egress lists, per-tool rate limits, injection heuristics, auth and process gates with expiry, a scheduler with `submit` and `worker`, an HTTP surface with run projections, event streams, and per-user tenants, attachments, store retention, an encrypted secret vault with host-side credential injection, a container sandbox for the shell lane, and a SQL storage backend (embedded H2 or PostgreSQL) with schema migrations. 259 tests pass across the modules, including 14 machine-checked architecture rules (ArchUnit). Both the uber jar and the native image are verified end to end, including subprocess spawning for MCP servers and shell tools. [PARITY.md](PARITY.md) lists what IronClaw still has that jclaw does not.
 
 ---
 
@@ -233,6 +233,8 @@ jclaw:
 | `serve-users` | *(none)* | Named users for `serve`, as a map of user name to bearer token (`jclaw.serve-users.alice=<token>`). Each user is a tenant: their thread names are namespaced, their memories, routines, and approvals are their own, and they see only their own runs and gates. |
 | `shell-backend` | `host` | `host` runs `builtin.shell` as a child process; `docker` runs each command in a container (see [Tools](#tools-the-agent-can-use)). |
 | `sandbox-docker` / `sandbox-image` / `sandbox-network` / `sandbox-memory` / `sandbox-cpus` / `sandbox-pids-limit` | `docker` / `alpine:3.20` / `none` / `512m` / `1` / `256` | The container contract for `shell-backend: docker`: binary, image, network (`none` unless you say otherwise), memory, CPU, and pid limits. |
+| `storage` | `jsonl` | Where durable rows live: `jsonl` files under the state directory, or `sql` (every store in one database; see [The state directory](#the-state-directory)). Skills and thread locks stay on the filesystem either way. |
+| `datasource-url` / `datasource-username` | *(blank)* / `sa` | For `storage: sql`. Blank URL means an embedded H2 file under the state directory; a `jdbc:postgresql://…` URL is the hosted option. The password comes only from `JCLAW_DATASOURCE_PASSWORD`. |
 
 Logging is controlled through standard Spring properties (`--logging.level.io.jclaw=TRACE`) or the `--debug` / `--trace` shortcuts described under [Tracing a turn](#tracing-a-turn).
 
@@ -302,6 +304,16 @@ Everything durable is append-only JSONL under `state-dir` (default `~/.jclaw`), 
 `results.jsonl`, `events.jsonl`, and `checkpoints.jsonl` grow with every run; `jclaw retain` (and the worker, hourly) drops rows of finished runs older than the `retention-*` settings. The transcript is never swept.
 
 Because state is a directory, you can run several isolated agents by giving each its own `--jclaw.state-dir`. Delete the directory to start clean.
+
+#### SQL instead of files
+
+```bash
+jclaw run "hello" --jclaw.storage=sql                                 # embedded H2: <state-dir>/jclaw.mv.db
+JCLAW_DATASOURCE_PASSWORD=… jclaw serve --jclaw.storage=sql \
+  --jclaw.datasource-url=jdbc:postgresql://db.internal/jclaw --jclaw.datasource-username=jclaw
+```
+
+With `storage: sql` every JSONL store above lives in one table, `jclaw_rows`, partitioned by store name and ordered by an identity column, with the run and thread lifted into indexed columns; the stores replay rows exactly as they do from a file and cannot tell the difference. Schema migrations are versioned in `jclaw_schema` and applied on start; a database newer than the build is refused. The vault stays encrypted in SQL. Skills (`skills/`), thread locks (`locks/`), the vault key, and the REPL history remain files. Retention rewrites a store in one transaction. The H2 default is for one machine; PostgreSQL is what a deployment with more than one host should use, and connections are opened per operation, which is correct and not fast.
 
 ---
 

@@ -5,7 +5,7 @@ import io.jclaw.contracts.loop.CheckpointStore;
 import io.jclaw.contracts.turn.Ident;
 import io.jclaw.contracts.turn.TurnRef.LoopCheckpointStateRef;
 import io.jclaw.contracts.turn.TurnRunId;
-import io.jclaw.storage.jsonl.JsonlFile;
+import io.jclaw.storage.rows.RowStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -36,10 +36,10 @@ public final class JsonlCheckpointStore implements CheckpointStore {
 
     private static final Logger log = LoggerFactory.getLogger(JsonlCheckpointStore.class);
 
-    private final JsonlFile file;
+    private final RowStore file;
     private final Clock clock;
 
-    public JsonlCheckpointStore(JsonlFile file, Clock clock) {
+    public JsonlCheckpointStore(RowStore file, Clock clock) {
         this.file = Objects.requireNonNull(file, "file");
         this.clock = Objects.requireNonNull(clock, "clock");
     }

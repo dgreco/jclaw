@@ -6,7 +6,7 @@ import io.jclaw.contracts.turn.MessageId;
 import io.jclaw.contracts.turn.ThreadId;
 import io.jclaw.contracts.turn.TurnRef.AcceptedMessageRef;
 import io.jclaw.contracts.turn.TurnRef.LoopMessageRef;
-import io.jclaw.storage.jsonl.JsonlFile;
+import io.jclaw.storage.rows.RowStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -36,10 +36,10 @@ public final class JsonlThreadService implements ThreadService {
 
     private static final Logger log = LoggerFactory.getLogger(JsonlThreadService.class);
 
-    private final JsonlFile file;
+    private final RowStore file;
     private final Clock clock;
 
-    public JsonlThreadService(JsonlFile file, Clock clock) {
+    public JsonlThreadService(RowStore file, Clock clock) {
         this.file = Objects.requireNonNull(file, "file");
         this.clock = Objects.requireNonNull(clock, "clock");
     }

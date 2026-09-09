@@ -6,7 +6,7 @@ import io.jclaw.contracts.capability.CapabilityResultStore;
 import io.jclaw.contracts.turn.Ident;
 import io.jclaw.contracts.turn.TurnRef.LoopResultRef;
 import io.jclaw.contracts.turn.TurnRunId;
-import io.jclaw.storage.jsonl.JsonlFile;
+import io.jclaw.storage.rows.RowStore;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -37,10 +37,10 @@ public final class JsonlCapabilityResultStore implements CapabilityResultStore {
 
     private static final String KIND_RESULT = "result";
 
-    private final JsonlFile file;
+    private final RowStore file;
     private final Clock clock;
 
-    public JsonlCapabilityResultStore(JsonlFile file, Clock clock) {
+    public JsonlCapabilityResultStore(RowStore file, Clock clock) {
         this.file = Objects.requireNonNull(file, "file");
         this.clock = Objects.requireNonNull(clock, "clock");
     }

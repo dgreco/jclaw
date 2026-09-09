@@ -74,6 +74,14 @@ import java.util.Map;
  * @param sandboxMemory        container memory limit, e.g. {@code 512m}
  * @param sandboxCpus          container CPU limit, e.g. {@code 1}
  * @param sandboxPidsLimit     container pid limit
+ * @param storage              {@code jsonl} (files under the state directory) or {@code sql}
+ *                             (every durable store in one database; skills and thread locks
+ *                             stay on the filesystem)
+ * @param datasourceUrl        JDBC URL for {@code storage: sql}; blank means an embedded H2
+ *                             database file under the state directory. A PostgreSQL URL works
+ *                             for a hosted deployment
+ * @param datasourceUsername   database user; the password comes only from
+ *                             {@code JCLAW_DATASOURCE_PASSWORD}
  */
 @ConfigurationProperties(prefix = "jclaw")
 public record JclawProperties(
@@ -185,7 +193,13 @@ public record JclawProperties(
 
         @DefaultValue("1") String sandboxCpus,
 
-        @DefaultValue("256") int sandboxPidsLimit) {
+        @DefaultValue("256") int sandboxPidsLimit,
+
+        @DefaultValue("jsonl") String storage,
+
+        @DefaultValue("") String datasourceUrl,
+
+        @DefaultValue("sa") String datasourceUsername) {
 
     public JclawProperties {
         // Constructor binding leaves an absent map null; an absent map means no limits.
@@ -244,7 +258,18 @@ public record JclawProperties(
                 "none",
                 "512m",
                 "1",
-                256);
+                256,
+                "jsonl",
+                "",
+                "sa");
+    }
+
+    /** The JDBC URL {@code storage: sql} uses: the configured one, else an embedded H2 file. */
+    public String resolvedDatasourceUrl() {
+        if (datasourceUrl != null && !datasourceUrl.isBlank()) {
+            return datasourceUrl.trim();
+        }
+        return "jdbc:h2:file:" + stateDir.resolve("jclaw").toAbsolutePath() + ";DB_CLOSE_DELAY=-1";
     }
 
     /**

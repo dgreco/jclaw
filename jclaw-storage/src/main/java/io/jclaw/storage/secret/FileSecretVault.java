@@ -2,7 +2,7 @@ package io.jclaw.storage.secret;
 
 import io.jclaw.contracts.capability.CapabilityId;
 import io.jclaw.contracts.secret.SecretVault;
-import io.jclaw.storage.jsonl.JsonlFile;
+import io.jclaw.storage.rows.RowStore;
 
 import javax.crypto.Cipher;
 import javax.crypto.spec.GCMParameterSpec;
@@ -41,12 +41,12 @@ public final class FileSecretVault implements SecretVault {
     private static final int NONCE_BYTES = 12;
     private static final int TAG_BITS = 128;
 
-    private final JsonlFile file;
+    private final RowStore file;
     private final SecretKeySpec key;
     private final Clock clock;
     private final SecureRandom random = new SecureRandom();
 
-    public FileSecretVault(JsonlFile file, byte[] key, Clock clock) {
+    public FileSecretVault(RowStore file, byte[] key, Clock clock) {
         this.file = Objects.requireNonNull(file, "file");
         Objects.requireNonNull(key, "key");
         if (key.length != 32) {

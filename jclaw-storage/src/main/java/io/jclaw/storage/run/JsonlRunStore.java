@@ -5,7 +5,7 @@ import io.jclaw.contracts.turn.ThreadId;
 import io.jclaw.contracts.turn.TurnRunId;
 import io.jclaw.contracts.turn.TurnScope;
 import io.jclaw.contracts.turn.TurnStatus;
-import io.jclaw.storage.jsonl.JsonlFile;
+import io.jclaw.storage.rows.RowStore;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -35,10 +35,10 @@ public final class JsonlRunStore implements RunStore {
     private static final String KIND_LEASE = "lease";
     private static final String KIND_RELEASE = "release";
 
-    private final JsonlFile file;
+    private final RowStore file;
     private final Clock clock;
 
-    public JsonlRunStore(JsonlFile file, Clock clock) {
+    public JsonlRunStore(RowStore file, Clock clock) {
         this.file = Objects.requireNonNull(file, "file");
         this.clock = Objects.requireNonNull(clock, "clock");
     }

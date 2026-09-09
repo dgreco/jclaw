@@ -6,7 +6,7 @@ import io.jclaw.contracts.memory.MemoryRecord.MemoryId;
 import io.jclaw.contracts.memory.MemoryStore;
 import io.jclaw.contracts.turn.ThreadId;
 import io.jclaw.contracts.turn.TurnScope;
-import io.jclaw.storage.jsonl.JsonlFile;
+import io.jclaw.storage.rows.RowStore;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -40,10 +40,10 @@ public final class JsonlMemoryStore implements MemoryStore {
     private static final String KIND_EMBEDDED = "embedded";
     private static final String KIND_DELETED = "deleted";
 
-    private final JsonlFile file;
+    private final RowStore file;
     private final Clock clock;
 
-    public JsonlMemoryStore(JsonlFile file, Clock clock) {
+    public JsonlMemoryStore(RowStore file, Clock clock) {
         this.file = Objects.requireNonNull(file, "file");
         this.clock = Objects.requireNonNull(clock, "clock");
     }

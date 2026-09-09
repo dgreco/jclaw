@@ -34,6 +34,7 @@ public class DoctorCommand implements Callable<Integer> {
     private final EgressGuard egress;
     private final CapabilityPolicy policy;
     private final io.jclaw.contracts.secret.SecretVault vault;
+    private final io.jclaw.app.config.StorageBackend backend;
 
     /**
      * Deliberately does <b>not</b> inject {@link io.jclaw.contracts.model.ModelProvider}.
@@ -48,12 +49,14 @@ public class DoctorCommand implements Callable<Integer> {
             WorkspaceGuard workspace,
             EgressGuard egress,
             CapabilityPolicy policy,
-            io.jclaw.contracts.secret.SecretVault vault) {
+            io.jclaw.contracts.secret.SecretVault vault,
+            io.jclaw.app.config.StorageBackend backend) {
         this.properties = properties;
         this.workspace = workspace;
         this.egress = egress;
         this.policy = policy;
         this.vault = vault;
+        this.backend = backend;
     }
 
     @Override
@@ -67,6 +70,7 @@ public class DoctorCommand implements Callable<Integer> {
         System.out.println("Configuration");
         System.out.println("  workspace       " + workspace.root());
         System.out.println("  state dir       " + properties.stateDir());
+        System.out.println("  storage         " + backend.describe());
         System.out.println("  provider        " + properties.provider());
         System.out.println("  model           " + properties.model());
         System.out.println("  approval mode   " + properties.approvalMode());

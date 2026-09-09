@@ -1,7 +1,7 @@
 package io.jclaw.storage.mcp;
 
 import io.jclaw.contracts.mcp.McpServerStore;
-import io.jclaw.storage.jsonl.JsonlFile;
+import io.jclaw.storage.rows.RowStore;
 
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -17,9 +17,9 @@ public final class JsonlMcpServerStore implements McpServerStore {
     private static final String KIND_ENABLED = "enabled";
     private static final String KIND_REMOVED = "removed";
 
-    private final JsonlFile file;
+    private final RowStore file;
 
-    public JsonlMcpServerStore(JsonlFile file) {
+    public JsonlMcpServerStore(RowStore file) {
         this.file = Objects.requireNonNull(file, "file");
     }
 

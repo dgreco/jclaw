@@ -3,7 +3,7 @@ package io.jclaw.storage.event;
 import io.jclaw.contracts.event.EventLog;
 import io.jclaw.contracts.event.JclawEvent;
 import io.jclaw.contracts.turn.TurnRunId;
-import io.jclaw.storage.jsonl.JsonlFile;
+import io.jclaw.storage.rows.RowStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -26,9 +26,9 @@ public final class JsonlEventLog implements EventLog {
 
     private static final Logger log = LoggerFactory.getLogger(JsonlEventLog.class);
 
-    private final JsonlFile file;
+    private final RowStore file;
 
-    public JsonlEventLog(JsonlFile file) {
+    public JsonlEventLog(RowStore file) {
         this.file = Objects.requireNonNull(file, "file");
     }
 

@@ -20,7 +20,7 @@ jclaw is a Java/Spring Boot reimplementation of the **architecture** of
 untrusted-`LoopExit` trust model, and the `CapabilityHost` authority boundary are faithful; the
 feature surface is a fraction of IronClaw's. See **Not built yet** for the honest list.
 
-255 tests pass across 9 modules, including 14 machine-checked architecture rules.
+259 tests pass across 9 modules, including 14 machine-checked architecture rules.
 
 ## Commands
 
@@ -202,8 +202,10 @@ providers   →  contracts                 mock, Anthropic (official SDK), OpenA
                                          failover
 tools       →  contracts, domain, kernel file, shell (host or docker), http, memory, skill,
                                          trigger, subagent, MCP client + capabilities
-storage     →  contracts, domain, kernel JSONL stores: events, transcript, approvals, checkpoints,
-                                         runs, results, memory, routines, mcp; file thread locks;
+storage     →  contracts, domain, kernel row stores (JSONL files or one SQL table via
+                                         RowStore): events, transcript, approvals, checkpoints,
+                                         runs, results, memory, routines, mcp, secrets; SqlSchema
+                                         migrations; file thread locks;
                                          filesystem skill catalog
 app         →  all of the above          Spring wiring, picocli CLI, JclawRuntime, TurnRunScheduler,
                                          RoutineRunner, RecoveryService, RetentionService,
@@ -394,8 +396,11 @@ the Anthropic SDK, and tool lanes may not read the process environment.
   URLs reaching internal addresses; a base URL is operator configuration, and pointing it at
   `localhost:11434` for Ollama is the intended use. This is documented in
   `OpenAiCompatibleModelProvider`.
-- **Every store is durable JSONL under `jclaw.state-dir`**, including `results.jsonl` for full
-  capability payloads. Result refs are evidence: `JclawRuntime.validate` re-resolves each one in a
+- **Every store is durable, as JSONL under `jclaw.state-dir` or as rows in SQL**
+  (`jclaw.storage=sql`; embedded H2 by default, PostgreSQL by URL). The store classes keep their
+  `Jsonl*` names because they still speak in one-JSON-document-per-row; they are written against
+  `RowStore`, and `StorageBackend` picks the medium once. `results.jsonl` holds full capability
+  payloads. Result refs are evidence: `JclawRuntime.validate` re-resolves each one in a
   `Completed` exit, and a run resumed in a second process completes with refs the first minted.
 - Git: initialized on `main` (September 2026). `.gitignore` excludes `target/`, IDE files, `.claude/settings.local.json`, and `.byte-manifest`; the captured native-image metadata is versioned on purpose.
 
@@ -413,8 +418,9 @@ architecture and most runtime mechanisms are equivalent, the breadth is not. PAR
 - **Secrets beyond one tool call** — the vault leases values into `http_fetch` headers (and any
   capability a binding names) but there is no staged handoff to subprocesses, no leak scan of
   outbound model requests, and no per-tenant vaults.
-- **SQL persistence** — `spring-jdbc` and H2 are dependencies but unused; no SQL layer, no
-  migrations, no Postgres profile. JSONL with retention is fine at CLI scale, not hosted scale.
+- **SQL beyond one table** — `storage=sql` keeps every store's rows in `jclaw_rows` with
+  versioned migrations; there are no per-concept tables, no materialised projections (folds run
+  on demand over indexed reads), and no connection pool (a connection per operation).
 - **Sandboxing beyond the shell lane** — `shell-backend=docker` contains `builtin.shell` only;
   file, http, memory, and MCP lanes run in-process, and an MCP server's sockets are unmediated.
   No WASM lane, no orchestrator, no per-job tokens, no LLM proxying.

@@ -37,7 +37,6 @@ import io.jclaw.storage.approval.JsonlApprovalStore;
 import io.jclaw.storage.checkpoint.JsonlCheckpointStore;
 import io.jclaw.storage.checkpoint.JsonLoopStateCodec;
 import io.jclaw.storage.event.JsonlEventLog;
-import io.jclaw.storage.jsonl.JsonlFile;
 import io.jclaw.storage.lock.FileThreadLock;
 import io.jclaw.storage.mcp.JsonlMcpServerStore;
 import io.jclaw.storage.memory.JsonlMemoryStore;
@@ -45,6 +44,9 @@ import io.jclaw.storage.skill.FilesystemSkillCatalog;
 import io.jclaw.storage.result.JsonlCapabilityResultStore;
 import io.jclaw.storage.routine.JsonlRoutineStore;
 import io.jclaw.storage.run.JsonlRunStore;
+import io.jclaw.storage.rows.RowStore;
+import io.jclaw.storage.sql.SqlSchema;
+import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import io.jclaw.storage.secret.FileSecretVault;
 import io.jclaw.storage.secret.VaultKey;
 import io.jclaw.contracts.secret.SecretVault;
@@ -81,6 +83,8 @@ import java.util.Set;
 @Configuration(proxyBeanMethods = false)
 @EnableConfigurationProperties(JclawProperties.class)
 public class JclawConfiguration {
+
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(JclawConfiguration.class);
 
     /**
      * The single clock. Injected everywhere rather than read statically, so time is one
@@ -171,8 +175,8 @@ public class JclawConfiguration {
     }
 
     @Bean
-    public McpServerStore mcpServerStore(JclawProperties properties) {
-        return new JsonlMcpServerStore(new JsonlFile(properties.mcpPath()));
+    public McpServerStore mcpServerStore(JclawProperties properties, StorageBackend backend) {
+        return new JsonlMcpServerStore(backend.open("mcp", properties.mcpPath()));
     }
 
     /** Connects to configured MCP servers. A no-op when none are configured. */
@@ -183,14 +187,14 @@ public class JclawConfiguration {
 
     /** Scheduled routines. Nothing fires them on its own — see RoutineRunner. */
     @Bean
-    public RoutineStore routineStore(JclawProperties properties, Clock clock) {
-        return new JsonlRoutineStore(new JsonlFile(properties.routinesPath()), clock);
+    public RoutineStore routineStore(JclawProperties properties, StorageBackend backend, Clock clock) {
+        return new JsonlRoutineStore(backend.open("routines", properties.routinesPath()), clock);
     }
 
     /** Durable memories, scoped per project by the store itself. */
     @Bean
-    public MemoryStore memoryStore(JclawProperties properties, Clock clock) {
-        return new JsonlMemoryStore(new JsonlFile(properties.memoryPath()), clock);
+    public MemoryStore memoryStore(JclawProperties properties, StorageBackend backend, Clock clock) {
+        return new JsonlMemoryStore(backend.open("memory", properties.memoryPath()), clock);
     }
 
     /**
@@ -281,19 +285,50 @@ public class JclawConfiguration {
         }
     }
 
+    /**
+     * Where rows live. {@code jclaw.storage=sql} opens the database, applies pending schema
+     * migrations, and routes every store to it; the default keeps JSONL files.
+     *
+     * <p>The database password is read from {@code JCLAW_DATASOURCE_PASSWORD} only. A URL is
+     * topology and may sit in config; a password is a credential and may not.
+     */
     @Bean
-    public JsonlFile eventLogFile(JclawProperties properties) {
-        return new JsonlFile(properties.eventLogPath());
+    public StorageBackend storageBackend(JclawProperties properties) {
+        if (!"sql".equals(properties.storage())) {
+            if (!"jsonl".equals(properties.storage())) {
+                throw new IllegalArgumentException(
+                        "jclaw.storage must be 'jsonl' or 'sql', got '" + properties.storage() + "'");
+            }
+            return StorageBackend.jsonl(properties.stateDir());
+        }
+        String url = properties.resolvedDatasourceUrl();
+        String password = System.getenv("JCLAW_DATASOURCE_PASSWORD");
+        DriverManagerDataSource dataSource = new DriverManagerDataSource(
+                url, properties.datasourceUsername(), password == null ? "" : password);
+        int before = SqlSchema.migrate(dataSource);
+        log.debug("storage: sql at {} (schema {} -> {})", redactUrl(url), before, SqlSchema.currentVersion());
+        return StorageBackend.sql(dataSource, redactUrl(url));
+    }
+
+    /** A JDBC URL without any userinfo or password parameter, for display. */
+    static String redactUrl(String url) {
+        return url.replaceAll("//[^/@]+@", "//")
+                .replaceAll("(?i)(password=)[^;&]*", "$1[REDACTED]");
     }
 
     @Bean
-    public EventLog eventLog(JsonlFile eventLogFile) {
+    public RowStore eventLogFile(JclawProperties properties, StorageBackend backend) {
+        return backend.open("events", properties.eventLogPath());
+    }
+
+    @Bean
+    public EventLog eventLog(RowStore eventLogFile) {
         return new JsonlEventLog(eventLogFile);
     }
 
     @Bean
-    public ThreadService threadService(JclawProperties properties, Clock clock) {
-        return new JsonlThreadService(new JsonlFile(properties.transcriptPath()), clock);
+    public ThreadService threadService(JclawProperties properties, StorageBackend backend, Clock clock) {
+        return new JsonlThreadService(backend.open("transcript", properties.transcriptPath()), clock);
     }
 
     /**
@@ -302,8 +337,8 @@ public class JclawConfiguration {
      * at the first boundary.
      */
     @Bean
-    public JsonlApprovalStore approvalStore(JclawProperties properties, Clock clock) {
-        return new JsonlApprovalStore(new JsonlFile(properties.approvalsPath()), clock, properties.approvalTtl());
+    public JsonlApprovalStore approvalStore(JclawProperties properties, StorageBackend backend, Clock clock) {
+        return new JsonlApprovalStore(backend.open("approvals", properties.approvalsPath()), clock, properties.approvalTtl());
     }
 
     /**
@@ -311,20 +346,20 @@ public class JclawConfiguration {
      * and a run resumed in a second process completes with refs the first process minted.
      */
     @Bean
-    public CapabilityResultStore capabilityResultStore(JclawProperties properties, Clock clock) {
-        return new JsonlCapabilityResultStore(new JsonlFile(properties.resultsPath()), clock);
+    public CapabilityResultStore capabilityResultStore(JclawProperties properties, StorageBackend backend, Clock clock) {
+        return new JsonlCapabilityResultStore(backend.open("results", properties.resultsPath()), clock);
     }
 
     /** Durable for the same reason: a parked run is resumed by a different process. */
     @Bean
-    public CheckpointStore checkpointStore(JclawProperties properties, Clock clock) {
-        return new JsonlCheckpointStore(new JsonlFile(properties.checkpointsPath()), clock);
+    public CheckpointStore checkpointStore(JclawProperties properties, StorageBackend backend, Clock clock) {
+        return new JsonlCheckpointStore(backend.open("checkpoints", properties.checkpointsPath()), clock);
     }
 
     /** Records each run's resolved profile so a resume replays it rather than re-deriving it. */
     @Bean
-    public RunStore runStore(JclawProperties properties, Clock clock) {
-        return new JsonlRunStore(new JsonlFile(properties.runsPath()), clock);
+    public RunStore runStore(JclawProperties properties, StorageBackend backend, Clock clock) {
+        return new JsonlRunStore(backend.open("runs", properties.runsPath()), clock);
     }
 
     /**
@@ -349,10 +384,10 @@ public class JclawConfiguration {
      * command hold this bean: tool lanes and providers are barred from it by the dependency law.
      */
     @Bean
-    public SecretVault secretVault(JclawProperties properties, Clock clock) {
+    public SecretVault secretVault(JclawProperties properties, StorageBackend backend, Clock clock) {
         byte[] key = VaultKey.parse(System.getenv("JCLAW_VAULT_KEY"))
                 .orElseGet(() -> VaultKey.loadOrCreate(properties.vaultKeyPath()));
-        return new FileSecretVault(new JsonlFile(properties.secretsPath()), key, clock);
+        return new FileSecretVault(backend.open("secrets", properties.secretsPath()), key, clock);
     }
 
     @Bean
