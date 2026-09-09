@@ -12,6 +12,7 @@ import io.jclaw.app.cli.ReplCommand;
 import io.jclaw.app.cli.ResumeCommand;
 import io.jclaw.app.cli.RoutinesCommand;
 import io.jclaw.app.cli.RunCommand;
+import io.jclaw.app.cli.SecretsCommand;
 import io.jclaw.app.cli.ServeCommand;
 import io.jclaw.app.cli.SubmitCommand;
 import io.jclaw.app.cli.SkillsCommand;
@@ -78,9 +79,10 @@ import picocli.CommandLine.Command;
                 "                                 Raw log-level control, e.g.",
                 "                                 --logging.level.io.jclaw=TRACE",
                 "",
-                "Credentials come from the environment, never from flags or config files:",
+                "Provider credentials come from the environment, never from flags or config files:",
                 "  ANTHROPIC_API_KEY, OPENAI_API_KEY, OPENROUTER_API_KEY,",
-                "  LOCAL_API_KEY (optional; sent only if the local server checks a token)."
+                "  LOCAL_API_KEY (optional; sent only if the local server checks a token).",
+                "Credentials for tools go in the vault: jclaw secrets set NAME --capability ... --host ..."
         },
         subcommands = {
                 RunCommand.class,
@@ -98,6 +100,7 @@ import picocli.CommandLine.Command;
                 StatusCommand.class,
                 RecoverCommand.class,
                 RetainCommand.class,
+                SecretsCommand.class,
                 WorkerCommand.class,
                 ServeCommand.class,
                 DoctorCommand.class

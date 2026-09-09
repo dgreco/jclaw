@@ -215,6 +215,16 @@ class DependencyLawTest {
         }
 
         @Test
+        @DisplayName("tool lanes and providers never hold the secret vault")
+        void vaultStaysAboveTheLanes() {
+            noClasses().that().resideInAnyPackage("io.jclaw.tools..", "io.jclaw.providers..", "io.jclaw.loop..")
+                    .should().dependOnClassesThat().resideInAPackage("io.jclaw.contracts.secret..")
+                    .because("a secret is leased by the kernel host into one call's arguments; a "
+                            + "lane that could look secrets up would be the thing worth attacking")
+                    .check(classes);
+        }
+
+        @Test
         @DisplayName("only the kernel and app decide capability policy")
         void policyIsKernelOwned() {
             noClasses().that().resideInAnyPackage("io.jclaw.tools..", "io.jclaw.providers..")

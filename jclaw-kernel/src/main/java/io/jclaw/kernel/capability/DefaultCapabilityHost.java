@@ -13,12 +13,14 @@ import io.jclaw.contracts.capability.HandlerError;
 import io.jclaw.contracts.event.EventLog;
 import io.jclaw.contracts.event.JclawEvent;
 import io.jclaw.contracts.loop.GateKind;
+import io.jclaw.contracts.secret.SecretVault;
 import io.jclaw.contracts.turn.TurnRef.LoopGateRef;
 import io.jclaw.contracts.turn.TurnRef.LoopResultRef;
 import io.jclaw.contracts.turn.TurnScope;
 import io.jclaw.domain.policy.RateLimit;
 import io.jclaw.domain.redact.Redaction;
 import io.jclaw.domain.safety.InjectionHeuristics;
+import io.jclaw.domain.secret.SecretInjection;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -28,6 +30,8 @@ import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -49,9 +53,17 @@ import java.util.function.Supplier;
  *   <li>hard denial by policy;</li>
  *   <li>rate limit — a per-capability cap, checked before a human is bothered with a gate;</li>
  *   <li>approval — auto-approved, matched against an existing exact-invocation grant, or gated;</li>
- *   <li>dispatch to the runtime lane;</li>
+ *   <li>dispatch to the runtime lane, substituting vault secrets into the arguments the lane
+ *       receives when, and only when, each secret's binding allows this capability and every
+ *       host the arguments name;</li>
  *   <li>redact, bound, store, and only then mint a result ref.</li>
  * </ol>
+ *
+ * <p>Secret injection sits inside dispatch on purpose. The fingerprint, the approval prompt, the
+ * stored invocation, and every event see the reference form the model wrote; the value exists in
+ * the handler's arguments for the duration of one call and is added to the redaction set for
+ * that call's output. A lane never holds the vault, so a compromised lane can only use the
+ * credential the host chose to give it, against the hosts the binding names.
  *
  * <p>Step 5 is not an afterthought. Handler output is untrusted: it may contain a key a subprocess
  * printed, or a host path. It is redacted before it is stored, before it is summarized for the
@@ -72,6 +84,7 @@ public final class DefaultCapabilityHost implements CapabilityHost {
     private final CapabilityPolicy policy;
     private final CapabilityHandler.HandlerContext context;
     private final Supplier<Set<String>> knownSecrets;
+    private final SecretVault vault;
     private final Clock clock;
 
     /** Dispatch instants per rate-limited capability; per process, like the limit itself. */
@@ -86,8 +99,22 @@ public final class DefaultCapabilityHost implements CapabilityHost {
             CapabilityHandler.HandlerContext context,
             Supplier<Set<String>> knownSecrets,
             Clock clock) {
+        this(handlers, approvals, results, events, policy, context, knownSecrets, SecretVault.empty(), clock);
+    }
+
+    public DefaultCapabilityHost(
+            List<CapabilityHandler> handlers,
+            ApprovalStore approvals,
+            CapabilityResultStore results,
+            EventLog events,
+            CapabilityPolicy policy,
+            CapabilityHandler.HandlerContext context,
+            Supplier<Set<String>> knownSecrets,
+            SecretVault vault,
+            Clock clock) {
 
         Objects.requireNonNull(handlers, "handlers");
+        this.vault = Objects.requireNonNull(vault, "vault");
         this.handlers = index(handlers);
         this.approvals = Objects.requireNonNull(approvals, "approvals");
         this.results = Objects.requireNonNull(results, "results");
@@ -273,10 +300,42 @@ public final class DefaultCapabilityHost implements CapabilityHost {
         CapabilityHandler.HandlerContext scoped =
                 toolHosts == null ? context : new ToolScopedContext(context, toolHosts);
 
+        // Vault secrets go into the arguments the lane sees, never into the invocation that is
+        // fingerprinted, stored, and described to a human.
+        CapabilityInvocation forLane = invocation;
+        Set<String> leased = new HashSet<>();
+        Set<SecretVault.SecretName> references = SecretInjection.references(invocation.arguments());
+        if (!references.isEmpty()) {
+            Map<SecretVault.SecretName, String> values = new HashMap<>();
+            Set<String> hosts = SecretInjection.urlHosts(invocation.arguments());
+            for (SecretVault.SecretName name : references) {
+                Optional<SecretVault.Lease> lease = vault.lease(name);
+                if (lease.isEmpty()) {
+                    log.debug("capability {}: secret {} unknown -> denied", descriptor.id().value(), name.value());
+                    return denied(invocation, descriptor, "secret_unknown");
+                }
+                Optional<String> refusal = SecretInjection.refuse(lease.get().info().binding(), descriptor.id(), hosts);
+                if (refusal.isPresent()) {
+                    log.debug("capability {}: secret {} refused ({})",
+                            descriptor.id().value(), name.value(), refusal.get());
+                    return denied(invocation, descriptor, refusal.get());
+                }
+                values.put(name, lease.get().value());
+                leased.add(lease.get().value());
+            }
+            forLane = new CapabilityInvocation(
+                    invocation.capability(), invocation.callId(),
+                    SecretInjection.inject(invocation.arguments(), values).orElseThrow(),
+                    invocation.scope(), invocation.run());
+            for (SecretVault.SecretName name : references) {
+                events.append(new JclawEvent.SecretInjected(clock.instant(), invocation.run(), descriptor.id(), name.value()));
+            }
+        }
+
         long startedAt = clock.millis();
         Result<String, HandlerError> executed;
         try {
-            executed = handler.execute(invocation, scoped);
+            executed = handler.execute(forLane, scoped);
         } catch (RuntimeException e) {
             // A lane that throws is a lane bug. It must not take the run down, and its exception
             // text must not escape — it can carry paths, arguments, or credentials.
@@ -286,8 +345,9 @@ public final class DefaultCapabilityHost implements CapabilityHost {
         }
         long elapsed = clock.millis() - startedAt;
 
+        Set<String> mask = leased;
         return executed.fold(
-                payload -> succeed(invocation, descriptor, payload, elapsed),
+                payload -> succeed(invocation, descriptor, payload, elapsed, mask),
                 // A guard refusal and a broken lane are different events. Preserving the
                 // distinction here is what lets an operator grep the audit log for blocked
                 // attempts without them hiding among ordinary I/O errors.
@@ -327,11 +387,19 @@ public final class DefaultCapabilityHost implements CapabilityHost {
     }
 
     private CapabilityOutcome succeed(
-            CapabilityInvocation invocation, CapabilityDescriptor descriptor, String payload, long elapsed) {
+            CapabilityInvocation invocation, CapabilityDescriptor descriptor, String payload, long elapsed,
+            Set<String> leased) {
 
         // Redact before anything else sees it, then bound. In this order a secret that straddles
-        // the truncation point cannot survive as a fragment.
-        String redacted = Redaction.redact(payload, knownSecrets.get());
+        // the truncation point cannot survive as a fragment. A value leased for this call is
+        // masked too, so a server that echoes its Authorization header does not hand the model
+        // what the vault withheld.
+        Set<String> mask = knownSecrets.get();
+        if (!leased.isEmpty()) {
+            mask = new HashSet<>(mask);
+            mask.addAll(leased);
+        }
+        String redacted = Redaction.redact(payload, mask);
         boolean truncated = redacted.length() > context.maxOutputBytes();
         String bounded = truncated ? Redaction.bound(redacted, context.maxOutputBytes()) : redacted;
 

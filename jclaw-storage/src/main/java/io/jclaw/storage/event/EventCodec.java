@@ -77,6 +77,10 @@ public final class EventCodec {
                 out.put("outcome", e.outcome());
                 out.put("latencyMillis", e.latencyMillis());
             }
+            case JclawEvent.SecretInjected e -> {
+                out.put("capability", e.capability().value());
+                out.put("secret", e.secret());
+            }
             case JclawEvent.InjectionDetected e -> {
                 out.put("capability", e.capability().value());
                 out.put("severity", e.severity());
@@ -135,6 +139,9 @@ public final class EventCodec {
                         at, run, CapabilityId.of(str(record, "capability")),
                         EffectClass.valueOf(str(record, "effect")), str(record, "fingerprint"),
                         str(record, "outcome"), num(record, "latencyMillis"));
+
+                case "secret.injected" -> new JclawEvent.SecretInjected(
+                        at, run, CapabilityId.of(str(record, "capability")), str(record, "secret"));
 
                 case "injection.detected" -> new JclawEvent.InjectionDetected(
                         at, run, CapabilityId.of(str(record, "capability")), str(record, "severity"),

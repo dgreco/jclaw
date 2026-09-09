@@ -1,5 +1,6 @@
 package io.jclaw.domain.prompt;
 
+import io.jclaw.contracts.secret.SecretVault;
 import io.jclaw.contracts.skill.SkillCatalog;
 
 import java.nio.file.Path;
@@ -33,10 +34,21 @@ public final class PromptAssembly {
      */
     public static String systemPrompt(
             String base, String workspaceName, List<SkillCatalog.Skill> skills) {
+        return systemPrompt(base, workspaceName, skills, List.of());
+    }
+
+    /**
+     * As {@link #systemPrompt(String, String, List)}, also telling the model which vault secrets
+     * it may reference and where each may go. Names and bindings only: the values are the host's.
+     */
+    public static String systemPrompt(
+            String base, String workspaceName, List<SkillCatalog.Skill> skills,
+            List<SecretVault.SecretInfo> secrets) {
 
         Objects.requireNonNull(base, "base");
         Objects.requireNonNull(workspaceName, "workspaceName");
         Objects.requireNonNull(skills, "skills");
+        Objects.requireNonNull(secrets, "secrets");
 
         StringBuilder prompt = new StringBuilder(base.strip());
 
@@ -53,6 +65,18 @@ public final class PromptAssembly {
             skills.stream()
                     .sorted(java.util.Comparator.comparing(SkillCatalog.Skill::id))
                     .forEach(skill -> prompt.append("\n- ").append(skill.summary()));
+        }
+
+        if (!secrets.isEmpty()) {
+            prompt.append("\n\n## Available secrets\n")
+                    .append("Credentials the host holds for you. You never see their values: write ")
+                    .append("`{{secret:NAME}}` where the value belongs (for example in a header) and ")
+                    .append("the host substitutes it, but only in the tool and for the hosts listed.\n");
+            secrets.stream()
+                    .sorted(java.util.Comparator.comparing(info -> info.name().value()))
+                    .forEach(info -> prompt.append("\n- `{{secret:").append(info.name().value())
+                            .append("}}`: ").append(info.binding().capability().value())
+                            .append(" to ").append(String.join(", ", new java.util.TreeSet<>(info.binding().hosts()))));
         }
 
         return prompt.toString();

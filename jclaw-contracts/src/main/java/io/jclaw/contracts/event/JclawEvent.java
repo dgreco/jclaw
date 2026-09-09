@@ -115,6 +115,21 @@ public sealed interface JclawEvent {
     }
 
     /**
+     * A vault secret was handed to a capability for one call.
+     *
+     * <p>The name is the audit trail: which credential went to which tool. The value, and the
+     * arguments it was substituted into, are nowhere in the log.
+     */
+    record SecretInjected(Instant at, TurnRunId run, CapabilityId capability, String secret) implements JclawEvent {
+        public SecretInjected {
+            Objects.requireNonNull(at, "at");
+            Objects.requireNonNull(run, "run");
+            Objects.requireNonNull(capability, "capability");
+            Objects.requireNonNull(secret, "secret");
+        }
+    }
+
+    /**
      * Tool output looked like a prompt injection.
      *
      * @param severity the worst finding, as a stable token ({@code LOW}, {@code MEDIUM}, {@code HIGH})
@@ -196,6 +211,7 @@ public sealed interface JclawEvent {
             case ModelFailed ignored -> "model.failed";
             case CapabilityInvoked ignored -> "capability.invoked";
             case InjectionDetected ignored -> "injection.detected";
+            case SecretInjected ignored -> "secret.injected";
             case GateRaised ignored -> "gate.raised";
             case GateResolved ignored -> "gate.resolved";
             case CheckpointWritten ignored -> "checkpoint.written";

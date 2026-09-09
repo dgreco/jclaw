@@ -61,7 +61,7 @@ jclaw reimplements the **architecture** of IronClaw — the seven-layer ladder, 
 
 Everything is durable JSONL under `~/.jclaw`: a run can park in one process, be approved in a second, and resume in a third. There is no database, and no server unless you start one (`jclaw serve`).
 
-**Status.** Milestones M0–M7 plus subagents (synchronous or asynchronous), MCP, streaming on every provider, lease-based crash recovery, a per-thread run lock, context compaction with model summaries, vector memory, configurable denials and egress lists, per-tool rate limits, injection heuristics, auth and process gates with expiry, a scheduler with `submit` and `worker`, an HTTP surface with run projections, event streams, and per-user tenants, attachments, store retention, and a container sandbox for the shell lane. 245 tests pass across the modules, including 13 machine-checked architecture rules (ArchUnit). Both the uber jar and the native image are verified end to end, including subprocess spawning for MCP servers and shell tools. [PARITY.md](PARITY.md) lists what IronClaw still has that jclaw does not.
+**Status.** Milestones M0–M7 plus subagents (synchronous or asynchronous), MCP, streaming on every provider, lease-based crash recovery, a per-thread run lock, context compaction with model summaries, vector memory, configurable denials and egress lists, per-tool rate limits, injection heuristics, auth and process gates with expiry, a scheduler with `submit` and `worker`, an HTTP surface with run projections, event streams, and per-user tenants, attachments, store retention, an encrypted secret vault with host-side credential injection, and a container sandbox for the shell lane. 255 tests pass across the modules, including 14 machine-checked architecture rules (ArchUnit). Both the uber jar and the native image are verified end to end, including subprocess spawning for MCP servers and shell tools. [PARITY.md](PARITY.md) lists what IronClaw still has that jclaw does not.
 
 ---
 
@@ -248,7 +248,19 @@ Logging is controlled through standard Spring properties (`--logging.level.io.jc
 | `local` | `LOCAL_API_KEY` (optional) | Any OpenAI-compatible server at `local-base-url`. Unauthenticated by default; a server that checks a token (vLLM `--api-key`) answers 401 with its own message. |
 | `failover` | whatever is present | Builds a chain from configured providers in this order: Anthropic → OpenAI → OpenRouter → `local` (if `local-base-url` set) → Ollama. Providers with no credentials are omitted, not tried. |
 
-Credentials are resolved **per request**, so a missing key does not prevent the process from starting: it shows up as an `AUTH` failure in the event log, and `jclaw doctor` reports it. Check what is configured with `jclaw models`; prove the active provider actually answers with `jclaw models --probe`.
+Provider credentials are resolved **per request**, so a missing key does not prevent the process from starting: it shows up as an `AUTH` failure in the event log, and `jclaw doctor` reports it. Check what is configured with `jclaw models`; prove the active provider actually answers with `jclaw models --probe`.
+
+#### Secrets the agent may use but never see
+
+Credentials a *tool* needs, as opposed to the model provider, live in the vault:
+
+```bash
+echo -n "$GITHUB_TOKEN" | jclaw secrets set github --capability builtin.http_fetch --host api.github.com
+jclaw secrets list                                  # names and bindings; values are never printed
+jclaw secrets remove github
+```
+
+The model is told which names exist and where each may go, and writes `{{secret:github}}` where the value belongs, typically in a request header. The kernel substitutes the value into the arguments the tool receives at dispatch, after every authority check, and only if the secret's binding names that capability and every host the arguments point at; a call that names another host, or another tool, is denied and the model is told why. The reference form is what gets fingerprinted, shown in the approval prompt, checkpointed, and logged; the value exists in one handler call, is added to the redaction set for that call's output, and travels only to the bound host (a redirect elsewhere is fetched without headers). The audit log records `secret.injected` with the name. Values are AES-256-GCM encrypted in `secrets.jsonl`; the key is `JCLAW_VAULT_KEY` (32 bytes, base64 or hex) or an owner-only `vault.key` generated on first use.
 
 Tool names are dotted internally (`builtin.read_file`) and encoded to single-underscore form on the wire (`builtin_read_file`) because both the OpenAI and Anthropic schemas forbid dots; decoding is by lookup against the tools actually sent, never by parsing. The OpenAI-compatible adapter pins HTTP/1.1 because vLLM and other llhttp-based servers choke on Java's default h2c upgrade header.
 
@@ -280,6 +292,8 @@ Everything durable is append-only JSONL under `state-dir` (default `~/.jclaw`), 
 ├── memory.jsonl        durable memories, project-scoped, with embeddings when configured
 ├── routines.jsonl      scheduled routines
 ├── mcp.jsonl           registered MCP servers
+├── secrets.jsonl       vault entries: names, bindings, AES-256-GCM ciphertext
+├── vault.key           the vault key (owner-only), unless JCLAW_VAULT_KEY is set
 ├── locks/<hash>.lock   per-thread run locks (OS file locks; empty files)
 ├── repl-history        REPL line history
 └── skills/<id>/SKILL.md
@@ -429,7 +443,7 @@ Every route requires `Authorization: Bearer <token>` when `serve-token` or `serv
 | `builtin.memory_search` / `builtin.memory_write` | READ_LOCAL / WRITE_LOCAL | Project-scoped durable memory (see below). |
 | `builtin.skill_list` / `builtin.skill_read` | PURE | List skills; load one's full instructions. |
 | `builtin.trigger_list` / `_create` / `_pause` / `_resume` / `_remove` | READ_LOCAL / PROCESS / WRITE_LOCAL / PROCESS / WRITE_LOCAL | Let the agent schedule its own routines. |
-| `builtin.http_fetch` | NETWORK | HTTP GET, ≤ 128 KiB, 20 s, ≤ 5 redirects each re-checked by the egress guard. Private, loopback, link-local, and cloud-metadata addresses are refused (unless `allow-private-networks`). |
+| `builtin.http_fetch` | NETWORK | HTTP GET with optional request headers, ≤ 128 KiB, 20 s, ≤ 5 redirects each re-checked by the egress guard; headers are dropped on a redirect to another host. Private, loopback, link-local, and cloud-metadata addresses are refused (unless `allow-private-networks`). A vault secret goes in a header as `{{secret:NAME}}`. |
 | `builtin.shell` | PROCESS | `/bin/sh -c` in the workspace root; scrubbed environment (no API keys reach the child); 30 s default timeout (max 300); 64 KiB output cap; process tree killed on timeout. With `shell-backend: docker`, each command runs in a `docker run --rm` container instead: no network, the workspace as the only mount at `/workspace`, memory/CPU/pid limits, read-only root. |
 | `builtin.spawn_subagent` | PROCESS | Delegate a task to a child run, inline or queued (see [Subagents](#subagents)). |
 | `mcp.<server>.<tool>` | NETWORK, COMMUNITY trust | Tools advertised by registered MCP servers. **Always gated.** |
@@ -603,7 +617,8 @@ Default level is INFO and prints only the reply. The domain never logs; the inte
 - **One authority gate.** `DefaultCapabilityHost` orders checks so a denied call never reaches side-effecting code: existence → policy denial → rate limit → approval → dispatch → redact/bound/store → injection scan. Per-invocation fingerprints, sticky denials, third-party trust ceilings that policy cannot raise, per-tool egress lists that can only narrow.
 - **Untrusted tool output is framed.** Instruction-shaped text in a tool result is audited and, by default, fenced and defused before the model sees it; `block` withholds it. The stored payload is never altered.
 - **The shell can be contained.** `shell-backend: docker` runs every command in a throwaway container with no network, the workspace as its only mount, and resource limits. `doctor` says which backend is active.
-- **Least-privilege lanes.** Tool handlers receive a context with exactly four methods (resolve path, check egress, display path, output budget). There is no method to obtain a secret. Shell and MCP children get a scrubbed environment.
+- **Least-privilege lanes.** Tool handlers receive a context with exactly four methods (resolve path, check egress, display path, output budget). There is no method to obtain a secret; the dependency law bars tools, providers, and the loop from the vault port. Shell and MCP children get a scrubbed environment.
+- **Secrets are leased, not held.** A `{{secret:NAME}}` reference is substituted by the kernel into one call's arguments, only for the bound capability and hosts, and masked out of that call's output. Nothing durable ever contains the value.
 - **Structural redaction.** Events have no field for a prompt, argument, or host path. Tool output, provider errors, approval prompts, and trace logs all pass through the same redactor; truncation happens after redaction.
 - **Untrusted exits.** The runtime re-resolves every reference a run returns before recording completion.
 - **Fail-closed recovery.** Only provably replay-safe checkpoints are requeued.

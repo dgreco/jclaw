@@ -45,6 +45,9 @@ import io.jclaw.storage.skill.FilesystemSkillCatalog;
 import io.jclaw.storage.result.JsonlCapabilityResultStore;
 import io.jclaw.storage.routine.JsonlRoutineStore;
 import io.jclaw.storage.run.JsonlRunStore;
+import io.jclaw.storage.secret.FileSecretVault;
+import io.jclaw.storage.secret.VaultKey;
+import io.jclaw.contracts.secret.SecretVault;
 import io.jclaw.storage.thread.JsonlThreadService;
 import io.jclaw.tools.CoreTools;
 import io.jclaw.tools.FileTools;
@@ -338,6 +341,20 @@ public class JclawConfiguration {
         return new JsonLoopStateCodec();
     }
 
+    /**
+     * Secrets the model may reference by name, encrypted at rest.
+     *
+     * <p>The key comes from {@code JCLAW_VAULT_KEY} when set, otherwise from an owner-only key
+     * file generated beside the vault on first use. Only the kernel host and the {@code secrets}
+     * command hold this bean: tool lanes and providers are barred from it by the dependency law.
+     */
+    @Bean
+    public SecretVault secretVault(JclawProperties properties, Clock clock) {
+        byte[] key = VaultKey.parse(System.getenv("JCLAW_VAULT_KEY"))
+                .orElseGet(() -> VaultKey.loadOrCreate(properties.vaultKeyPath()));
+        return new FileSecretVault(new JsonlFile(properties.secretsPath()), key, clock);
+    }
+
     @Bean
     public CapabilityHost capabilityHost(
             List<CapabilityHandler> capabilityHandlers,
@@ -346,6 +363,7 @@ public class JclawConfiguration {
             EventLog eventLog,
             CapabilityPolicy capabilityPolicy,
             CapabilityHandler.HandlerContext handlerContext,
+            SecretVault secretVault,
             Clock clock) {
 
         return new DefaultCapabilityHost(
@@ -358,6 +376,7 @@ public class JclawConfiguration {
                 // Credentials the redactor should mask if a tool ever echoes them back. Read
                 // lazily so a key exported after startup is still covered.
                 () -> credentialValues(),
+                secretVault,
                 clock);
     }
 

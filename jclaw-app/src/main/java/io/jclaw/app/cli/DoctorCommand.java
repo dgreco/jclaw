@@ -33,6 +33,7 @@ public class DoctorCommand implements Callable<Integer> {
     private final WorkspaceGuard workspace;
     private final EgressGuard egress;
     private final CapabilityPolicy policy;
+    private final io.jclaw.contracts.secret.SecretVault vault;
 
     /**
      * Deliberately does <b>not</b> inject {@link io.jclaw.contracts.model.ModelProvider}.
@@ -46,11 +47,13 @@ public class DoctorCommand implements Callable<Integer> {
             JclawProperties properties,
             WorkspaceGuard workspace,
             EgressGuard egress,
-            CapabilityPolicy policy) {
+            CapabilityPolicy policy,
+            io.jclaw.contracts.secret.SecretVault vault) {
         this.properties = properties;
         this.workspace = workspace;
         this.egress = egress;
         this.policy = policy;
+        this.vault = vault;
     }
 
     @Override
@@ -86,6 +89,9 @@ public class DoctorCommand implements Callable<Integer> {
                 ? "none (loopback only)"
                 : (properties.serveToken() != null && !properties.serveToken().isBlank() ? "operator token" : "no operator token")
                         + ", " + properties.serveUsers().size() + " user(s)"));
+        System.out.println("  secret vault         " + vault.list().size() + " secret(s), key from "
+                + (System.getenv("JCLAW_VAULT_KEY") == null || System.getenv("JCLAW_VAULT_KEY").isBlank()
+                        ? "key file " + properties.vaultKeyPath() : "JCLAW_VAULT_KEY"));
         System.out.println("  shell backend        " + ("docker".equals(properties.shellBackend())
                 ? "docker (" + properties.sandboxImage() + ", network " + properties.sandboxNetwork()
                         + ", " + properties.sandboxMemory() + ", " + properties.sandboxCpus() + " cpu)"

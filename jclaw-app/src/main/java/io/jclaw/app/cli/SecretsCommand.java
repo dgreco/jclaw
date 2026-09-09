@@ -1,0 +1,139 @@
+package io.jclaw.app.cli;
+
+import io.jclaw.contracts.capability.CapabilityId;
+import io.jclaw.contracts.secret.SecretVault;
+import io.jclaw.contracts.secret.SecretVault.Binding;
+import io.jclaw.contracts.secret.SecretVault.SecretName;
+import org.springframework.stereotype.Component;
+import picocli.CommandLine.Command;
+import picocli.CommandLine.Option;
+import picocli.CommandLine.Parameters;
+
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+import java.util.LinkedHashSet;
+import java.util.Set;
+import java.util.TreeSet;
+import java.util.concurrent.Callable;
+
+/**
+ * Manages the secret vault.
+ *
+ * <p>Values arrive on standard input or from the terminal, never as an argument: a command-line
+ * argument is visible in the process list and lands in shell history. Listing shows names and
+ * bindings only; there is no command that prints a value back.
+ */
+@Component
+@Command(
+        name = "secrets",
+        description = "Store credentials the agent may use by reference, never see.",
+        mixinStandardHelpOptions = true,
+        subcommands = {SecretsCommand.Set.class, SecretsCommand.ListAll.class, SecretsCommand.Remove.class})
+public class SecretsCommand implements Runnable {
+
+    @Override
+    public void run() {
+        new picocli.CommandLine(this).usage(System.out);
+    }
+
+    @Component
+    @Command(name = "set", description = "Store or replace a secret; the value is read from stdin or prompted.",
+            mixinStandardHelpOptions = true)
+    public static class Set implements Callable<Integer> {
+
+        private final SecretVault vault;
+
+        @Parameters(index = "0", description = "Secret name, as the model will reference it: {{secret:NAME}}.")
+        private String name;
+
+        @Option(names = "--capability", required = true,
+                description = "The one capability the secret may be injected into, e.g. builtin.http_fetch.")
+        private String capability;
+
+        @Option(names = "--host", required = true, split = ",",
+                description = "Hosts the capability may send it to (exact, or *.suffix). Comma-separated.")
+        private String[] hosts;
+
+        public Set(SecretVault vault) {
+            this.vault = vault;
+        }
+
+        @Override
+        public Integer call() throws IOException {
+            String value = readValue();
+            if (value == null || value.isEmpty()) {
+                System.err.println("no value given: pipe it on stdin or type it at the prompt");
+                return 1;
+            }
+            java.util.Set<String> bound = new LinkedHashSet<>(Arrays.asList(hosts));
+            vault.put(new SecretName(name), value, new Binding(CapabilityId.of(capability), bound));
+            System.out.println("stored " + name + " for " + capability + " to " + String.join(", ", new TreeSet<>(bound)));
+            return 0;
+        }
+
+        private static String readValue() throws IOException {
+            java.io.Console console = System.console();
+            if (console != null) {
+                char[] typed = console.readPassword("value: ");
+                return typed == null ? null : new String(typed);
+            }
+            BufferedReader reader = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8));
+            String line = reader.readLine();
+            return line == null ? null : line.strip();
+        }
+    }
+
+    @Component
+    @Command(name = "list", description = "Show secret names and bindings. Values are never shown.",
+            mixinStandardHelpOptions = true)
+    public static class ListAll implements Callable<Integer> {
+
+        private final SecretVault vault;
+
+        public ListAll(SecretVault vault) {
+            this.vault = vault;
+        }
+
+        @Override
+        public Integer call() {
+            var infos = vault.list();
+            if (infos.isEmpty()) {
+                System.out.println("(no secrets)");
+                return 0;
+            }
+            for (SecretVault.SecretInfo info : infos) {
+                System.out.printf("%-24s %-24s %s  (%s)%n", info.name().value(),
+                        info.binding().capability().value(),
+                        String.join(", ", new TreeSet<>(info.binding().hosts())), info.createdAt());
+            }
+            return 0;
+        }
+    }
+
+    @Component
+    @Command(name = "remove", description = "Delete a secret.", mixinStandardHelpOptions = true)
+    public static class Remove implements Callable<Integer> {
+
+        private final SecretVault vault;
+
+        @Parameters(index = "0", description = "Secret name.")
+        private String name;
+
+        public Remove(SecretVault vault) {
+            this.vault = vault;
+        }
+
+        @Override
+        public Integer call() {
+            if (vault.remove(new SecretName(name))) {
+                System.out.println("removed " + name);
+                return 0;
+            }
+            System.err.println("no such secret: " + name);
+            return 1;
+        }
+    }
+}

@@ -27,6 +27,7 @@ import io.jclaw.domain.loop.LoopStateCodec;
 import io.jclaw.domain.prompt.ContextCompaction;
 import io.jclaw.domain.prompt.ContextPolicy;
 import io.jclaw.domain.prompt.PromptAssembly;
+import io.jclaw.contracts.secret.SecretVault;
 import io.jclaw.contracts.skill.SkillCatalog;
 import io.jclaw.kernel.guard.WorkspaceGuard;
 import io.jclaw.loop.EffectInterpreter;
@@ -72,6 +73,7 @@ public class JclawRuntime {
     private final JclawProperties properties;
     private final WorkspaceGuard workspace;
     private final SkillCatalog skills;
+    private final SecretVault vault;
     private final Clock clock;
 
     /**
@@ -99,8 +101,10 @@ public class JclawRuntime {
             JclawProperties properties,
             WorkspaceGuard workspace,
             SkillCatalog skills,
+            SecretVault vault,
             Clock clock) {
         this.interpreter = Objects.requireNonNull(interpreter, "interpreter");
+        this.vault = Objects.requireNonNull(vault, "vault");
         this.threads = Objects.requireNonNull(threads, "threads");
         this.capabilities = Objects.requireNonNull(capabilities, "capabilities");
         this.results = Objects.requireNonNull(results, "results");
@@ -617,7 +621,8 @@ public class JclawRuntime {
         return PromptAssembly.systemPrompt(
                 properties.systemPrompt(),
                 PromptAssembly.workspaceName(workspace.root()),
-                skills.list());
+                skills.list(),
+                vault.list());
     }
 
     /**

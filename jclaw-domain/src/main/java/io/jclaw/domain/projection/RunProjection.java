@@ -121,6 +121,7 @@ public final class RunProjection {
                 case JclawEvent.CapabilityInvoked e -> capabilities.add(new CapabilityCall(
                         e.capability().value(), e.effect().name(), e.outcome(), e.latencyMillis()));
                 case JclawEvent.InjectionDetected e -> injections += e.findings();
+                case JclawEvent.SecretInjected ignored -> { }
                 case JclawEvent.GateRaised e -> {
                     gates.add(new Gate(e.gate(), e.gateId(), Optional.empty()));
                     status = Optional.of(e.gate().blockedStatus());

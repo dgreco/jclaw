@@ -1,8 +1,8 @@
 # jclaw vs IronClaw — Parity
 
-An honest enumeration of what [IronClaw](https://github.com/nearai/ironclaw) (internally "Reborn") has that jclaw does not, and of what jclaw now has. jclaw is roughly 20k lines of Java (plus 6.5k of tests) against IronClaw's ~1.4M lines of Rust across ~63 crates. The **architecture** is equivalent — layer ladder, turn/run lifecycle, untrusted `LoopExit`, single `CapabilityHost` authority boundary, checkpoint-kind–driven recovery — and, after the September 2026 parity work, most of the runtime *mechanisms* are present in some form. What remains missing is breadth: channel adapters, the extension ecosystem, a secrets vault, SQL persistence, and observability plumbing. This file is the list, organised by IronClaw's own crate families so a gap can be traced to the crate that fills it upstream.
+An honest enumeration of what [IronClaw](https://github.com/nearai/ironclaw) (internally "Reborn") has that jclaw does not, and of what jclaw now has. jclaw is roughly 20k lines of Java (plus 6.5k of tests) against IronClaw's ~1.4M lines of Rust across ~63 crates. The **architecture** is equivalent — layer ladder, turn/run lifecycle, untrusted `LoopExit`, single `CapabilityHost` authority boundary, checkpoint-kind–driven recovery — and, after the September 2026 parity work, most of the runtime *mechanisms* are present in some form. What remains missing is breadth: channel adapters, the extension ecosystem, SQL persistence, and observability plumbing. This file is the list, organised by IronClaw's own crate families so a gap can be traced to the crate that fills it upstream.
 
-Sources: IronClaw's `README.md`, `crates/Architecture.md`, and the `crates/` listing as of September 2026; jclaw's code on this checkout (245 tests, 0 failures). Where the upstream doc names a concept and jclaw has an equivalent under a different name, the mapping is given. Where the gap is uncertain it is marked *(unverified)*.
+Sources: IronClaw's `README.md`, `crates/Architecture.md`, and the `crates/` listing as of September 2026; jclaw's code on this checkout (255 tests, 0 failures). Where the upstream doc names a concept and jclaw has an equivalent under a different name, the mapping is given. Where the gap is uncertain it is marked *(unverified)*.
 
 Legend: ✅ at parity · 🟡 partial · ❌ missing · ➕ jclaw-only
 
@@ -25,7 +25,7 @@ Legend: ✅ at parity · 🟡 partial · ❌ missing · ➕ jclaw-only
 | Extension system | `extension_registry`, `_host`, `_manager`, `_support`, `packages/*` | none (built-ins compiled in; MCP is the only external route) | ❌ |
 | Products | `ironclaw_cli`, `_webui`, `_assistant`, `_operator`, `_openai_compat`, `_host_ingress`, Slack/Telegram channel packages | CLI + REPL, and `jclaw serve`: an HTTP ingress with run projections and an SSE event stream | 🟡 |
 | Substrates: filesystem, network | `ironclaw_filesystem`, `ironclaw_network` | `WorkspaceGuard`, `EgressGuard` (host-wide and per-tool lists) | ✅ |
-| Substrates: secrets | `ironclaw_secrets` (AES-256-GCM vault, leased handoff) | environment variables only; redaction of known values | ❌ |
+| Substrates: secrets | `ironclaw_secrets` (AES-256-GCM vault, leased handoff) | `FileSecretVault` (AES-256-GCM, owner-only key file or `JCLAW_VAULT_KEY`); `{{secret:NAME}}` references substituted by the kernel host at dispatch under a capability + host binding | ✅ |
 | Substrates: safety | `ironclaw_safety` (injection detection, sanitization, leak detection, policy severities) | `Redaction`, `InjectionHeuristics` with an `off/warn/sanitize/block` policy, egress lists; no leak detection on outbound requests | 🟡 |
 | Substrates: documents, libsql/Postgres, observability | `ironclaw_documents`, `ironclaw_libsql_runtime`, `ironclaw_observability` | JSONL files with retention; SLF4J logs | ❌ |
 | Events | `event_log`, `event_store`, `event_projections`, `event_streams` | `JsonlEventLog`; `RunProjection` read model; SSE stream per run over `serve` | 🟡 |
@@ -168,8 +168,8 @@ At parity on the trust model and on the gate mechanics, and on tenant isolation;
 | Pattern-based prompt-injection detection on tool results and inbound content | ✅ | 🟡 `InjectionHeuristics` (pure, ten specific rules, three severities) on every tool result in the kernel; inbound content is the operator's own and is not scanned |
 | Content sanitisation / escaping of untrusted text before it re-enters the prompt | ✅ | ✅ flagged output is fenced with a notice and chat-template tokens are defused; the stored payload stays as the tool returned it |
 | Policy rules with severities (Block / Warn / Review / Sanitize) | ✅ | 🟡 `jclaw.injection-policy`: `off`, `warn`, `sanitize` (default), `block` (withholds HIGH findings); no per-rule policy, no review queue |
-| Leak detection on outbound requests and responses | ✅ | 🟡 redaction only; no scan of *outbound* model requests for secrets that arrived via a tool |
-| Credential injection at the host boundary (tools never see the raw secret) | ✅ | 🟡 tools cannot obtain secrets (no method exists) but there is also no way for a tool to *use* one — e.g. an authenticated `http_fetch` is impossible |
+| Leak detection on outbound requests and responses | ✅ | 🟡 redaction only, now including values leased for a call; no scan of *outbound* model requests for secrets that arrived via a tool |
+| Credential injection at the host boundary (tools never see the raw secret) | ✅ | ✅ the model writes `{{secret:NAME}}`; `DefaultCapabilityHost` substitutes the value into the lane's arguments after every check, only if the binding names the capability and every URL host in the arguments; the reference form is fingerprinted, prompted, checkpointed, and logged (`SecretInjected`); `http_fetch` drops headers on cross-host redirects. Tools, providers, and the loop are barred from the vault port by the dependency law |
 | Endpoint allowlisting | ✅ | ✅ host-wide and per-tool lists; each can only narrow — private-network and metadata denials still apply to allowed hosts |
 | Audit log of all tool executions | ✅ | ✅ `CapabilityInvoked` events (ok, denied, failed, blocked, waiting) and `InjectionDetected` |
 
@@ -179,8 +179,8 @@ At parity on the trust model and on the gate mechanics, and on tenant isolation;
 
 | Capability | IronClaw | jclaw |
 |---|---|---|
-| Encrypted secret vault (AES-256-GCM), leased/staged per runtime handoff | ✅ `ironclaw_secrets` | ❌ — environment variables only |
-| Secret references usable by tools without exposure | ✅ | ❌ |
+| Encrypted secret vault (AES-256-GCM), leased/staged per runtime handoff | ✅ `ironclaw_secrets` | ✅ `FileSecretVault`: AES-256-GCM per value with the name as associated data, append-only JSONL, key from an owner-only file or `JCLAW_VAULT_KEY`; leased per capability call. No staging into subprocess environments |
+| Secret references usable by tools without exposure | ✅ | ✅ `{{secret:NAME}}` in any tool argument, bound to one capability and a host list; `jclaw secrets set/list/remove`; the system prompt lists names and bindings, never values |
 | Multi-user identity (`ironclaw_identity`), per-user scoping | ✅ | 🟡 `jclaw.serve-users` names users with static bearer tokens; each is the tenant of its runs, with namespaced threads (`alice:work`), its own memories and approvals, and read access only to its own runs and gates. The operator (`serve-token`) is the `local` tenant the CLI uses and reads everything. No user directory, roles, or per-user policy |
 | Auth domain (`ironclaw_auth`): Google OAuth, NEAR AI login, WebUI login tokens | ✅ | ❌ (Anthropic `ANTHROPIC_AUTH_TOKEN` OAuth-style credential is honoured; `serve-token` and `serve-users` are static bearers, no login flow) |
 | Auth gates that park a run until credentials arrive | ✅ | ✅ (see §4); cleared by setting the credential and resuming, shown by `approvals list` |
@@ -271,7 +271,7 @@ The twelve items of the original list and the six that followed are closed (sect
 
 1. ~~**A real product surface**~~ — closed: the browser UI and the OpenAI-compatible endpoint sit on `serve`. Still open under this heading: Slack/Telegram channel adapters and reply-target bindings.
 2. ~~**Identity and multi-tenancy**~~ — closed at the mechanism level: `serve` users are tenants, and every scope-keyed store and the scheduler separate by tenant. Still open under this heading: a login flow instead of static tokens, roles, per-tenant policy and token accounting, and the `agent` field of `TurnScope`, which is always `default`.
-3. **A secrets vault with credential injection** (§9, §10) — tools cannot see secrets, which is right, but they also cannot use one; an authenticated `http_fetch` needs leased credential handoff at the host boundary.
+3. ~~**A secrets vault with credential injection**~~ — closed: an encrypted vault and host-side substitution of `{{secret:NAME}}` under capability + host bindings. Still open under this heading: staged handoff into subprocess environments, leak scanning of outbound model requests, and per-tenant vaults.
 4. **SQL persistence** (§11) — JSONL with retention is fine on one machine; a hosted deployment needs Postgres, migrations, and materialised projections instead of on-demand folds.
 5. **Sandboxing beyond the shell lane** (§3) — the container backend covers `builtin.shell`; file, http, memory, and MCP lanes still run in-process, and MCP servers' network access is unmediated. A WASM lane with capability-based host imports is the upstream answer.
 6. **Extension ecosystem** (§12) — manifests, a registry, signed `VERIFIED` extensions, installable skill packages. jclaw compiles its built-ins in and has MCP as its only external route.

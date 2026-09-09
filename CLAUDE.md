@@ -20,7 +20,7 @@ jclaw is a Java/Spring Boot reimplementation of the **architecture** of
 untrusted-`LoopExit` trust model, and the `CapabilityHost` authority boundary are faithful; the
 feature surface is a fraction of IronClaw's. See **Not built yet** for the honest list.
 
-245 tests pass across 9 modules, including 13 machine-checked architecture rules.
+255 tests pass across 9 modules, including 14 machine-checked architecture rules.
 
 ## Commands
 
@@ -62,6 +62,7 @@ The `native` profile lives in `jclaw-app/pom.xml`. The Boot parent contributes o
 | `mcp add\|list\|remove\|toggle\|test` | external MCP tool servers (stdio transport) |
 | `recover` | reconcile runs whose worker died |
 | `retain [--dry-run]` | drop old rows of finished runs from results, events, checkpoints |
+| `secrets set\|list\|remove` | encrypted vault of credentials tools use by `{{secret:NAME}}` reference, bound to one capability and a host list |
 | `tools` | capability surface with effect/trust/unattended |
 | `status [--run id]` | recent activity from the event log, or one run's projection |
 | `doctor` | config + security posture; non-zero on real problems |
@@ -252,6 +253,10 @@ the Anthropic SDK, and tool lanes may not read the process environment.
 - `domain` — total, deterministic functions; the clock is a parameter, never read.
 - `loop` — ports only; never imports `providers`, `tools`, or `storage`.
 - `tools` — no adapter holds a `SecretVault` handle; `HandlerContext` has no method to obtain one.
+  The kernel host substitutes `{{secret:NAME}}` references into the arguments a lane receives at
+  dispatch, only when the secret's binding names that capability and every URL host in the
+  arguments; the fingerprint, approval prompt, checkpoints, and events keep the reference form,
+  and the leased value joins that call's redaction set.
 - Events carry ids, refs, enums, and counters. There is no record component for a prompt, a tool
   argument, or a host path — redaction is structural, not remembered.
 - `HandlerError` separates `Denied` (a guard refused) from `Failed` (the lane broke). Collapsing
@@ -405,8 +410,9 @@ architecture and most runtime mechanisms are equivalent, the breadth is not. PAR
 - **Identity beyond static tokens** — `serve` users are tenants (`TurnScope.tenant()`), and every
   scope-keyed store and the scheduler separate by tenant. There is no login flow, no roles, no
   per-tenant policy or token accounting, and `TurnScope.agent()` is always `default`.
-- **A secrets vault** — tools cannot see secrets (right) but also cannot use one: no leased
-  credential handoff, so an authenticated `http_fetch` is impossible.
+- **Secrets beyond one tool call** — the vault leases values into `http_fetch` headers (and any
+  capability a binding names) but there is no staged handoff to subprocesses, no leak scan of
+  outbound model requests, and no per-tenant vaults.
 - **SQL persistence** — `spring-jdbc` and H2 are dependencies but unused; no SQL layer, no
   migrations, no Postgres profile. JSONL with retention is fine at CLI scale, not hosted scale.
 - **Sandboxing beyond the shell lane** — `shell-backend=docker` contains `builtin.shell` only;

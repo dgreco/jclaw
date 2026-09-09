@@ -341,6 +341,14 @@ public record JclawProperties(
     }
 
     /** Per-thread run locks. OS file locks, so a crashed worker's lock dies with it. */
+    public Path secretsPath() {
+        return stateDir.resolve("secrets.jsonl");
+    }
+
+    public Path vaultKeyPath() {
+        return stateDir.resolve("vault.key");
+    }
+
     public Path locksPath() {
         return stateDir.resolve("locks");
     }

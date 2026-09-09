@@ -13,8 +13,11 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * Fetches a URL over HTTP(S).
@@ -22,6 +25,11 @@ import java.util.Objects;
  * <p>Every URL is validated by the host egress guard before a connection is opened — the handler
  * has no way to reach the network except through {@link HandlerContext#checkEgress}, which is what
  * keeps SSRF policy in one place rather than duplicated per tool.
+ *
+ * <p>Request headers are optional and travel only to the host they were written for: a redirect
+ * to another host is fetched without them, the way browsers drop {@code Authorization} across
+ * origins. A vault secret substituted into a header therefore reaches the bound host and no
+ * other, even if that host redirects.
  *
  * <p>Redirects are followed <b>normally, not automatically</b>. {@link HttpClient.Redirect#NEVER}
  * is deliberate: the JDK client would otherwise follow a 302 to {@code http://169.254.169.254/}
@@ -39,7 +47,13 @@ public final class HttpTool implements CapabilityHandler {
             "Fetch a URL over HTTP or HTTPS and return the response body as text.",
             EffectClass.NETWORK,
             Schemas.object(
-                    Schemas.properties("url", Schemas.string("Absolute http:// or https:// URL to fetch.")),
+                    Schemas.properties(
+                            "url", Schemas.string("Absolute http:// or https:// URL to fetch."),
+                            "headers", Map.of(
+                                    "type", "object",
+                                    "description", "Optional request headers, name to value. "
+                                            + "A vault secret goes here as {{secret:NAME}}.",
+                                    "additionalProperties", Map.of("type", "string"))),
                     List.of("url")));
 
     private final HttpClient client;
@@ -67,24 +81,41 @@ public final class HttpTool implements CapabilityHandler {
         if (url.isBlank()) {
             return Result.err(HandlerError.failed("url_required"));
         }
-        return fetchFollowing(url, context, MAX_REDIRECTS);
+        Map<String, String> headers = new LinkedHashMap<>();
+        if (invocation.arguments().get("headers") instanceof Map<?, ?> given) {
+            for (Map.Entry<?, ?> entry : given.entrySet()) {
+                String name = String.valueOf(entry.getKey()).trim();
+                if (name.isEmpty() || RESTRICTED_HEADERS.contains(name.toLowerCase(java.util.Locale.ROOT))) {
+                    return Result.err(HandlerError.failed("header_not_allowed"));
+                }
+                headers.put(name, String.valueOf(entry.getValue()));
+            }
+        }
+        return fetchFollowing(url, headers, null, context, MAX_REDIRECTS);
     }
 
-    /** Fetches, re-validating the target on every redirect hop. */
-    private Result<String, HandlerError> fetchFollowing(String url, HandlerContext context, int hopsLeft) {
+    /** Headers the client owns; a caller setting them would break or spoof the request. */
+    private static final Set<String> RESTRICTED_HEADERS = Set.of(
+            "host", "content-length", "connection", "upgrade", "transfer-encoding", "user-agent");
+
+    /** Fetches, re-validating the target on every redirect hop and dropping headers across hosts. */
+    private Result<String, HandlerError> fetchFollowing(
+            String url, Map<String, String> headers, String headersHost, HandlerContext context, int hopsLeft) {
         if (hopsLeft <= 0) {
             return Result.err(HandlerError.failed("too_many_redirects"));
         }
         return context.checkEgress(url).mapErr(HandlerError::denied).flatMap(uri -> {
+            String host = uri.getHost() == null ? "" : uri.getHost();
+            boolean sameHost = headersHost == null || headersHost.equalsIgnoreCase(host);
             HttpResponse<String> response;
             try {
-                response = client.send(
-                        HttpRequest.newBuilder(uri)
-                                .timeout(TIMEOUT)
-                                .header("User-Agent", "jclaw/0.1")
-                                .GET()
-                                .build(),
-                        HttpResponse.BodyHandlers.ofString());
+                HttpRequest.Builder request = HttpRequest.newBuilder(uri)
+                        .timeout(TIMEOUT)
+                        .header("User-Agent", "jclaw/0.1");
+                if (sameHost) {
+                    headers.forEach(request::header);
+                }
+                response = client.send(request.GET().build(), HttpResponse.BodyHandlers.ofString());
             } catch (IOException e) {
                 return Result.err(HandlerError.failed("request_failed"));
             } catch (InterruptedException e) {
@@ -102,7 +133,7 @@ public final class HttpTool implements CapabilityHandler {
                 }
                 // Resolve relative redirects against the current URI, then re-check egress.
                 String next = uri.resolve(location).toString();
-                return fetchFollowing(next, context, hopsLeft - 1);
+                return fetchFollowing(next, headers, headersHost == null ? host : headersHost, context, hopsLeft - 1);
             }
             if (status >= 400) {
                 // Status only. A response body from a failed request is attacker-controlled text.
