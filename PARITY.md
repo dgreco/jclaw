@@ -29,7 +29,7 @@ Legend: ✅ at parity · 🟡 partial · ❌ missing · ➕ jclaw-only
 | Substrates: safety | `ironclaw_safety` (injection detection, sanitization, leak detection, policy severities) | `Redaction` only | 🟡 |
 | Substrates: documents, libsql/Postgres, observability | `ironclaw_documents`, `ironclaw_libsql_runtime`, `ironclaw_observability` | JSONL files; SLF4J logs | ❌ |
 | Events | `event_log`, `event_store`, `event_projections`, `event_streams` | `JsonlEventLog` (append + tail); no projections, no streams | 🟡 |
-| Domains: threads, memory, skills, triggers, llm | `ironclaw_threads`, `_memory`, `_skills`, `_triggers`, `_llm` | `ThreadService`, `MemoryStore`, `SkillCatalog`, `RoutineStore`, `ModelProvider` | 🟡 |
+| Domains: threads, memory, skills, triggers, llm | `ironclaw_threads`, `_memory`, `_skills`, `_triggers`, `_llm` | `ThreadService`, `MemoryStore` + `EmbeddingProvider`, `SkillCatalog`, `RoutineStore`, `ModelProvider` | 🟡 |
 | Domains: conversations, auth, identity, attachments, extractors, outbound | same-named crates | none | ❌ |
 | Subagents | `ironclaw_loop_host` subagent port | `RuntimeSubagentHost` (child runs, depth ≤ 3) | ✅ |
 
@@ -109,9 +109,9 @@ At parity on the trust model; missing the multi-tenant, multi-process, and resou
 | Multiple **loop families** / sealed strategy composition | ✅ | ❌ — one machine; `LoopPolicy` is a value, not a strategy |
 | `CanonicalAgentLoopExecutor` tick pipeline with input / prompt / model / capability / gate / stop stages | ✅ | 🟡 same stages, fixed; no pluggable stage |
 | Execution-stage hooks (`ironclaw_hooks`) — pre/post model, pre/post tool | ✅ | ❌ |
-| Prompt envelope contract (`prompt_envelope`) with context policy | ✅ | 🟡 `PromptAssembly` (base + workspace + skill summaries); no context policy |
+| Prompt envelope contract (`prompt_envelope`) with context policy | ✅ | 🟡 `PromptAssembly` (base + workspace + skill summaries) plus `ContextPolicy` on `LoopPolicy`; no envelope contract type — the system prompt and the message window are assembled separately |
 | Context management: compaction / summarisation / truncation policy | ✅ *(via context policy in `ResolvedRunProfile`)* | 🟡 `ContextPolicy` (message cap + estimated token budget) on `LoopPolicy`; pure `ContextCompaction` applied at admission and by `TurnMachine` before every model call — boundary-safe truncation with an omission notice, idempotent. No summarisation |
-| `RunProfileResolver`: driver, checkpoint schema, model profile, capability surface, context policy, budget, scheduling class | ✅ | 🟡 `LoopPolicy` + `RunRecord` capture model, prompt, tools, budget; no scheduling class, one schema version |
+| `RunProfileResolver`: driver, checkpoint schema, model profile, capability surface, context policy, budget, scheduling class | ✅ | 🟡 `LoopPolicy` + `RunRecord` capture model, prompt, tools, budget, context policy; the context policy is resolved from current config on resume rather than stored on the run (it bounds the model's view, not the run's authority); no scheduling class, one schema version |
 | Model gateway abstraction with per-profile routing | ✅ | 🟡 one `ModelProvider` per process, chosen at boot; `failover` is the only composite |
 | Attachments (`ironclaw_attachments`) and extractors (`ironclaw_extractors`) — images, files, documents into the prompt | ✅ | ❌ — text-only `ContentBlock`s; `Thinking` is parsed but there is no image block |
 | Cancellation | ✅ | ✅ (checked between effects) |
@@ -198,7 +198,7 @@ At parity on the trust model; missing the multi-tenant, multi-process, and resou
 | Durable capability results | ✅ | 🟡 `CapabilityResultStore` is in-memory (per-run); result refs do not survive the process |
 | Transcript with drafts vs finals | ✅ | 🟡 `appendAssistant(…, draft)` flag exists; nothing writes drafts |
 | Checkpoint schema versioning + migration | ✅ | 🟡 schema version recorded (v1); an unreadable version fails closed; no migration |
-| Thread history compaction / archival | ✅ *(unverified)* | ❌ — `transcript.jsonl` grows forever |
+| Thread history compaction / archival | ✅ *(unverified)* | ❌ — `transcript.jsonl` grows forever. The *model's view* of a thread is bounded by `ContextCompaction` (§5); the file itself is never compacted or archived |
 
 ---
 
@@ -222,7 +222,7 @@ At parity on the trust model; missing the multi-tenant, multi-process, and resou
 | Structured tracing / metrics substrate (`ironclaw_observability`, `trace_commons`) | ✅ | ❌ — SLF4J/logback with `--debug`/`--trace`; no OpenTelemetry, no metrics |
 | Latency harness (`harness/latency/`) | ✅ | ❌ |
 | Deployment assets (`deploy/`, `docker/`, `infra/runner/`) | ✅ | ❌ — one jar or one binary, no Dockerfile |
-| Test tooling (`test-tools/`, `tests/` integration suites) | ✅ | 🟡 129 unit + integration tests; no end-to-end suite against a live provider |
+| Test tooling (`test-tools/`, `tests/` integration suites) | ✅ | 🟡 167 unit + integration tests, including a child-JVM test for cross-process thread locking; no end-to-end suite against a live provider |
 | `doctor`-style preflight | *(unverified)* | ➕ `jclaw doctor` |
 
 ---
@@ -239,6 +239,7 @@ At parity on the trust model; missing the multi-tenant, multi-process, and resou
 | OpenRouter routing preferences (provider order, fallbacks, transforms) | *(unverified)* | ❌ |
 | Per-run model profile selection | ✅ | 🟡 one model per process; recorded per run for resume fidelity |
 | Multimodal input | ✅ | ❌ |
+| Embedding provider for memory retrieval | ✅ | ✅ `jclaw.embedding-provider` (`openai`, `openrouter`, `ollama`, `local`) over one OpenAI-compatible `/embeddings` adapter; Anthropic has no embeddings endpoint, so a Claude operator pairs it with Ollama or OpenAI. Failures degrade to lexical + recency |
 
 ---
 
@@ -252,6 +253,9 @@ Listed so the comparison is not read as one-directional:
 - Native image with captured SDK metadata, verified including subprocess spawning.
 - REPL slash commands and dual-mode arrow-key bindings.
 - `doctor` as a CI preflight; `recover --dry-run` explaining every decision.
+- Thread exclusivity as an OS file lock that dies with its process — no TTL, no reconciliation, proven with a second JVM in the test suite.
+- Context compaction that is pure, idempotent, and structurally safe (never opens a request with a tool result or a bare assistant turn; never splits a tool call from its results; reports the running total omitted).
+- Vector ranking that cannot mis-rank across embedding models: every stored vector carries its model id and only same-space vectors are compared.
 
 ---
 
