@@ -55,30 +55,40 @@ byte-verify:
 build-test:
   stage: build
   image: maven:3.9.11-eclipse-temurin-21
-  # The runner attaches its own dind service, so this job does not declare one: an explicit
-  # `services: docker:dind` is rejected with "alias is already in use by another service", and
-  # overriding DOCKER_HOST to the plain-TCP port while the runner's DOCKER_TLS_VERIFY is still
-  # set produced a null SSL context and no Docker at all. Inheriting the runner's own consistent
-  # set is the only configuration that can be right, since it is the one the daemon was started
-  # with.
+  # Docker-in-Docker, so PostgresStorageIntegrationTest starts a real PostgreSQL instead of
+  # skipping: everything under jclaw.storage=sql was written against embedded H2, and SqlSchema
+  # only claims its DDL is portable. This is what checks the claim on every push.
   #
-  # PostgresStorageIntegrationTest is @Testcontainers(disabledWithoutDocker = true): if none of
-  # this reaches a daemon it skips, and the job still passes. The line below reports what the
-  # job can actually see, so the next failure is evidence rather than a guess.
+  # Three things had to line up, each learned from a failed run rather than guessed:
+  #
+  #  - The job must declare the service. The runner is *named* docker-dind and exports
+  #    DOCKER_TLS_VERIFY=1 and DOCKER_TLS_CERTDIR=/certs, but it starts no daemon on its own:
+  #    without a `services:` entry there is no "Starting service" line, /certs/client is empty,
+  #    and nothing is listening.
+  #  - The alias cannot be `docker`. That one is taken — "alias is already in use by another
+  #    service" — so this uses `dind` and addresses the daemon by that name.
+  #  - The inherited TLS variables must be cleared, not worked around. Leaving
+  #    DOCKER_TLS_VERIFY=1 set while pointing at the plain-TCP port makes docker-java attempt
+  #    TLS with no certificates, which surfaces as a null SSL context and no Docker at all.
+  #
+  # Plain TCP is safe here: the daemon exists only for this job and is reachable only from its
+  # network. The test is @Testcontainers(disabledWithoutDocker = true), so if any of this stops
+  # working it goes back to skipping and the job still passes.
+  services:
+    - name: docker:27-dind
+      alias: dind
   variables:
-    # The runner sets DOCKER_TLS_VERIFY=1 and DOCKER_TLS_CERTDIR=/certs but no DOCKER_HOST, and
-    # mounts no socket — the standard dind-over-TLS shape, where the job supplies the address and
-    # the client certificates the daemon generated into the shared /certs volume. 2376 is the TLS
-    # port; 2375 is the plain one the daemon is not listening on.
-    DOCKER_HOST: tcp://docker:2376
-    DOCKER_CERT_PATH: /certs/client
-    # The dind daemon is discarded with the job, so there is nothing for Ryuk to reap, and it
-    # wants a socket mount this job does not have.
+    DOCKER_HOST: tcp://dind:2375
+    DOCKER_TLS_CERTDIR: ""
+    DOCKER_TLS_VERIFY: ""
+    DOCKER_CERT_PATH: ""
+    # The daemon is discarded with the job, so there is nothing for Ryuk to reap, and it wants a
+    # socket mount this job does not have.
     TESTCONTAINERS_RYUK_DISABLED: "true"
   <<: *maven-cache
   script:
     - java -version && mvn -version
-    - 'ls /certs/client 2>/dev/null || echo "no /certs/client — dind certificates are elsewhere"'
+    - 'timeout 30 bash -c "until (echo > /dev/tcp/dind/2375) 2>/dev/null; do sleep 1; done" && echo "dind reachable" || echo "dind NOT reachable"'
     - mvn $MAVEN_CLI_OPTS verify
   after_script:
     # One-line summary in the job log. Counts <testcase> elements in the XML reports: the
