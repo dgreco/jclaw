@@ -210,7 +210,15 @@ public final class RunTrace {
         return String.valueOf(at.getEpochSecond() * 1_000_000_000L + at.getNano());
     }
 
-    private static String spanId(TurnRunId run, int index) {
+    /**
+     * The span id for one step of a run: 8 bytes derived from the run id and an index.
+     *
+     * <p>Public because outbound calls need a span id to put in a {@code traceparent} header, and
+     * deriving it rather than generating one keeps the property the rest of this class relies on:
+     * the same run always produces the same trace, so a trace can be rebuilt from the log after
+     * the fact and still match what a collector received while the run was happening.
+     */
+    public static String spanId(TurnRunId run, int index) {
         return hex(digest(run.value() + ":" + index), 8);
     }
 

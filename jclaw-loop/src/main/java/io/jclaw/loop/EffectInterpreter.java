@@ -285,6 +285,23 @@ public final class EffectInterpreter {
         };
     }
 
+    /**
+     * Runs {@code work} with W3C trace context current, so an outbound call can carry it.
+     *
+     * <p>The scope is closed whatever happens, including on an exception, which is the property
+     * that keeps a failed call from leaving the next one attributed to it.
+     */
+    private static <T> T withTrace(TurnRunId run, int iteration, java.util.function.Supplier<T> work) {
+        io.jclaw.contracts.observability.TraceContext context =
+                new io.jclaw.contracts.observability.TraceContext(
+                        io.jclaw.domain.observability.RunTrace.traceId(run),
+                        io.jclaw.domain.observability.RunTrace.spanId(run, iteration + 1),
+                        true);
+        try (var scope = io.jclaw.contracts.observability.TraceContext.open(context)) {
+            return work.get();
+        }
+    }
+
     private Observation callModel(
             TurnRunId run, TurnScope scope, LoopExecutionState state, LoopDecision.CallModel original, RunHooks hooks) {
         // Hooks first. A hook may narrow the request or stop it; it may not widen it, and a hook
@@ -330,10 +347,15 @@ public final class EffectInterpreter {
         // Streaming and non-streaming produce the same ModelResponse, so the machine is unaware
         // of the difference — presentation must not change the agent's behaviour.
         // A summary call is not the agent speaking, so it is never streamed to the user.
-        var result = hooks.streamSink()
+        //
+        // The trace scope makes this call's ids available to whichever adapter is about to write
+        // a header. The span id is derived from the run and the iteration, so it matches the span
+        // the log will later be folded into: a collector's view of the call and jclaw's own
+        // reconstruction of it name the same span rather than two that happen to overlap.
+        var result = withTrace(run, state.iteration(), () -> hooks.streamSink()
                 .filter(sink -> call.userFacing())
                 .map(sink -> provider.stream(call.request(), sink))
-                .orElseGet(() -> provider.complete(call.request()));
+                .orElseGet(() -> provider.complete(call.request())));
         long elapsed = clock.millis() - startedAt;
 
         final ModelRequest sent = request;

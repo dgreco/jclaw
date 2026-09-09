@@ -18,15 +18,42 @@ import java.util.concurrent.atomic.LongAdder;
  * process, which is what a scraper expects; history is the log's job.
  *
  * <p>Hand-rolled rather than a metrics library because the surface is small (counters and
- * timers with a handful of label sets) and a dependency would bring reflection the native image
- * would have to be told about.
+ * histograms with a handful of label sets) and a dependency would bring reflection the native
+ * image would have to be told about.
  */
 public final class Telemetry {
 
-    private static final class Timer {
+    /**
+     * Bucket upper bounds in milliseconds, as Prometheus wants them: cumulative and ascending.
+     *
+     * <p>Chosen for what is actually being measured. A capability call is usually single-digit
+     * milliseconds and a model call is usually seconds, so the range has to span four orders of
+     * magnitude; the spacing is roughly 1-2-5 per decade, which is enough to see a shift in a
+     * quantile without one series per metric per label set becoming the memory problem. The last
+     * finite bucket is a minute, because a call slower than that is not a latency question.
+     */
+    static final long[] BUCKETS_MILLIS =
+            {1, 2, 5, 10, 25, 50, 100, 250, 500, 1_000, 2_500, 5_000, 10_000, 30_000, 60_000};
+
+    /**
+     * A latency distribution.
+     *
+     * <p>Count, sum, and max answered "is it slow on average" and nothing else: an average hides
+     * the tail, and the tail is where a timeout lives. Buckets make a real quantile computable by
+     * the scraper, which is where that decision belongs — the process should not be choosing
+     * which percentile anyone cares about.
+     */
+    private static final class Histogram {
         final LongAdder count = new LongAdder();
         final LongAdder sumMillis = new LongAdder();
+        final LongAdder[] buckets = new LongAdder[BUCKETS_MILLIS.length];
         volatile long maxMillis;
+
+        Histogram() {
+            for (int i = 0; i < buckets.length; i++) {
+                buckets[i] = new LongAdder();
+            }
+        }
 
         void record(long millis) {
             count.increment();
@@ -34,11 +61,18 @@ public final class Telemetry {
             if (millis > maxMillis) {
                 maxMillis = millis;
             }
+            // Cumulative: a value counts in its own bucket and every wider one, which is what
+            // `le` means and what makes histogram_quantile work.
+            for (int i = 0; i < BUCKETS_MILLIS.length; i++) {
+                if (millis <= BUCKETS_MILLIS[i]) {
+                    buckets[i].increment();
+                }
+            }
         }
     }
 
     private final Map<String, LongAdder> counters = new ConcurrentHashMap<>();
-    private final Map<String, Timer> timers = new ConcurrentHashMap<>();
+    private final Map<String, Histogram> timers = new ConcurrentHashMap<>();
 
     /** Increments {@code name} with the given label pairs. */
     public void count(String name, String... labels) {
@@ -52,7 +86,7 @@ public final class Telemetry {
 
     /** Records one duration against {@code name} with the given label pairs. */
     public void time(String name, long millis, String... labels) {
-        timers.computeIfAbsent(series(name, labels), ignored -> new Timer()).record(Math.max(0, millis));
+        timers.computeIfAbsent(series(name, labels), ignored -> new Histogram()).record(Math.max(0, millis));
     }
 
     /** Updates the metrics for one audit event. */
@@ -95,15 +129,40 @@ public final class Telemetry {
         StringBuilder out = new StringBuilder();
         new TreeMap<>(counters).forEach((series, value) ->
                 out.append(series).append(' ').append(value.sum()).append('\n'));
-        new TreeMap<>(timers).forEach((series, timer) -> {
+        // One TYPE line per metric name, not per series: a second one for the same name makes a
+        // scraper reject the whole scrape, and one metric commonly has several label sets.
+        java.util.Set<String> typed = new java.util.HashSet<>();
+        new TreeMap<>(timers).forEach((series, histogram) -> {
             int brace = series.indexOf('{');
             String name = brace < 0 ? series : series.substring(0, brace);
             String labels = brace < 0 ? "" : series.substring(brace);
-            out.append(name).append("_count").append(labels).append(' ').append(timer.count.sum()).append('\n');
-            out.append(name).append("_sum").append(labels).append(' ').append(timer.sumMillis.sum()).append('\n');
-            out.append(name).append("_max").append(labels).append(' ').append(timer.maxMillis).append('\n');
+            if (typed.add(name)) {
+                out.append("# TYPE ").append(name).append(" histogram\n");
+            }
+            for (int i = 0; i < BUCKETS_MILLIS.length; i++) {
+                out.append(name).append("_bucket")
+                        .append(withLabel(labels, "le", String.valueOf(BUCKETS_MILLIS[i])))
+                        .append(' ').append(histogram.buckets[i].sum()).append('\n');
+            }
+            // +Inf is mandatory and must equal the count, or a scraper reads the series as broken.
+            out.append(name).append("_bucket").append(withLabel(labels, "le", "+Inf"))
+                    .append(' ').append(histogram.count.sum()).append('\n');
+            out.append(name).append("_count").append(labels).append(' ').append(histogram.count.sum()).append('\n');
+            out.append(name).append("_sum").append(labels).append(' ').append(histogram.sumMillis.sum()).append('\n');
+            // Not part of the histogram type, kept because it is the one number a human reads
+            // straight off a terminal without a query engine.
+            out.append(name).append("_max").append(labels).append(' ').append(histogram.maxMillis).append('\n');
         });
         return out.toString();
+    }
+
+    /** Adds one label to a rendered label set, creating the braces when there were none. */
+    private static String withLabel(String labels, String name, String value) {
+        String pair = name + "=\"" + value + "\"";
+        if (labels.isEmpty()) {
+            return "{" + pair + "}";
+        }
+        return labels.substring(0, labels.length() - 1) + "," + pair + "}";
     }
 
     private static String series(String name, String... labels) {

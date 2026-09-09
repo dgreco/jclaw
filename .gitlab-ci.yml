@@ -145,6 +145,10 @@ native-image:
     # and the projection a finished run wrote reads back through the pooled connection.
     - export SQLRUN=$(./jclaw-app/target/jclaw status -n 20 --jclaw.workspace=$SMOKE --jclaw.state-dir=$SMOKE/sql --jclaw.provider=mock --jclaw.storage=sql | grep -o 'run_[0-9a-f]*' | head -1)
     - ./jclaw-app/target/jclaw status --run $SQLRUN --spans --jclaw.workspace=$SMOKE --jclaw.state-dir=$SMOKE/sql --jclaw.provider=mock --jclaw.storage=sql | grep -q COMPLETED
+    # Spans: `--spans` is the option `--trace` could never be, since that name is claimed
+    # process-wide for verbosity. Cheap to check and silent to lose.
+    - $JC run "metrics" --jclaw.mock-script=text:done
+    - $JC status --run $($JC status -n 20 | grep -o 'run_[0-9a-f]*' | head -1) --spans | grep -q "model.call"
     - ./jclaw-app/target/jclaw doctor || true            # informational in CI
     - echo "NATIVE_ARCH=$(uname -m)" > native.env        # the release job names the asset by it
   artifacts:

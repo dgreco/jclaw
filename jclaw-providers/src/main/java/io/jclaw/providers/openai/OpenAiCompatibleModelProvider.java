@@ -312,6 +312,11 @@ public final class OpenAiCompatibleModelProvider implements ModelProvider {
             http.header("Accept", "text/event-stream");
         }
         apiKey.ifPresent(key -> http.header("Authorization", "Bearer " + key));
+        // W3C trace context, when the interpreter opened a scope for this call. It carries only
+        // two opaque identifiers — no prompt, no credential, nothing about the workspace — and
+        // it is what lets a gateway's trace of the request join jclaw's trace of the run.
+        io.jclaw.contracts.observability.TraceContext.current()
+                .ifPresent(trace -> http.header("traceparent", trace.traceparent()));
         extraHeaders.forEach(http::header);
         return Result.ok(new Prepared(toolNames, http.build()));
     }

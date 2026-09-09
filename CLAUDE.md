@@ -21,7 +21,7 @@ jclaw is a Java/Spring Boot reimplementation of the **architecture** of
 untrusted-`LoopExit` trust model, and the `CapabilityHost` authority boundary are faithful; the
 feature surface is a fraction of IronClaw's. See **Not built yet** for the honest list.
 
-342 tests pass across 9 modules, including 15 machine-checked architecture rules.
+356 tests pass across 9 modules, including 15 machine-checked architecture rules.
 
 ## Commands
 
@@ -468,10 +468,15 @@ architecture and most runtime mechanisms are equivalent, the breadth is not. PAR
 - **Pluggable pipeline stages** — hooks cover pre/post model and capability, and two families
   exist (`canonical`, `reflective`); there is no hook on prompt assembly or gate raising, and a
   new family is Java code, not configuration.
-- **Live instrumentation** — metrics (`/metrics`, Prometheus text) and traces (`/runs/{r}/trace`,
-  OTLP/JSON, optional export to `otlp-endpoint`) are projections of the event log, computed
-  when an event is written or a run finishes; there is no in-process OpenTelemetry SDK, no
-  context propagation into provider or MCP calls, and no histograms (count, sum, max only).
+- **Live instrumentation** — metrics (`/metrics`, Prometheus text, with real latency histograms)
+  and traces (`/runs/{r}/trace`, OTLP/JSON, optional export to `otlp-endpoint`) are projections
+  of the event log, and outbound model and MCP-over-HTTP calls carry a W3C `traceparent` naming
+  the run's own trace and span. There is still **no OpenTelemetry SDK in the process**, which is
+  a decision rather than an omission: spans are folded from the audit log, so they cannot
+  disagree with it, and an SDK would add a second in-memory span model to keep in step plus a
+  reflective dependency the native image would have to be taught. What that costs is the SDK's
+  auto-instrumentation and its exporters' batching and retry; the OTLP/JSON export here is
+  best-effort and unbatched.
 - **Triggers beyond the four forms** — a routine fires on cron, an interval, a webhook
   (`POST /hooks/{name}`, bearer secret, SHA-256 stored), or an audit event (`run.finished`,
   `gate.raised`). There is no filesystem watch, no inbound-message trigger, no fan-out to several

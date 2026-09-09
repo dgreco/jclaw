@@ -75,6 +75,9 @@ public final class HttpTransport implements McpTransport {
                 .POST(HttpRequest.BodyPublishers.ofString(
                         mapper.writeValueAsString(envelope), StandardCharsets.UTF_8));
         authorization.ifPresent(value -> request.header("Authorization", value));
+        // The run's trace, when one is current, so an MCP server's own spans join jclaw's.
+        io.jclaw.contracts.observability.TraceContext.current()
+                .ifPresent(trace -> request.header("traceparent", trace.traceparent()));
         String session = sessionId.get();
         if (session != null) {
             request.header("Mcp-Session-Id", session);

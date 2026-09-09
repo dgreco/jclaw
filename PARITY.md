@@ -2,7 +2,7 @@
 
 An honest enumeration of what [IronClaw](https://github.com/nearai/ironclaw) (internally "Reborn") has that jclaw does not, and of what jclaw now has. jclaw is roughly 20k lines of Java (plus 6.5k of tests) against IronClaw's ~1.4M lines of Rust across ~63 crates. The **architecture** is equivalent — layer ladder, turn/run lifecycle, untrusted `LoopExit`, single `CapabilityHost` authority boundary, checkpoint-kind–driven recovery — and, after the September 2026 parity work, most of the runtime *mechanisms* are present in some form. What remains missing is breadth, not mechanism: the long tail catalogued in section 16. This file is the list, organised by IronClaw's own crate families so a gap can be traced to the crate that fills it upstream.
 
-Sources: IronClaw's `README.md`, `crates/Architecture.md`, and the `crates/` listing as of September 2026; jclaw's code on this checkout (342 tests, 0 failures). Where the upstream doc names a concept and jclaw has an equivalent under a different name, the mapping is given. Where the gap is uncertain it is marked *(unverified)*.
+Sources: IronClaw's `README.md`, `crates/Architecture.md`, and the `crates/` listing as of September 2026; jclaw's code on this checkout (356 tests, 0 failures). Where the upstream doc names a concept and jclaw has an equivalent under a different name, the mapping is given. Where the gap is uncertain it is marked *(unverified)*.
 
 Legend: ✅ at parity · 🟡 partial · ❌ missing · ➕ jclaw-only
 
@@ -220,7 +220,7 @@ At parity on the trust model and on the gate mechanics, and on tenant isolation;
 
 | Capability | IronClaw | jclaw |
 |---|---|---|
-| Structured tracing / metrics substrate (`ironclaw_observability`, `trace_commons`) | ✅ | 🟡 both projected from the event log rather than instrumented: `Telemetry` counts every written event into Prometheus-format metrics at `/metrics`; the pure `RunTrace` turns a run's events into spans (root, model calls, capability calls, gates, with measured latencies) served as OTLP/JSON at `/runs/{r}/trace`, printed by `status --trace`, and exported to `jclaw.otlp-endpoint` when a run finishes. No OpenTelemetry SDK in-process, no propagation into provider/MCP calls, no histograms |
+| Structured tracing / metrics substrate (`ironclaw_observability`, `trace_commons`) | ✅ | 🟡 both projected from the event log rather than instrumented: `Telemetry` counts every written event into Prometheus-format metrics at `/metrics`; the pure `RunTrace` turns a run's events into spans (root, model calls, capability calls, gates, with measured latencies) served as OTLP/JSON at `/runs/{r}/trace`, printed by `status --spans`, and exported to `jclaw.otlp-endpoint` when a run finishes. Latencies are cumulative-bucket histograms; model and MCP-over-HTTP calls carry a W3C `traceparent` naming the run's own trace and span, so a collector joins the callee's spans to jclaw's. No OpenTelemetry SDK in-process — deliberately, since folded spans cannot disagree with the log — so no auto-instrumentation and no batched exporter |
 | Latency harness (`harness/latency/`) | ✅ | ❌ |
 | Deployment assets (`deploy/`, `docker/`, `infra/runner/`) | ✅ | ❌ — one jar or one binary, no Dockerfile; a GitLab release pipeline publishes both |
 | Test tooling (`test-tools/`, `tests/` integration suites) | ✅ | 🟡 302 unit + integration tests, including a child-JVM test for cross-process thread locking and a fake-docker test for the sandbox contract; no end-to-end suite against a live provider |
@@ -301,9 +301,14 @@ Ranked, again, by what a deployment beyond one operator's machine would hit firs
    projection is materialised into `jclaw_run_projection`, and connections come from a HikariCP
    pool. Still open under this heading: rows are JSON documents rather than typed columns, the
    run view is the only materialised projection, and there is no read replica or partitioning.
-7. **In-process telemetry** (§13) — metrics and traces are projections of the audit log,
-   computed as events are written. There is no OpenTelemetry SDK in the process, no context
-   propagation into provider or MCP calls, and no latency histograms (count, sum, max only).
+7. ~~**In-process telemetry**~~ — mostly closed: latencies are real Prometheus histograms with
+   cumulative buckets, and model and MCP-over-HTTP calls carry a W3C `traceparent` naming the
+   run's own trace and span, so a collector can join a provider's spans to jclaw's. The
+   OpenTelemetry **SDK** is deliberately not adopted: spans here are folded from the audit log
+   and so cannot disagree with it, while an SDK would add a second span model to keep in step and
+   a reflective dependency the native image would have to be taught. What that leaves open is
+   the SDK's auto-instrumentation and its exporters' batching and retry — the OTLP/JSON export
+   is best-effort and unbatched.
 8. **Pluggable stages** (§5) — hooks cover the model and capability stages, and there are two
    loop families. Prompt assembly and gate raising take no hook, and a new family is Java, not
    configuration.

@@ -241,6 +241,12 @@ public final class AnthropicModelProvider implements ModelProvider {
                 .model(request.model())
                 .maxTokens(request.maxTokens());
 
+        // W3C trace context, when the interpreter opened a scope for this call. Two opaque
+        // identifiers and nothing else, so a gateway or proxy in front of the API can join its
+        // trace of the request to jclaw's trace of the run.
+        io.jclaw.contracts.observability.TraceContext.current().ifPresent(trace ->
+                builder.putAdditionalHeader("traceparent", trace.traceparent()));
+
         if (!request.system().isBlank()) {
             builder.system(request.system());
         }
