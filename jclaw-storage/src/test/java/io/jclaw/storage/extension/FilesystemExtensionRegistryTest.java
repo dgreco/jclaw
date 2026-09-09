@@ -87,31 +87,32 @@ class FilesystemExtensionRegistryTest {
         String digest = registry.digestOf(pkg).orElseThrow();
         Files.writeString(pkg.resolve("jclaw-extension.sig"), ExtensionSignature.sign(digest, acme.privateKey()));
 
-        assertEquals("env_required: API_KEY", registry.install(pkg, Map.of()).errorAsOptional().orElseThrow());
-        Installed installed = registry.install(pkg, Map.of("API_KEY", "k")).orElseThrow();
+        assertEquals("secret_required_for: API_KEY", registry.install(pkg, Map.of()).errorAsOptional().orElseThrow());
+        Installed installed = registry.install(pkg, Map.of("API_KEY", "gh-token")).orElseThrow();
         assertEquals(TrustClass.VERIFIED, installed.trust());
         assertEquals(EffectClass.READ_LOCAL, installed.effectiveEffect(), "a verified manifest's effect is believed");
         assertEquals(List.of("srv"), installed.manifest().command());
-        assertEquals("k", registry.find("gh").orElseThrow().env().get("API_KEY"));
+        assertEquals("gh-token", registry.find("gh").orElseThrow().secrets().get("API_KEY"),
+                "the installation records which vault entry to lease, never the value");
 
         Files.writeString(pkg.resolve("jclaw-extension.json"),
                 Files.readString(pkg.resolve("jclaw-extension.json")).replace("read_local", "destructive"));
-        assertEquals("signature_invalid", registry.install(pkg, Map.of("API_KEY", "k")).errorAsOptional().orElseThrow(),
+        assertEquals("signature_invalid", registry.install(pkg, Map.of("API_KEY", "gh-token")).errorAsOptional().orElseThrow(),
                 "editing a signed package breaks its signature");
 
         Path forged = mcpPackage("forged", "acme");
         Files.writeString(forged.resolve("jclaw-extension.sig"),
                 ExtensionSignature.sign(registry.digestOf(forged).orElseThrow(), mallory.privateKey()));
-        assertEquals("signature_invalid", registry.install(forged, Map.of("API_KEY", "k")).errorAsOptional().orElseThrow());
+        assertEquals("signature_invalid", registry.install(forged, Map.of("API_KEY", "gh-token")).errorAsOptional().orElseThrow());
 
         Path unknown = mcpPackage("unknown", "nobody");
         Files.writeString(unknown.resolve("jclaw-extension.sig"),
                 ExtensionSignature.sign(registry.digestOf(unknown).orElseThrow(), mallory.privateKey()));
-        assertTrue(registry.install(unknown, Map.of("API_KEY", "k")).errorAsOptional().orElseThrow()
+        assertTrue(registry.install(unknown, Map.of("API_KEY", "gh-token")).errorAsOptional().orElseThrow()
                 .startsWith("publisher_not_trusted"));
 
         Path unsigned = mcpPackage("plain", null);
-        Installed community = registry.install(unsigned, Map.of("API_KEY", "k")).orElseThrow();
+        Installed community = registry.install(unsigned, Map.of("API_KEY", "gh-token")).orElseThrow();
         assertEquals(TrustClass.COMMUNITY, community.trust());
         assertEquals(EffectClass.NETWORK, community.effectiveEffect(), "an unverified manifest's effect claim is ignored");
     }

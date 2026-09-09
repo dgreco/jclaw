@@ -56,11 +56,18 @@ class McpSandboxTest {
                 + "done\n");
 
         McpServerStore store = new JsonlMcpServerStore(new JsonlFile(dir.resolve("mcp.jsonl")));
+        // The store names a vault entry; the value is leased when the server starts.
         store.add(new McpServerStore.McpServer("fake", List.of(fakeServer.toString()),
-                Map.of("FAKE_KEY", "s3cret-value"), true));
+                Map.of("FAKE_KEY", "fake-key"), true));
+        io.jclaw.storage.secret.FileSecretVault vault = new io.jclaw.storage.secret.FileSecretVault(
+                new JsonlFile(dir.resolve("secrets.jsonl")), new byte[32], java.time.Clock.systemUTC());
+        vault.put(new io.jclaw.contracts.secret.SecretVault.SecretName("fake-key"), "s3cret-value",
+                new io.jclaw.contracts.secret.SecretVault.Binding(McpRegistry.CONNECT, java.util.Set.of("example.com")));
+        assertFalse(Files.readString(dir.resolve("mcp.jsonl")).contains("s3cret-value"),
+                "the server's configuration holds the secret's name, not its value");
         SandboxSpec spec = SandboxSpec.defaults(fakeDocker.toString(), "node:22-alpine");
 
-        McpRegistry registry = new McpRegistry(store, dir, Optional.of(spec));
+        McpRegistry registry = new McpRegistry(store, dir, Optional.of(spec), null, null, vault);
         try {
             assertEquals(1, registry.handlers().size(), "the tool was discovered through the container's stdio");
             CapabilityHandler echo = registry.handlers().get(0);

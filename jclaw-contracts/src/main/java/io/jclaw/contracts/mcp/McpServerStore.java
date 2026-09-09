@@ -20,19 +20,21 @@ public interface McpServerStore {
      * A registered server, reached one of two ways.
      *
      * @param command the child process to spawn, for a stdio server; empty for an HTTP one
-     * @param env     environment for that process; for an HTTP server, unused
+     * @param envSecrets environment the child process needs, as variable name to <em>vault secret
+     *                   name</em>. Values are never stored here: they are leased when the server
+     *                   starts, so a credential lives in the vault and nowhere else
      * @param url     the endpoint of a remote server over streamable HTTP; blank for stdio
      * @param authSecret name of a vault secret to send as a bearer token when connecting over
      *                   HTTP; blank for none. The value never lives here
      */
     record McpServer(
-            String name, List<String> command, Map<String, String> env,
+            String name, List<String> command, Map<String, String> envSecrets,
             String url, String authSecret, boolean enabled) {
 
         public McpServer {
             Objects.requireNonNull(name, "name");
             command = List.copyOf(Objects.requireNonNull(command, "command"));
-            env = Map.copyOf(Objects.requireNonNull(env, "env"));
+            envSecrets = Map.copyOf(Objects.requireNonNull(envSecrets, "envSecrets"));
             url = Objects.requireNonNull(url, "url").trim();
             authSecret = Objects.requireNonNull(authSecret, "authSecret").trim();
             if (name.isBlank()) {
@@ -47,8 +49,8 @@ public interface McpServerStore {
         }
 
         /** A stdio server: the common form, and what {@code mcp add} creates without {@code --url}. */
-        public McpServer(String name, List<String> command, Map<String, String> env, boolean enabled) {
-            this(name, command, env, "", "", enabled);
+        public McpServer(String name, List<String> command, Map<String, String> envSecrets, boolean enabled) {
+            this(name, command, envSecrets, "", "", enabled);
         }
 
         public boolean isHttp() {
@@ -56,7 +58,7 @@ public interface McpServerStore {
         }
 
         public McpServer withEnabled(boolean enabled) {
-            return new McpServer(name, command, env, url, authSecret, enabled);
+            return new McpServer(name, command, envSecrets, url, authSecret, enabled);
         }
 
         /** How the server is reached, for listings. Never a credential. */

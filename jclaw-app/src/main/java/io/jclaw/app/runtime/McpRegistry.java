@@ -97,7 +97,8 @@ public class McpRegistry {
             if (!server.enabled()) {
                 continue;
             }
-            bring(server, workspaceRoot, sandbox, TrustClass.COMMUNITY, EffectClass.NETWORK);
+            bring(server, workspaceRoot, sandbox, java.util.Set.of(),
+                    TrustClass.COMMUNITY, EffectClass.NETWORK);
         }
         if (extensions != null) {
             for (var installed : extensions.list()) {
@@ -105,8 +106,10 @@ public class McpRegistry {
                     continue;
                 }
                 McpServerStore.McpServer server = new McpServerStore.McpServer(
-                        installed.name(), installed.manifest().command(), installed.env(), true);
-                bring(server, workspaceRoot, sandbox, installed.trust(), installed.effectiveEffect());
+                        installed.name(), installed.manifest().command(), installed.secrets(), true);
+                // A verified package signed its host claim, so it is worth binding a secret to.
+                bring(server, workspaceRoot, sandbox, java.util.Set.copyOf(installed.manifest().hosts()),
+                        installed.trust(), installed.effectiveEffect());
             }
         }
     }
@@ -121,11 +124,15 @@ public class McpRegistry {
      */
     private io.jclaw.contracts.Result<io.jclaw.tools.mcp.McpTransport, String> transportFor(
             McpServerStore.McpServer server, Path workspaceRoot,
-            java.util.Optional<io.jclaw.domain.sandbox.SandboxSpec> sandbox) {
+            java.util.Optional<io.jclaw.domain.sandbox.SandboxSpec> sandbox,
+            java.util.Set<String> declaredHosts) {
 
         if (!server.isHttp()) {
-            return io.jclaw.tools.mcp.StdioTransport.start(
-                    server.command(), server.env(), workspaceRoot, sandbox);
+            // The store holds secret names; the values are leased here and live only in the
+            // environment of the process about to start.
+            return McpCredentials.resolve(server.envSecrets(), declaredHosts, vault)
+                    .flatMap(environment -> io.jclaw.tools.mcp.StdioTransport.start(
+                            server.command(), environment, workspaceRoot, sandbox));
         }
         if (egress == null) {
             return io.jclaw.contracts.Result.err("http_transport_needs_an_egress_guard");
@@ -163,6 +170,7 @@ public class McpRegistry {
     private void bring(
             McpServerStore.McpServer server, Path workspaceRoot,
             java.util.Optional<io.jclaw.domain.sandbox.SandboxSpec> sandbox,
+            java.util.Set<String> declaredHosts,
             TrustClass trust, EffectClass effect) {
 
         String fingerprint = fingerprint(server);
@@ -171,7 +179,7 @@ public class McpRegistry {
                 : cache.find(server.name(), fingerprint);
         if (cached.isPresent()) {
             McpClient client = McpClient.deferred(server.name(), cached.get().offers(),
-                    () -> transportFor(server, workspaceRoot, sandbox));
+                    () -> transportFor(server, workspaceRoot, sandbox, declaredHosts));
             clients.add(client);
             for (Map<String, Object> tool : cached.get().tools()) {
                 handlers.add(new McpCapabilityHandler(client, toTool(tool), trust, effect));
@@ -181,7 +189,7 @@ public class McpRegistry {
                     cached.get().tools().size());
             return;
         }
-        transportFor(server, workspaceRoot, sandbox)
+        transportFor(server, workspaceRoot, sandbox, declaredHosts)
                 .flatMap(transport -> McpClient.connect(server.name(), transport))
                 .fold(
                         client -> {
@@ -204,7 +212,7 @@ public class McpRegistry {
     private static String fingerprint(McpServerStore.McpServer server) {
         String material = server.name() + '\u001f' + server.url() + '\u001f'
                 + String.join("\u001e", server.command()) + '\u001f'
-                + String.join("\u001e", new java.util.TreeSet<>(server.env().keySet())) + '\u001f'
+                + String.join("\u001e", new java.util.TreeSet<>(server.envSecrets().keySet())) + '\u001f'
                 + server.authSecret();
         try {
             byte[] digest = java.security.MessageDigest.getInstance("SHA-256")

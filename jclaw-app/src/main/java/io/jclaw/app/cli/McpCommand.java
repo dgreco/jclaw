@@ -62,6 +62,11 @@ public class McpCommand implements Runnable {
                         + "Bind it to the capability mcp.connect and the endpoint's host.")
         private String authSecret;
 
+        @Option(names = "--secret",
+                description = "VAR=secret-name: give the server process VAR from a vault secret. "
+                        + "Bind the secret to the capability mcp.connect. Repeatable.")
+        private String[] secrets = new String[0];
+
         public Add(McpServerStore store) {
             this.store = store;
         }
@@ -83,7 +88,21 @@ public class McpCommand implements Runnable {
                 System.err.println("jclaw: --auth-secret applies to --url servers only");
                 return 1;
             }
-            store.add(new McpServerStore.McpServer(name, remote ? List.of() : List.of(command), Map.of(),
+            java.util.Map<String, String> envSecrets = new java.util.LinkedHashMap<>();
+            for (String pair : secrets) {
+                int eq = pair.indexOf('=');
+                if (eq <= 0) {
+                    System.err.println("jclaw: --secret expects VAR=secret-name, got '" + pair + "'");
+                    return 1;
+                }
+                envSecrets.put(pair.substring(0, eq), pair.substring(eq + 1));
+            }
+            if (!envSecrets.isEmpty() && remote) {
+                System.err.println("jclaw: --secret sets a child process's environment; "
+                        + "an --url server authenticates with --auth-secret");
+                return 1;
+            }
+            store.add(new McpServerStore.McpServer(name, remote ? List.of() : List.of(command), envSecrets,
                     remote ? url.trim() : "", authSecret == null ? "" : authSecret.trim(), true));
             System.out.println("Added MCP server '" + name + "'");
             System.out.println("Verify it with: jclaw mcp test " + name);
@@ -220,11 +239,14 @@ public class McpCommand implements Runnable {
         private String name;
 
         private final JclawProperties properties;
+        private final io.jclaw.contracts.secret.SecretVault vault;
 
-        public Test(McpServerStore store, WorkspaceGuard workspace, JclawProperties properties) {
+        public Test(McpServerStore store, WorkspaceGuard workspace, JclawProperties properties,
+                io.jclaw.contracts.secret.SecretVault vault) {
             this.store = store;
             this.workspace = workspace;
             this.properties = properties;
+            this.vault = vault;
         }
 
         @Override
@@ -239,7 +261,13 @@ public class McpCommand implements Runnable {
 
         private int probe(McpServerStore.McpServer server) {
             System.out.println("Starting " + server.commandLine() + " ...");
-            return McpClient.start(server.name(), server.command(), server.env(), workspace.root(),
+            var environment = io.jclaw.app.runtime.McpCredentials.resolve(
+                    server.envSecrets(), java.util.Set.of(), vault);
+            if (environment.isErr()) {
+                System.err.println("jclaw: cannot start server (" + environment.errorAsOptional().orElse("?") + ")");
+                return 1;
+            }
+            return McpClient.start(server.name(), server.command(), environment.orElseThrow(), workspace.root(),
                             io.jclaw.app.config.JclawConfiguration.mcpSandboxSpec(properties))
                     .fold(
                             client -> {

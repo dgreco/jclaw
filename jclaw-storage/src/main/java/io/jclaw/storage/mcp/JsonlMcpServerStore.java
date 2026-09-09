@@ -30,7 +30,7 @@ public final class JsonlMcpServerStore implements McpServerStore {
         row.put("kind", KIND_ADDED);
         row.put("name", server.name());
         row.put("command", server.command());
-        row.put("env", server.env());
+        row.put("envSecrets", server.envSecrets());
         row.put("url", server.url());
         row.put("authSecret", server.authSecret());
         row.put("enabled", server.enabled());
@@ -87,8 +87,8 @@ public final class JsonlMcpServerStore implements McpServerStore {
                             row.get("command") instanceof List<?> cmd
                                     ? cmd.stream().map(String::valueOf).toList()
                                     : List.of(),
-                            row.get("env") instanceof Map<?, ?> env
-                                    ? (Map<String, String>) env
+                            row.get("envSecrets") instanceof Map<?, ?> secrets
+                                    ? (Map<String, String>) secrets
                                     : Map.of(),
                             row.get("url") instanceof String url ? url : "",
                             row.get("authSecret") instanceof String secret ? secret : "",

@@ -87,9 +87,9 @@ public final class FilesystemExtensionRegistry implements ExtensionRegistry {
 
     @Override
     @SuppressWarnings("unchecked")
-    public synchronized Result<Installed, String> install(Path packageDir, Map<String, String> env) {
+    public synchronized Result<Installed, String> install(Path packageDir, Map<String, String> secrets) {
         Objects.requireNonNull(packageDir, "packageDir");
-        Objects.requireNonNull(env, "env");
+        Objects.requireNonNull(secrets, "secrets");
         Result<Package, String> read = readPackage(packageDir);
         if (read.isErr()) {
             return Result.err(read.errorAsOptional().orElseThrow());
@@ -110,8 +110,8 @@ public final class FilesystemExtensionRegistry implements ExtensionRegistry {
             trust = TrustClass.VERIFIED;
         }
         for (String required : manifest.env()) {
-            if (env.get(required) == null || env.get(required).isBlank()) {
-                return Result.err("env_required: " + required);
+            if (secrets.get(required) == null || secrets.get(required).isBlank()) {
+                return Result.err("secret_required_for: " + required);
             }
         }
         if (manifest.kind() == Kind.SKILL && !pkg.files().containsKey(SKILL_FILE)) {
@@ -138,7 +138,7 @@ public final class FilesystemExtensionRegistry implements ExtensionRegistry {
             throw new UncheckedIOException("cannot install extension into " + target, e);
         }
 
-        Installed installed = new Installed(manifest, trust, pkg.digest(), env, true, clock.instant());
+        Installed installed = new Installed(manifest, trust, pkg.digest(), secrets, true, clock.instant());
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("kind", KIND_INSTALLED);
         row.put("name", manifest.name());
@@ -152,7 +152,7 @@ public final class FilesystemExtensionRegistry implements ExtensionRegistry {
         manifest.publisher().ifPresent(p -> row.put("publisher", p));
         row.put("trust", trust.name());
         row.put("digest", pkg.digest());
-        row.put("env", env);
+        row.put("secrets", secrets);
         row.put("installedAt", installed.installedAt().toString());
         rows.append(row);
         exposeSkill(installed, true);
@@ -281,12 +281,12 @@ public final class FilesystemExtensionRegistry implements ExtensionRegistry {
                                 strings(row.get("command")), strings(row.get("envNames")), strings(row.get("hosts")),
                                 EffectClass.valueOf(String.valueOf(row.get("effect"))),
                                 Optional.ofNullable(row.get("publisher")).map(Object::toString));
-                        Map<String, String> env = new LinkedHashMap<>();
-                        if (row.get("env") instanceof Map<?, ?> given) {
-                            given.forEach((k, v) -> env.put(String.valueOf(k), String.valueOf(v)));
+                        Map<String, String> secrets = new LinkedHashMap<>();
+                        if (row.get("secrets") instanceof Map<?, ?> given) {
+                            given.forEach((k, v) -> secrets.put(String.valueOf(k), String.valueOf(v)));
                         }
                         live.put(name, new Installed(manifest, TrustClass.valueOf(String.valueOf(row.get("trust"))),
-                                String.valueOf(row.get("digest")), env, true,
+                                String.valueOf(row.get("digest")), secrets, true,
                                 Instant.parse(String.valueOf(row.get("installedAt")))));
                     } catch (RuntimeException e) {
                         // A damaged row is skipped, as everywhere else.
@@ -297,7 +297,7 @@ public final class FilesystemExtensionRegistry implements ExtensionRegistry {
                     Installed current = live.get(name);
                     if (current != null) {
                         live.put(name, new Installed(current.manifest(), current.trust(), current.digest(),
-                                current.env(), Boolean.TRUE.equals(row.get("enabled")), current.installedAt()));
+                                current.secrets(), Boolean.TRUE.equals(row.get("enabled")), current.installedAt()));
                     }
                 }
                 default -> { }

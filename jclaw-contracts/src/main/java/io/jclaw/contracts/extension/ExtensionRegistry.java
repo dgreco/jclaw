@@ -83,7 +83,7 @@ public interface ExtensionRegistry {
             Manifest manifest,
             TrustClass trust,
             String digest,
-            Map<String, String> env,
+            Map<String, String> secrets,
             boolean enabled,
             Instant installedAt) {
 
@@ -91,7 +91,7 @@ public interface ExtensionRegistry {
             Objects.requireNonNull(manifest, "manifest");
             Objects.requireNonNull(trust, "trust");
             Objects.requireNonNull(digest, "digest");
-            env = Map.copyOf(Objects.requireNonNull(env, "env"));
+            secrets = Map.copyOf(Objects.requireNonNull(secrets, "secrets"));
             Objects.requireNonNull(installedAt, "installedAt");
         }
 
@@ -108,11 +108,13 @@ public interface ExtensionRegistry {
     /**
      * Installs the package at {@code packageDir}, replacing any installation of the same name.
      *
-     * @param env values for the environment names the manifest requires
+     * @param secrets vault secret name for each environment name the manifest requires. Names,
+     *                not values: an extension's credential lives in the vault, and this records
+     *                only which entry to lease when its server starts
      * @return the installation, or a reason it was refused: an unreadable or invalid manifest, a
-     *         signature that does not verify, or a required variable without a value
+     *         signature that does not verify, or a required variable with no secret named for it
      */
-    io.jclaw.contracts.Result<Installed, String> install(Path packageDir, Map<String, String> env);
+    io.jclaw.contracts.Result<Installed, String> install(Path packageDir, Map<String, String> secrets);
 
     List<Installed> list();
 

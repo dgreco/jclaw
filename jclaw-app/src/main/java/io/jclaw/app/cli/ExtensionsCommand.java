@@ -58,7 +58,9 @@ public class ExtensionsCommand implements Runnable {
                     + "   tools: " + installed.effectiveEffect() + "/" + installed.trust());
         }
         if (!m.env().isEmpty()) {
-            System.out.println("    env: " + String.join(", ", m.env()));
+            System.out.println("    env: " + m.env().stream()
+                    .map(name -> name + " <- secret " + installed.secrets().getOrDefault(name, "(unset)"))
+                    .collect(java.util.stream.Collectors.joining(", ")));
         }
         if (!m.hosts().isEmpty()) {
             System.out.println("    declares reaching: " + String.join(", ", m.hosts()));
@@ -75,8 +77,10 @@ public class ExtensionsCommand implements Runnable {
         @Parameters(index = "0", description = "Directory holding jclaw-extension.json.")
         private Path packageDir;
 
-        @Option(names = "--env", description = "NAME=value for a variable the manifest requires. Repeatable.")
-        private String[] env = new String[0];
+        @Option(names = "--secret",
+                description = "NAME=secret-name: the vault secret supplying a variable the manifest "
+                        + "requires. Names, not values. Bind each to the capability mcp.connect. Repeatable.")
+        private String[] secrets = new String[0];
 
         public Install(ExtensionRegistry registry) {
             this.registry = registry;
@@ -84,16 +88,16 @@ public class ExtensionsCommand implements Runnable {
 
         @Override
         public Integer call() {
-            Map<String, String> values = new LinkedHashMap<>();
-            for (String pair : env) {
+            Map<String, String> named = new LinkedHashMap<>();
+            for (String pair : secrets) {
                 int eq = pair.indexOf('=');
                 if (eq <= 0) {
-                    System.err.println("jclaw: --env expects NAME=value, got '" + pair + "'");
+                    System.err.println("jclaw: --secret expects NAME=secret-name, got '" + pair + "'");
                     return 1;
                 }
-                values.put(pair.substring(0, eq), pair.substring(eq + 1));
+                named.put(pair.substring(0, eq), pair.substring(eq + 1));
             }
-            return registry.install(packageDir, values).fold(
+            return registry.install(packageDir, named).fold(
                     installed -> {
                         System.out.println("installed:");
                         describe(installed);
