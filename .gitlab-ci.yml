@@ -98,6 +98,28 @@ native-image:
     - ls -la jclaw-app/target/jclaw
     - ./jclaw-app/target/jclaw --version
     - ./jclaw-app/target/jclaw run "smoke test"          # mock provider, no network
+    # Everything below exercises a path `run` never reaches, and every one of them is the kind
+    # a native image breaks: JCA providers for the vault's AES-256-GCM and the extension
+    # signature's Ed25519, and a reflectively loaded JDBC driver for `storage=sql`. With
+    # `--no-fallback` a missing registration is a crash rather than a degradation, so the only
+    # way to know the binary works is to make it do the work. They pass today; this is what
+    # keeps them passing.
+    - export SMOKE=$(mktemp -d)
+    - export JC="./jclaw-app/target/jclaw --jclaw.workspace=$SMOKE --jclaw.state-dir=$SMOKE/state --jclaw.provider=mock --jclaw.approval-mode=trusted"
+    # Vault: AES-256-GCM seal and open, and the owner-only key file generated on first use.
+    - printf 's3cret-value-0123456789' | $JC secrets set ci --capability builtin.http_fetch --host api.example.com
+    - $JC secrets list | grep -q "api.example.com"
+    # Extensions: Ed25519 key generation, signing, and verification against a trusted publisher.
+    - mkdir -p $SMOKE/pkg
+    - $JC extensions keygen --out $SMOKE/keys
+    - printf '{"name":"ci","version":"1.0","kind":"skill","description":"ci probe","publisher":"ci"}' > $SMOKE/pkg/jclaw-extension.json
+    - 'printf -- ''---\nname: CI\ndescription: d\nwhen-to-use: w\n---\nBody.\n'' > $SMOKE/pkg/SKILL.md'
+    - $JC extensions sign $SMOKE/pkg --key $SMOKE/keys/publisher.key
+    - $JC extensions install $SMOKE/pkg --jclaw.trusted-publishers.ci="$(cat $SMOKE/keys/publisher.pub)"
+    - $JC extensions list | grep -q VERIFIED
+    # SQL storage: the H2 driver loads, migrations apply, and a turn round-trips through it.
+    - ./jclaw-app/target/jclaw run "sql smoke" --jclaw.workspace=$SMOKE --jclaw.state-dir=$SMOKE/sql --jclaw.provider=mock --jclaw.approval-mode=trusted --jclaw.storage=sql
+    - ./jclaw-app/target/jclaw status -n 3 --jclaw.workspace=$SMOKE --jclaw.state-dir=$SMOKE/sql --jclaw.provider=mock --jclaw.storage=sql | grep -q "run.finished"
     - ./jclaw-app/target/jclaw doctor || true            # informational in CI
     - echo "NATIVE_ARCH=$(uname -m)" > native.env        # the release job names the asset by it
   artifacts:
