@@ -58,7 +58,7 @@ jclaw reimplements the **architecture** of IronClaw — the seven-layer ladder, 
 
 Everything is durable JSONL under `~/.jclaw`: a run can park in one process, be approved in a second, and resume in a third. There is no server and no database.
 
-**Status.** Milestones M0–M7 plus subagents, MCP, streaming, and lease-based crash recovery are complete. 129 tests pass across the modules, including 13 machine-checked architecture rules (ArchUnit). Both the uber jar and the native image are verified end to end, including subprocess spawning for MCP servers and shell tools.
+**Status.** Milestones M0–M7 plus subagents, MCP, streaming, and lease-based crash recovery are complete. 167 tests pass across the modules, including 13 machine-checked architecture rules (ArchUnit). Both the uber jar and the native image are verified end to end, including subprocess spawning for MCP servers and shell tools.
 
 ---
 
@@ -150,7 +150,7 @@ mvn test -Dtest='ApprovalResumeIntegrationTest#resumeWithoutDecisionParksAgain' 
 ./scripts/byte-verify.sh install && ./scripts/byte-verify.sh validate   # manifest drift check
 ```
 
-Test totals by module (verified on this checkout): contracts 8 · domain 62 · kernel 9 · providers 14 · app 36 = **129, 0 failures**. `DependencyLawTest` in `jclaw-app` machine-checks the layer ladder with ArchUnit; the rules were confirmed to fire by planting deliberate violations.
+Test totals by module (verified on this checkout): contracts 8 · domain 83 · kernel 9 · providers 19 · storage 9 · app 39 = **167, 0 failures**. `DependencyLawTest` in `jclaw-app` machine-checks the layer ladder with ArchUnit; the rules were confirmed to fire by planting deliberate violations.
 
 ### Continuous integration
 
@@ -202,6 +202,8 @@ jclaw:
 | `approval-mode` | `interactive` | `read-only` · `interactive` · `trusted` — see [Approval modes](#approval-modes). |
 | `max-iterations` | `25` | Model↔tool cycles allowed per run. |
 | `max-tokens` | `500000` | Token budget per run (input + output); `0` = unlimited. A fixed 10-minute wall-clock cap also applies. |
+| `context-max-messages` | `200` | Most recent transcript messages a model request may carry. See [Context window](#context-window). |
+| `context-max-tokens` | `100000` | Estimated token budget (4 chars/token) for those messages; the tighter of the two limits binds. Lower it for local models with small context windows. |
 | `system-prompt` | *"You are jclaw, a helpful agent operating inside a bounded workspace…"* | Operator instructions; jclaw appends a workspace section and skill summaries. |
 | `allow-private-networks` | `false` | Lets `http_fetch` reach loopback / RFC1918 / link-local addresses. **Development only** — re-opens the SSRF surface the egress guard closes. `doctor` warns when set. |
 | `openai-base-url` | `https://api.openai.com/v1` | Endpoint for `openai`; override for a compatible gateway. |
@@ -211,6 +213,8 @@ jclaw:
 | `ollama-base-url` | `http://localhost:11434/v1` | Ollama's OpenAI-compatible endpoint. |
 | `local-base-url` | *(blank)* | **Required for `local`**: any OpenAI-compatible server — `http://localhost:1234/v1` (LM Studio), `http://localhost:8000/v1` (vLLM), llama.cpp server, LocalAI. When set it also joins the `failover` chain. |
 | `mock-script` | *(empty)* | Scripted turns for `mock`, in order: `text:<reply>` or `tool:<capability>:<k=v,k=v>`. Lets the whole CLI, including tool calls and the approval flow, run with no key and no network. |
+| `embedding-provider` | `none` | `none` · `openai` · `openrouter` · `ollama` · `local` — adds vector similarity to memory retrieval (see [Durable memory](#durable-memory-memory)). Credentials come from the same environment variables as the chat providers. |
+| `embedding-model` | *(provider default)* | `text-embedding-3-small` (openai), `openai/text-embedding-3-small` (openrouter), `nomic-embed-text` (ollama); **required for `local`**. Vectors carry their model id, so switching models means `jclaw memory reindex`. |
 
 Logging is controlled through standard Spring properties (`--logging.level.io.jclaw=TRACE`) or the `--debug` / `--trace` shortcuts described under [Tracing a turn](#tracing-a-turn).
 
@@ -281,12 +285,18 @@ jclaw run --jclaw.approval-mode=read-only "count the TODOs"  # never blocks; wri
 | Option | Meaning |
 |---|---|
 | `<prompt…>` | One or more words, joined with spaces. |
-| `-t, --thread <id>` | Conversation thread to continue (default `default`). The last 40 messages of the thread are sent as history. |
+| `-t, --thread <id>` | Conversation thread to continue (default `default`). The thread's history is sent, compacted to the [context window](#context-window). |
 | `--stream` | Stream model prose to the terminal as it is generated. Tool calls are not streamed. |
 
 The reply is printed on stdout. Exit codes: **0** completed, **1** failed or cancelled, **2** parked on an approval gate (the gate id is printed so you can approve it). Ctrl-C stops the run at the next safe point — between effects, never mid-tool.
 
 The system prompt the model sees is: your configured `system-prompt`, then a workspace section naming the directory (never its absolute path), then one-line summaries of installed skills. It is frozen when the run is admitted, so a resume replays exactly what the run started with.
+
+**One run per thread.** Two `jclaw run -t x` processes started together would otherwise interleave two conversations in one transcript, so a thread is locked for the duration of a run (an OS file lock under `<state-dir>/locks/`, which dies with the process, so a crash never leaves a thread stuck). The second submission fails immediately with `thread_busy` and nothing is recorded; wait or use another thread. Parked runs do not hold the lock.
+
+#### Context window
+
+A thread's whole history is kept in the transcript, but a model request carries only what `context-max-messages` and `context-max-tokens` admit. Compaction keeps the newest messages that fit, cuts only where a request may legally begin (a user message, or an assistant message behind a short synthetic user notice), never separates a tool call from its results, and always keeps the message you just typed. When anything is dropped the model is told how many messages were omitted since the start of the thread. The same policy is applied before **every** model call, so a long tool-heavy run is bounded too, not just a long thread. There is no summarisation: the dropped span is gone from the model's view, not condensed.
 
 ### Interactive sessions: `repl`
 
@@ -366,13 +376,16 @@ Memories are facts the agent (or you) chose to keep. They are scoped to the **pr
 
 ```bash
 jclaw memory write "the release branch is cut on the first Monday of the month" --tags process,release
-jclaw memory search release cadence          # BM25 + recency, fused with RRF
+jclaw memory search release cadence          # BM25 + recency (+ vector), fused with RRF
 jclaw memory search -n 10 deploy
 jclaw memory list                            # newest first (default 20)
 jclaw memory forget mem_…                    # by id
+jclaw memory reindex                         # embed memories that lack a vector for the configured model
 ```
 
-The model has `builtin.memory_write` (gated in `interactive`) and `builtin.memory_search` (unattended). Ranking fuses Okapi BM25 over the text with a recency ranking via reciprocal rank fusion (k = 60); a blank query returns the most recent. Listing and deletion are CLI-only on purpose.
+The model has `builtin.memory_write` (gated in `interactive`) and `builtin.memory_search` (unattended). Ranking fuses up to three independent rankings via reciprocal rank fusion (k = 60): Okapi BM25 over the text, recency, and, when an embedding provider is configured, cosine similarity to the query's embedding. A blank query returns the most recent. Listing and deletion are CLI-only on purpose.
+
+**Vector ranking** is additive. With `embedding-provider: none` (the default) retrieval is BM25 + recency exactly as before. Configure `ollama` (with `nomic-embed-text` pulled) or `openai` and every new memory is embedded on write, every query on search, and the vector list joins the fusion, which is what surfaces "the automobile needs new tyres" for a query about the car. Embeddings are stored inline in `memory.jsonl` with the model that produced them; vectors from different models are never compared, so after switching models run `jclaw memory reindex`. Embedding failures degrade rather than break: a memory is still written without a vector, a search still runs on the other two rankings, and `jclaw models` / `jclaw doctor` report the embedding configuration.
 
 ### Skills: `skills`
 

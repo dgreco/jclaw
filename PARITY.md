@@ -93,7 +93,7 @@ At parity on the trust model; missing the multi-tenant, multi-process, and resou
 | Neutral process journal, lifecycle transitions, suspension, **process trees** (`ironclaw_processes`, `JournaledProcessSnapshot`) | ✅ | 🟡 `RunStore` records status + lease; no journal cursor, no suspension, no parent/child tree (subagent lineage lives only in the thread id) |
 | Turn admission and coordinator API (`ironclaw_turns`) | ✅ | ✅ `JclawRuntime.submit` |
 | `TurnScope` as tenant / agent / project / thread isolation key | ✅ | 🟡 `TurnScope.local(project, thread)` — no tenant, no agent id; single user assumed |
-| "One active run per canonical thread" enforced before side effects | ✅ | ❌ — nothing stops two `jclaw run -t x` processes racing on the same thread |
+| "One active run per canonical thread" enforced before side effects | ✅ | ✅ `ThreadLock` (OS file lock per canonical scope) taken in `JclawRuntime.submit`/`resume` before the inbound message is written; refusal is `THREAD_BUSY` with nothing recorded. Single-host, like the JSONL stores |
 | Capability manifest publishing (`ironclaw_capabilities`) | ✅ | 🟡 descriptors are compiled in; `visibleSurface` publishes them; no manifests |
 | Per-tool rate limiting | ✅ | ❌ |
 | Endpoint allowlisting per tool / extension | ✅ | 🟡 `EgressGuard` supports allow/deny lists in code, but nothing wires them from configuration; only the metadata-host denylist is active |
@@ -110,7 +110,7 @@ At parity on the trust model; missing the multi-tenant, multi-process, and resou
 | `CanonicalAgentLoopExecutor` tick pipeline with input / prompt / model / capability / gate / stop stages | ✅ | 🟡 same stages, fixed; no pluggable stage |
 | Execution-stage hooks (`ironclaw_hooks`) — pre/post model, pre/post tool | ✅ | ❌ |
 | Prompt envelope contract (`prompt_envelope`) with context policy | ✅ | 🟡 `PromptAssembly` (base + workspace + skill summaries); no context policy |
-| Context management: compaction / summarisation / truncation policy | ✅ *(via context policy in `ResolvedRunProfile`)* | ❌ — a fixed window of the last 40 transcript messages; long threads will eventually exceed the model's context |
+| Context management: compaction / summarisation / truncation policy | ✅ *(via context policy in `ResolvedRunProfile`)* | 🟡 `ContextPolicy` (message cap + estimated token budget) on `LoopPolicy`; pure `ContextCompaction` applied at admission and by `TurnMachine` before every model call — boundary-safe truncation with an omission notice, idempotent. No summarisation |
 | `RunProfileResolver`: driver, checkpoint schema, model profile, capability surface, context policy, budget, scheduling class | ✅ | 🟡 `LoopPolicy` + `RunRecord` capture model, prompt, tools, budget; no scheduling class, one schema version |
 | Model gateway abstraction with per-profile routing | ✅ | 🟡 one `ModelProvider` per process, chosen at boot; `failover` is the only composite |
 | Attachments (`ironclaw_attachments`) and extractors (`ironclaw_extractors`) — images, files, documents into the prompt | ✅ | ❌ — text-only `ContentBlock`s; `Thinking` is parsed but there is no image block |
@@ -150,8 +150,8 @@ At parity on the trust model; missing the multi-tenant, multi-process, and resou
 
 | Capability | IronClaw | jclaw |
 |---|---|---|
-| Durable memory with hybrid search fused by RRF | ✅ full-text + **vector** | 🟡 BM25 + recency via RRF; **no vector ranking** — needs an embedding model; `RrfFusion.fuse` takes a list of rankings so it is additive |
-| Embeddings / embedding provider | ✅ | ❌ |
+| Durable memory with hybrid search fused by RRF | ✅ full-text + **vector** | ✅ BM25 + recency + vector (cosine over stored embeddings, `VectorRanking`) via RRF; the vector list is present only when an embedding provider is configured and the query embeds |
+| Embeddings / embedding provider | ✅ | ✅ `EmbeddingProvider` port; one OpenAI-compatible `/embeddings` adapter covers OpenAI, OpenRouter, Ollama, LM Studio, vLLM. Embeddings stored inline in `memory.jsonl` with their model id; `jclaw memory reindex` backfills |
 | Workspace filesystem for notes, logs, context; identity files (persistent personality) | ✅ | ❌ — memories are records in `memory.jsonl`, not files; no identity file concept |
 | Documents substrate (`ironclaw_documents`) — chunking, indexing | ✅ | ❌ |
 | Memory tools exposed to the model | write / search / list / forget *(unverified)* | 🟡 `memory_write`, `memory_search` only; list and forget are CLI-only |
@@ -257,15 +257,15 @@ Listed so the comparison is not read as one-directional:
 
 ## 16. Suggested order if closing gaps
 
-Ranked by leverage relative to effort, given the existing seams:
+Ranked by leverage relative to effort, given the existing seams. The first three items of the
+original list were closed in September 2026: the one-active-run-per-thread lock (§4), the context
+compaction policy (§5), and vector ranking as a third list into `RrfFusion` (§8). What remains:
 
-1. **One-active-run-per-thread lock** (§4) — small, and it closes a real correctness hole.
-2. **Context compaction policy** in `PromptAssembly`/`JclawRuntime.seedMessages` (§5) — the 40-message window is the first thing a long session hits.
-3. **Vector ranking** as a third list into `RrfFusion` (§8) — additive by design.
-4. **Streaming for the OpenAI-compatible adapter** (§14).
-5. **Configurable `denied` set and egress allow/deny lists** (§4, §9) — the code paths exist; only binding from `JclawProperties` is missing.
-6. **Durable `CapabilityResultStore`** (§11) — makes result refs survive a resume.
-7. **A `TurnRunScheduler`** over the existing lease primitives (§6) — the enabling step for a WebUI or channel adapters.
-8. **Auth gates** (§4, §10) — the enum and status already exist.
-9. **Prompt-injection heuristics and sanitisation** on tool results (§9).
-10. **A sandboxed process lane** (§3) — the largest gap, and the one that changes the threat model most.
+1. **Streaming for the OpenAI-compatible adapter** (§14).
+2. **Configurable `denied` set and egress allow/deny lists** (§4, §9) — the code paths exist; only binding from `JclawProperties` is missing.
+3. **Durable `CapabilityResultStore`** (§11) — makes result refs survive a resume.
+4. **A `TurnRunScheduler`** over the existing lease primitives (§6) — the enabling step for a WebUI or channel adapters.
+5. **Auth gates** (§4, §10) — the enum and status already exist.
+6. **Prompt-injection heuristics and sanitisation** on tool results (§9).
+7. **Context summarisation as an effect** (§5) — `ContextCompaction` truncates; a summarising step would feed its output back as ordinary history.
+8. **A sandboxed process lane** (§3) — the largest gap, and the one that changes the threat model most.

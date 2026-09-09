@@ -16,7 +16,7 @@ jclaw is a Java/Spring Boot reimplementation of the **architecture** of
 untrusted-`LoopExit` trust model, and the `CapabilityHost` authority boundary are faithful; the
 feature surface is a fraction of IronClaw's. See **Not built yet** for the honest list.
 
-115 tests pass across 9 modules, including 13 machine-checked architecture rules.
+167 tests pass across 9 modules, including 13 machine-checked architecture rules.
 
 ## Commands
 
@@ -47,7 +47,7 @@ The `native` profile lives in `jclaw-app/pom.xml`. The Boot parent contributes o
 | `repl` | interactive session with readline editing (and still pipes) |
 | `approvals list\|approve\|deny` | resolve gates; approving resumes by default |
 | `resume <run-id>` | continue a parked run |
-| `memory write\|search\|list\|forget` | durable memories, BM25 + recency |
+| `memory write\|search\|list\|forget\|reindex` | durable memories, BM25 + recency + vector (when an embedding provider is configured) |
 | `routines add\|list\|remove\|pause\|resume\|run-due` | scheduled agent work |
 | `worker` | polling alternative to cron for routines |
 | `skills list\|show` | installed skills |
@@ -251,6 +251,20 @@ the Anthropic SDK, and tool lanes may not read the process environment.
 - Subagents are **child runs on the same machinery** — same turn machine, same interpreter, same
   `CapabilityHost` — never a second private engine. Nesting depth is derived from the thread id
   (`parent~sub1`) rather than passed as a parameter, so a model cannot understate its own depth.
+- **One active run per thread.** `JclawRuntime.submit` and `resume` take a `ThreadLock` (an OS
+  file lock per canonical scope, `FileThreadLock`) before the inbound message is written, so a
+  refused submission leaves no trace and two processes can never interleave one transcript. The
+  lock dies with its process; there is no TTL to reason about. Refusal is `THREAD_BUSY`.
+- **The context policy is a view, not a truth.** `ContextCompaction` derives what the model sees
+  from the full history under `LoopPolicy.context()`; the loop state and transcript keep
+  everything. It is applied at admission (bounding the checkpoint) and by `TurnMachine` before
+  every model call (bounding a tool-heavy run), and it is idempotent: its own notice is free of
+  charge and its count carries forward.
+- **Vector similarity is additive.** `MemoryRanking` fuses BM25, recency, and, only when a query
+  embedding is supplied, `VectorRanking`; embeddings from a different model never compare
+  (`Embedding.sameSpaceAs`), and an embedding failure degrades to two rankings rather than failing
+  the write or the search. The store never embeds; callers go through `MemoryTools` so the CLI and
+  the tool share one path.
 
 ## Notes for future sessions
 
@@ -316,9 +330,13 @@ architecture is equivalent, the feature surface is not.
   or as ordinary child processes. There is no sandbox.
 - **MCP transports** — stdio only. HTTP/SSE MCP servers are not supported, and there is no OAuth
   flow for authenticated servers.
-- **Vector retrieval** — `MemoryRanking` fuses lexical (BM25) and recency. The third ranking,
-  vector similarity, needs an embedding model and is not wired; `RrfFusion.fuse` takes a list of
-  rankings, so adding it is additive rather than a rewrite.
+- **Context summarisation** — `ContextCompaction` truncates at structurally valid boundaries and
+  tells the model how much was omitted; it does not summarise the dropped span, because that needs
+  a model call and the policy is pure. A summarisation effect would feed its output back in as
+  ordinary history.
+- **Embedding providers beyond the OpenAI-compatible shape** — Voyage, Cohere, and the like need
+  their own adapter behind `EmbeddingProvider`; today one adapter covers OpenAI, OpenRouter,
+  Ollama, LM Studio, vLLM.
 - **Multi-worker concurrency** — leases, heartbeats, claim contention, and reconciliation are
   implemented and tested, but nothing runs more than one worker. The pieces are there; the
   scheduler that would use them (IronClaw's `TurnRunScheduler` with per-user and per-inbound-type
