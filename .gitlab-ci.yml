@@ -117,6 +117,18 @@ native-image:
     - $JC extensions sign $SMOKE/pkg --key $SMOKE/keys/publisher.key
     - $JC extensions install $SMOKE/pkg --jclaw.trusted-publishers.ci="$(cat $SMOKE/keys/publisher.pub)"
     - $JC extensions list | grep -q VERIFIED
+    # Registry: an index served from a file:// URL is refused by the egress guard, so the
+    # reachable half is checked instead — a profile applied to the package just installed, and
+    # the message a missing registry setting produces. Both exercise the picocli subcommands and
+    # the property binding that AOT is most likely to have dropped.
+    - $JC extensions profile --jclaw.extension-profiles.ci=ci --jclaw.extension-profile=ci | grep -q "(active)"
+    - $JC extensions profile ci --jclaw.extension-profiles.ci=ci
+    - $JC extensions profile off --jclaw.extension-profiles.off= | grep -q "disabled ci"
+    - $JC extensions list | grep -q disabled
+    # `search` exits non-zero without a registry, which is the point, so the output is captured
+    # rather than piped: under `pipefail` a matching grep would still inherit that exit code.
+    - $JC extensions search anything > $SMOKE/search.txt 2>&1 || true
+    - grep -q 'no registries configured' $SMOKE/search.txt
     # SQL storage: the H2 driver loads, migrations apply, and a turn round-trips through it.
     - ./jclaw-app/target/jclaw run "sql smoke" --jclaw.workspace=$SMOKE --jclaw.state-dir=$SMOKE/sql --jclaw.provider=mock --jclaw.approval-mode=trusted --jclaw.storage=sql
     - ./jclaw-app/target/jclaw status -n 3 --jclaw.workspace=$SMOKE --jclaw.state-dir=$SMOKE/sql --jclaw.provider=mock --jclaw.storage=sql | grep -q "run.finished"

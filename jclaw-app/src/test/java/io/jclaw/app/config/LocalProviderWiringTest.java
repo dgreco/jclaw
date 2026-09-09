@@ -92,6 +92,9 @@ class LocalProviderWiringTest {
                 "",
                 "",
                 "",
+                "",
+                List.of(),
+                java.util.Map.of(),
                 "");
     }
 

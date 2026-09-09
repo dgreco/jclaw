@@ -7,6 +7,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * All externalized configuration, bound from {@code application.yaml}, environment, or CLI flags.
@@ -293,7 +294,13 @@ public record JclawProperties(
 
         @DefaultValue("") String oidcClientSecret,
 
-        @DefaultValue("") String oidcRedirectUri) {
+        @DefaultValue("") String oidcRedirectUri,
+
+        List<String> extensionRegistries,
+
+        Map<String, String> extensionProfiles,
+
+        @DefaultValue("") String extensionProfile) {
 
     /** A named run profile. Blank fields fall back to the host's model and prompt. */
     public record AgentProfile(String model, String systemPrompt) {
@@ -334,6 +341,9 @@ public record JclawProperties(
         agents = agents == null ? Map.of() : Map.copyOf(agents);
         tenantPolicies = tenantPolicies == null ? Map.of() : Map.copyOf(tenantPolicies);
         trustedPublishers = trustedPublishers == null ? Map.of() : Map.copyOf(trustedPublishers);
+        extensionRegistries = extensionRegistries == null ? List.of()
+                : extensionRegistries.stream().filter(url -> !url.isBlank()).toList();
+        extensionProfiles = extensionProfiles == null ? Map.of() : Map.copyOf(extensionProfiles);
     }
 
     /**
@@ -411,7 +421,30 @@ public record JclawProperties(
                 "",
                 "",
                 "",
+                "",
+                List.of(),
+                Map.of(),
                 "");
+    }
+
+    /**
+     * The extension names the active profile names, or empty when no profile is selected.
+     *
+     * <p>A profile is a named set of extensions to have enabled together: {@code dev} might turn
+     * on a language server and a scratch skill, {@code prod} only the reviewed ones. Selecting a
+     * profile is the operator saying "exactly these", so applying one disables what it omits.
+     */
+    public Optional<java.util.Set<String>> profileMembers() {
+        if (extensionProfile.isBlank()) {
+            return Optional.empty();
+        }
+        String members = extensionProfiles.get(extensionProfile);
+        if (members == null) {
+            return Optional.empty();
+        }
+        return Optional.of(java.util.Arrays.stream(members.split(","))
+                .map(String::trim).filter(name -> !name.isEmpty())
+                .collect(java.util.stream.Collectors.toCollection(java.util.LinkedHashSet::new)));
     }
 
     /** Roles by user, parsed and validated. An unlisted user is a member. */

@@ -98,6 +98,9 @@ class PolicyWiringTest {
                 "",
                 "",
                 "",
+                "",
+                List.of(),
+                java.util.Map.of(),
                 "");
     }
 

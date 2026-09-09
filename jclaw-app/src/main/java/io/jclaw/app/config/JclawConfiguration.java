@@ -328,6 +328,18 @@ public class JclawConfiguration {
                 : io.jclaw.app.identity.LoginProvider.none();
     }
 
+    /**
+     * Extensions available from a registry, rather than from a directory on this machine.
+     *
+     * <p>Empty unless {@code jclaw.extension-registries} names one, which is what keeps a default
+     * installation from reaching the network to answer {@code extensions list}.
+     */
+    @Bean
+    public io.jclaw.app.extension.ExtensionCatalog extensionCatalog(
+            JclawProperties properties, EgressGuard egressGuard) {
+        return new io.jclaw.app.extension.ExtensionCatalog(properties.extensionRegistries(), egressGuard);
+    }
+
     /** The messaging channels jclaw can be talked to from. Empty unless configured. */
     @Bean
     public java.util.List<io.jclaw.contracts.channel.ChannelAdapter> channelAdapters(Clock clock) {

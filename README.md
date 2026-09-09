@@ -61,7 +61,7 @@ jclaw reimplements the **architecture** of IronClaw — the seven-layer ladder, 
 
 Everything is durable JSONL under `~/.jclaw`: a run can park in one process, be approved in a second, and resume in a third. There is no database, and no server unless you start one (`jclaw serve`).
 
-**Status.** Milestones M0–M7 plus subagents (synchronous or asynchronous), MCP, streaming on every provider, lease-based crash recovery, a per-thread run lock, context compaction with model summaries, vector memory, configurable denials and egress lists, per-tool rate limits, injection heuristics, auth and process gates with expiry, a scheduler with `submit` and `worker`, an HTTP surface with run projections, event streams, and per-user tenants, attachments, store retention, an encrypted secret vault with host-side credential injection, a container sandbox for the shell lane, a SQL storage backend (embedded H2 or PostgreSQL) with schema migrations, signed extension packages, execution-stage hooks, a second loop family, Prometheus metrics with OTLP trace export, webhook, heartbeat, and event triggers, and MCP over HTTP with resources, prompts, and lazily started servers. 302 tests pass across the modules, including 14 machine-checked architecture rules (ArchUnit). Both the uber jar and the native image are verified end to end, including subprocess spawning for MCP servers and shell tools. [PARITY.md](PARITY.md) lists what IronClaw still has that jclaw does not.
+**Status.** Milestones M0–M7 plus subagents (synchronous or asynchronous), MCP, streaming on every provider, lease-based crash recovery, a per-thread run lock, context compaction with model summaries, vector memory, configurable denials and egress lists, per-tool rate limits, injection heuristics, auth and process gates with expiry, a scheduler with `submit` and `worker`, an HTTP surface with run projections, event streams, and per-user tenants, attachments, store retention, an encrypted secret vault with host-side credential injection, a container sandbox for the shell lane, a SQL storage backend (embedded H2 or PostgreSQL) with schema migrations, signed extension packages, execution-stage hooks, a second loop family, Prometheus metrics with OTLP trace export, webhook, heartbeat, and event triggers, and MCP over HTTP with resources, prompts, and lazily started servers. 314 tests pass across the modules, including 15 machine-checked architecture rules (ArchUnit). Both the uber jar and the native image are verified end to end, including subprocess spawning for MCP servers and shell tools. [PARITY.md](PARITY.md) lists what IronClaw still has that jclaw does not.
 
 ---
 
@@ -626,7 +626,35 @@ The runtime is pure Java, so the native image keeps working. Three things bound 
 
 A module is instantiated per call, so no tool call leaves state for the next. The calling convention is three exports, `memory`, `jclaw_alloc(len) -> ptr`, and `jclaw_call(ptr, len) -> i64` where the result packs a pointer and a length, kept small because each addition is another thing a module author can get wrong.
 
-**Trust is decided at install, once, by signature.** A publisher generates a key pair with `jclaw extensions keygen --out keys` and signs a package with `jclaw extensions sign ./pkg --key keys/publisher.key`, which writes `jclaw-extension.sig`: an Ed25519 signature over a digest of every file in the package. An operator who lists the publisher's public key under `trusted-publishers` gets a **`VERIFIED`** install, and a verified manifest's declared effect class is believed: a read-only MCP tool that declares `read_local` can run unattended in `trusted` mode. An unsigned package installs as **`COMMUNITY`**: its tools are `NETWORK` whatever the manifest claims, and every call gates. A package whose signature does not verify, or whose publisher is not trusted, is refused outright, since a package claiming a publisher it cannot prove is worse than one claiming none. Editing a signed package breaks its signature. Packages are directories; there is no registry to fetch from, no versioned upgrade, and no profile bundling.
+**Trust is decided at install, once, by signature.** A publisher generates a key pair with `jclaw extensions keygen --out keys` and signs a package with `jclaw extensions sign ./pkg --key keys/publisher.key`, which writes `jclaw-extension.sig`: an Ed25519 signature over a digest of every file in the package. An operator who lists the publisher's public key under `trusted-publishers` gets a **`VERIFIED`** install, and a verified manifest's declared effect class is believed: a read-only MCP tool that declares `read_local` can run unattended in `trusted` mode. An unsigned package installs as **`COMMUNITY`**: its tools are `NETWORK` whatever the manifest claims, and every call gates. A package whose signature does not verify, or whose publisher is not trusted, is refused outright, since a package claiming a publisher it cannot prove is worse than one claiming none. Editing a signed package breaks its signature.
+
+**Registries: `search`, `add`, `outdated`, `upgrade`.** A registry is a static document at `<base>/index.json` listing packages, versions, and a URL and digest for each. That is the least interesting design available on purpose: no protocol, no account, nothing to run but a web server, so anyone can publish one.
+
+```yaml
+jclaw:
+  extension-registries: [https://extensions.example.com]
+```
+
+```bash
+jclaw extensions search changelog          # what the registries offer, newest version first
+jclaw extensions add changelog             # newest; or changelog@1.2.0 for an exact version
+jclaw extensions outdated                  # installed packages a registry has something newer for
+jclaw extensions upgrade [name] [--dry-run]
+```
+
+Coming from a registry earns a package nothing. The archive is unpacked into a scratch directory under the state directory, the package digest is recomputed and compared with what the index advertised, and only then does the ordinary install path run — the one that verifies the signature and decides trust. An index that lies about a digest is caught before anything is installed; an index that omits one gets no trust for saying nothing. Archive entries whose names climb out of the directory are refused, the archive is bounded in size and entry count, redirects are never followed, and the registry URL goes through the egress guard like any other. The scratch directory is removed whether or not the install succeeded: a package that failed to verify should not be left where someone could install it by hand. `upgrade` carries the secrets the previous install was given, because those are the operator's, not the registry's. Versions compare numerically run by run, so 1.10.0 is newer than 1.9.0.
+
+**Profiles** are named sets of extensions to have enabled together:
+
+```yaml
+jclaw:
+  extension-profiles:
+    prod: reviewed-skill,github-tools
+    dev: reviewed-skill,github-tools,scratch
+  extension-profile: prod
+```
+
+`jclaw extensions profile prod` enables exactly what the profile lists and **disables what it omits** — a profile that could only ever add things could not take anything away, which is most of what switching to the reviewed set is for. Applying the same profile twice changes nothing; a name the profile lists but nothing has installed is reported, not an error.
 
 ### MCP servers: `mcp`
 

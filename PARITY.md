@@ -1,8 +1,8 @@
 # jclaw vs IronClaw — Parity
 
-An honest enumeration of what [IronClaw](https://github.com/nearai/ironclaw) (internally "Reborn") has that jclaw does not, and of what jclaw now has. jclaw is roughly 20k lines of Java (plus 6.5k of tests) against IronClaw's ~1.4M lines of Rust across ~63 crates. The **architecture** is equivalent — layer ladder, turn/run lifecycle, untrusted `LoopExit`, single `CapabilityHost` authority boundary, checkpoint-kind–driven recovery — and, after the September 2026 parity work, most of the runtime *mechanisms* are present in some form. What remains missing is breadth, not mechanism: channel adapters, a remote extension registry, a WASM lane, and the long tail catalogued in section 16. This file is the list, organised by IronClaw's own crate families so a gap can be traced to the crate that fills it upstream.
+An honest enumeration of what [IronClaw](https://github.com/nearai/ironclaw) (internally "Reborn") has that jclaw does not, and of what jclaw now has. jclaw is roughly 20k lines of Java (plus 6.5k of tests) against IronClaw's ~1.4M lines of Rust across ~63 crates. The **architecture** is equivalent — layer ladder, turn/run lifecycle, untrusted `LoopExit`, single `CapabilityHost` authority boundary, checkpoint-kind–driven recovery — and, after the September 2026 parity work, most of the runtime *mechanisms* are present in some form. What remains missing is breadth, not mechanism: the long tail catalogued in section 16. This file is the list, organised by IronClaw's own crate families so a gap can be traced to the crate that fills it upstream.
 
-Sources: IronClaw's `README.md`, `crates/Architecture.md`, and the `crates/` listing as of September 2026; jclaw's code on this checkout (302 tests, 0 failures). Where the upstream doc names a concept and jclaw has an equivalent under a different name, the mapping is given. Where the gap is uncertain it is marked *(unverified)*.
+Sources: IronClaw's `README.md`, `crates/Architecture.md`, and the `crates/` listing as of September 2026; jclaw's code on this checkout (314 tests, 0 failures). Where the upstream doc names a concept and jclaw has an equivalent under a different name, the mapping is given. Where the gap is uncertain it is marked *(unverified)*.
 
 Legend: ✅ at parity · 🟡 partial · ❌ missing · ➕ jclaw-only
 
@@ -208,7 +208,7 @@ At parity on the trust model and on the gate mechanics, and on tenant isolation;
 | Capability | IronClaw | jclaw |
 |---|---|---|
 | Extension manifests declaring capabilities, permissions, endpoints | ✅ `extension_contracts`, `extension_manifests` | ✅ `jclaw-extension.json`: kind, command, required environment names, declared hosts, claimed effect class, publisher (`ExtensionRegistry.Manifest`, parsed and validated by the pure `ManifestParser`) |
-| Extension registry, host, manager (install / enable / update) | ✅ | 🟡 `FilesystemExtensionRegistry` with `jclaw extensions install/list/remove/enable/disable`; packages are local directories, so no fetch from a remote registry and no versioned upgrade |
+| Extension registry, host, manager (install / enable / update) | ✅ | ✅ `FilesystemExtensionRegistry` with `jclaw extensions install/list/remove/enable/disable`, plus `search/add/outdated/upgrade` against the static `index.json` registries in `jclaw.extension-registries` and `profile` for named sets. A download is checked against the digest the index advertised, then installed down the local path, so a registry decides nothing about trust |
 | Installable packages (channels, tools) under `extensions/packages/` | ✅ 14 packages | 🟡 three kinds: skill packages, MCP packages, and WASM packages whose tools register as `wasm.<name>.<tool>`; no channel packages |
 | Signature verification for `VERIFIED` extensions | ✅ | ✅ Ed25519 over a `PackageDigest` of every file; `extensions keygen` / `extensions sign` on the publisher side, `jclaw.trusted-publishers` on the operator side. A trusted signature makes the install `VERIFIED` and its declared effect class is honoured for its tools; an untrusted or failing signature refuses the install; unsigned is `COMMUNITY` with `NETWORK` tools |
 | Skills as installable packages | ✅ | ✅ a skill package installs, enables, disables, and removes through the registry; plain directories still work |
@@ -287,9 +287,11 @@ Ranked, again, by what a deployment beyond one operator's machine would hit firs
    memory and only the host imports their manifest asked for. Still open under this heading: a
    sandbox orchestrator with per-job tokens, LLM proxying through the host, and letting the agent
    author its own modules.
-4. **A remote extension registry** (§12) — packages have manifests, digests, signatures, and
-   trust decided at install, but they are directories on disk. No registry to fetch from, no
-   versioned upgrade, no profiles, and only two package kinds.
+4. ~~**A remote extension registry**~~ — closed: a registry is a static `index.json`, and
+   `search` / `add` / `outdated` / `upgrade` work against it under a recomputed digest check;
+   profiles enable exactly one named set. Still open under this heading: a channel package kind,
+   a publisher-side `publish`, and a signed index (today the index is trusted only for the
+   digest, which the download must match).
 5. **Secrets beyond one call** (§9, §10) — a vault secret is leased into one capability
    invocation's arguments under a capability + host binding. There is no staged handoff into a
    subprocess environment, no leak scan of outbound model requests for secrets that arrived

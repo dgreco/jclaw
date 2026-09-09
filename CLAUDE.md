@@ -9,7 +9,8 @@ streaming on every provider, lease-based crash recovery, a per-thread run lock, 
 compaction with model summaries, vector memory, configurable denials, egress lists and per-tool
 rate limits, injection heuristics, auth and process gates with expiry, a scheduler behind
 `submit`/`worker`, an HTTP surface (`serve`) with run projections and SSE, attachments, store
-retention, and a container sandbox for the shell lane. `jclaw run "..."` completes a real turn end
+retention, a container sandbox for the shell lane, and extension registries with versioned
+upgrades and profiles. `jclaw run "..."` completes a real turn end
 to end; runs park on gates and resume across process boundaries; memory, skills, and scheduled
 routines work. Ships as an uber jar and a GraalVM native image, both verified — including
 subprocess spawning for MCP servers and subagent child runs.
@@ -20,7 +21,7 @@ jclaw is a Java/Spring Boot reimplementation of the **architecture** of
 untrusted-`LoopExit` trust model, and the `CapabilityHost` authority boundary are faithful; the
 feature surface is a fraction of IronClaw's. See **Not built yet** for the honest list.
 
-302 tests pass across 9 modules, including 14 machine-checked architecture rules.
+314 tests pass across 9 modules, including 15 machine-checked architecture rules.
 
 ## Commands
 
@@ -57,7 +58,7 @@ The `native` profile lives in `jclaw-app/pom.xml`. The Boot parent contributes o
 | `routines add\|list\|remove\|pause\|resume\|run-due` | agent work fired by a trigger: `--cron`, `--every`, `--webhook`, or `--on <event> --when k=v` |
 | `worker [--concurrency N]` | long-lived: fires routines, sweeps leases, executes queued runs under a cap |
 | `skills list\|show` | installed skills |
-| `extensions install\|list\|remove\|enable\|disable\|keygen\|sign` | signed extension packages (skills, MCP servers); a trusted publisher's signature makes an install `VERIFIED` |
+| `extensions install\|list\|remove\|enable\|disable\|keygen\|sign\|search\|add\|outdated\|upgrade\|profile` | signed extension packages (skills, MCP servers, WASM tools); a trusted publisher's signature makes an install `VERIFIED`. `search`/`add`/`outdated`/`upgrade` work against `jclaw.extension-registries`; `profile` enables exactly one named set |
 | `models [--probe]` | provider status; `--probe` proves one actually responds |
 | `onboard` | writes `~/.jclaw/jclaw.yaml` |
 | `mcp add\|list\|remove\|toggle\|test\|refresh` | external MCP tool servers over stdio or streamable HTTP; tools, resources, and prompts; started on first use from a cached surface |
@@ -391,6 +392,14 @@ the Anthropic SDK, and tool lanes may not read the process environment.
   in its manifest (`maven-jar-plugin`); the native image has no manifest, so the same grant is a
   `--enable-native-access=ALL-UNNAMED` build arg in the `native` profile. Drop either and the REPL
   prints warnings now and fails on a future JDK.
+- **A `@Bean` method must not return `Optional`.** On the JVM it works; in the native image it
+  takes the whole context down at startup on *every* command. Under AOT the bean comes from a
+  generated instance supplier, and `obtainFromSupplier` wraps the result in a `BeanWrapperImpl`
+  whose constructor runs `ObjectUtils.unwrapOptional` before asserting the target is non-null —
+  so `Optional.empty()` becomes null and fails the assert, and `Optional.of(x)` is silently
+  unwrapped and registered under the wrong type. Carry the absence in a record instead
+  (`LoginProvider`). `DependencyLawTest.AotInvariants` enforces this; it was added after the bug
+  shipped green through 302 tests.
 - **Do not catch `SpringApplication.AbandonedRunException` in `main`.** Spring throws it to abort
   the run during AOT processing. Treating it as a startup error makes `mvn -Pnative` fail with a
   misleading message; `JclawApplication` rethrows it explicitly.
@@ -437,10 +446,11 @@ architecture and most runtime mechanisms are equivalent, the breadth is not. PAR
   host imports their manifest asked for. There is no orchestrator with per-job tokens, no LLM
   proxying through the host, and a sandboxed MCP server's network is all-or-nothing rather than
   host-mediated per host.
-- **An extension registry to fetch from** — packages have manifests, digests, Ed25519
-  signatures, and `VERIFIED`/`COMMUNITY` trust decided at install, but they are local
-  directories: no remote registry, no versioned upgrades, no profiles, and the only extension
-  kinds are skills and MCP servers (no WASM tools, no channel packages).
+- **Extension registry breadth** — packages install from a directory or from a static
+  `index.json` registry (`search`, `add`, `outdated`, `upgrade`), with versioned upgrades,
+  profiles, and three kinds (skill, MCP, WASM). There is no channel package kind, no
+  publisher-side `publish` command, and no signed index — the index is trusted only for the
+  digest, which the download must then match.
 - **Pluggable pipeline stages** — hooks cover pre/post model and capability, and two families
   exist (`canonical`, `reflective`); there is no hook on prompt assembly or gate raising, and a
   new family is Java code, not configuration.
