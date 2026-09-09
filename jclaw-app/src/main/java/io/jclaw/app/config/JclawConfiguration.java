@@ -55,7 +55,6 @@ import io.jclaw.app.runtime.BudgetNoticeHook;
 import io.jclaw.contracts.extension.ExtensionRegistry;
 import io.jclaw.storage.rows.RowStore;
 import io.jclaw.storage.sql.SqlSchema;
-import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import io.jclaw.storage.secret.FileSecretVault;
 import io.jclaw.storage.secret.VaultKey;
 import io.jclaw.contracts.secret.SecretVault;
@@ -513,10 +512,22 @@ public class JclawConfiguration {
         }
         String url = properties.resolvedDatasourceUrl();
         String password = System.getenv("JCLAW_DATASOURCE_PASSWORD");
-        DriverManagerDataSource dataSource = new DriverManagerDataSource(
-                url, properties.datasourceUsername(), password == null ? "" : password);
+        // Pooled rather than a connection per call. For the CLI the difference is invisible —
+        // one process, one turn — but `serve` runs several turns at once, and against
+        // PostgreSQL each unpooled call costs a TCP round trip and a new backend process.
+        com.zaxxer.hikari.HikariConfig pool = new com.zaxxer.hikari.HikariConfig();
+        pool.setJdbcUrl(url);
+        pool.setUsername(properties.datasourceUsername());
+        pool.setPassword(password == null ? "" : password);
+        pool.setMaximumPoolSize(Math.max(1, properties.datasourcePoolSize()));
+        // A worker holding a connection while a model call is in flight would be a bug, not a
+        // slow query, so a short timeout surfaces it as an error instead of a hang.
+        pool.setConnectionTimeout(java.time.Duration.ofSeconds(10).toMillis());
+        pool.setPoolName("jclaw");
+        com.zaxxer.hikari.HikariDataSource dataSource = new com.zaxxer.hikari.HikariDataSource(pool);
         int before = SqlSchema.migrate(dataSource);
-        log.debug("storage: sql at {} (schema {} -> {})", redactUrl(url), before, SqlSchema.currentVersion());
+        log.debug("storage: sql at {} (schema {} -> {}, pool max {})",
+                redactUrl(url), before, SqlSchema.currentVersion(), pool.getMaximumPoolSize());
         return StorageBackend.sql(dataSource, redactUrl(url));
     }
 
@@ -636,6 +647,22 @@ public class JclawConfiguration {
     @Bean
     public SecretVault secretVault(io.jclaw.app.runtime.TenantVaults vaults) {
         return vaults.primary();
+    }
+
+    /**
+     * Materialised run projections, when the storage backend has somewhere to put them.
+     *
+     * <p>JSONL gets {@link io.jclaw.storage.projection.RunProjectionCache#none()}: a file store
+     * has no cheaper place to keep a fold than the log it would be folded from, so the honest
+     * answer there is to keep folding.
+     */
+    @Bean
+    public io.jclaw.storage.projection.RunProjectionCache runProjectionCache(
+            StorageBackend backend, Clock clock) {
+        return backend.dataSource()
+                .<io.jclaw.storage.projection.RunProjectionCache>map(source ->
+                        new io.jclaw.storage.projection.JdbcRunProjectionCache(source, clock))
+                .orElseGet(io.jclaw.storage.projection.RunProjectionCache::none);
     }
 
     @Bean

@@ -6,6 +6,9 @@ import io.jclaw.kernel.guard.EgressGuard;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import org.springframework.boot.context.properties.bind.Binder;
+import org.springframework.boot.context.properties.source.MapConfigurationPropertySource;
+
 import java.nio.file.Path;
 import java.util.List;
 
@@ -23,6 +26,14 @@ class PolicyWiringTest {
 
     private final JclawConfiguration configuration = new JclawConfiguration();
 
+    /**
+     * Builds properties the way the application does, through Spring's {@link Binder}.
+     *
+     * <p>This used to call the canonical constructor with every component in order, which meant
+     * every unrelated setting added to {@code JclawProperties} broke two tests that do not care
+     * about it. Binding from a property map is both less brittle and closer to the truth: it is
+     * the code path that runs at startup, so a property that binds here binds in the application.
+     */
     private static JclawProperties properties(
             List<String> denied, List<String> allow, List<String> deny) {
         return properties(denied, allow, deny, java.util.Map.of(), java.util.Map.of());
@@ -31,77 +42,30 @@ class PolicyWiringTest {
     private static JclawProperties properties(
             List<String> denied, List<String> allow, List<String> deny,
             java.util.Map<String, String> toolEgress, java.util.Map<String, String> toolRateLimits) {
-        return new JclawProperties(
-                Path.of("."),
-                Path.of("build", "test-state"),
-                "claude-opus-5",
-                "mock",
-                "https://api.openai.com/v1",
-                "http://localhost:11434/v1",
-                "",
-                "https://openrouter.ai/api/v1",
-                "",
-                "jclaw",
-                "interactive",
-                false,
-                25,
-                500_000,
-                200,
-                100_000,
-                "system",
-                List.of(),
-                "none",
-                "",
-                denied,
-                allow,
-                deny,
-                "sanitize",
-                true,
-                1024,
-                java.time.Duration.ofHours(24),
-                toolEgress,
-                toolRateLimits,
-                false,
-                java.time.Duration.ofDays(14),
-                java.time.Duration.ofDays(30),
-                java.time.Duration.ofDays(7),
-                "",
-                java.util.Map.of(),
-                "host",
-                "docker",
-                "alpine:3.20",
-                "none",
-                "512m",
-                "1",
-                256,
-                "host",
-                true,
-                "",
-                "",
-                "jsonl",
-                "",
-                "sa",
-                java.util.Map.of(),
-                java.util.List.of(),
-                "canonical",
-                "",
-                java.util.Map.of(),
-                256,
-                100_000_000L,
-                262_144,
-                java.time.Duration.ofSeconds(5),
-                java.util.Map.of(),
-                java.util.Map.of(),
-                0L,
-                java.util.Map.of(),
-                java.time.Duration.ofHours(12),
-                "",
-                "",
-                "",
-                "",
-                List.of(),
-                java.util.Map.of(),
-                "");
+        java.util.Map<String, Object> source = new java.util.LinkedHashMap<>();
+        source.put("jclaw.workspace", ".");
+        source.put("jclaw.state-dir", Path.of("build", "test-state").toString());
+        index(source, "jclaw.denied-capabilities", denied);
+        index(source, "jclaw.egress-allowlist", allow);
+        index(source, "jclaw.egress-denylist", deny);
+        toolEgress.forEach((key, value) -> source.put("jclaw.tool-egress[" + key + "]", value));
+        toolRateLimits.forEach((key, value) -> source.put("jclaw.tool-rate-limits[" + key + "]", value));
+        return new Binder(new MapConfigurationPropertySource(source))
+                .bind("jclaw", JclawProperties.class)
+                .orElseThrow(() -> new IllegalStateException("jclaw.* did not bind"));
+    }
+
+    /**
+     * Writes a list as indexed properties, so a blank element survives.
+     *
+     * <p>A comma-joined value would be split by the binder and the empty string dropped, which
+     * would hide the very quirk these tests exist to pin: Spring binds an absent list property to
+     * a single blank element, and the wiring has to treat that as an empty list.
+     */
+    private static void index(java.util.Map<String, Object> source, String key, List<String> values) {
+        for (int i = 0; i < values.size(); i++) {
+            source.put(key + "[" + i + "]", values.get(i));
+        }
     }
 
     @Test

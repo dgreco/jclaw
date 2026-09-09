@@ -70,6 +70,7 @@ public class JclawRuntime {
     private final ThreadLock threadLocks;
     private final LoopStateCodec codec;
     private final EventLog events;
+    private final io.jclaw.storage.projection.RunProjectionCache projections;
     private final JclawProperties properties;
     private final WorkspaceGuard workspace;
     private final SkillCatalog skills;
@@ -103,6 +104,7 @@ public class JclawRuntime {
             WorkspaceGuard workspace,
             SkillCatalog skills,
             SecretVault vault,
+            io.jclaw.storage.projection.RunProjectionCache projections,
             Clock clock) {
         this.interpreter = Objects.requireNonNull(interpreter, "interpreter");
         this.vault = Objects.requireNonNull(vault, "vault");
@@ -117,6 +119,7 @@ public class JclawRuntime {
         this.properties = Objects.requireNonNull(properties, "properties");
         this.workspace = Objects.requireNonNull(workspace, "workspace");
         this.skills = Objects.requireNonNull(skills, "skills");
+        this.projections = Objects.requireNonNull(projections, "projections");
         this.clock = Objects.requireNonNull(clock, "clock");
     }
 
@@ -557,6 +560,29 @@ public class JclawRuntime {
         } catch (IllegalStateException e) {
             // The lifecycle guard rejected this transition. That is a defect worth surfacing, but
             // not at the cost of discarding a reply the user is waiting for.
+        }
+        materialise(run, status);
+    }
+
+    /**
+     * Stores a finished run's projection, so the first read of it is cheap too.
+     *
+     * <p>The cache is read-through as well, which covers runs that finished before it existed or
+     * in another process. Doing it here in addition means the common case — someone looking at a
+     * run just after it ended — never pays for the fold. {@code put} ignores a non-terminal run,
+     * so parking is not a special case here.
+     */
+    private void materialise(TurnRunId run, TurnStatus status) {
+        if (!status.isTerminal()) {
+            return;
+        }
+        try {
+            projections.put(io.jclaw.domain.projection.RunProjection.fold(run,
+                    events.readRun(run).stream().map(EventLog.Entry::event).toList()));
+        } catch (RuntimeException e) {
+            // A projection is a convenience. Failing to store one must never fail a run that
+            // has already produced its answer.
+            log.debug("run {}: projection not materialised ({})", run.value(), e.toString());
         }
     }
 

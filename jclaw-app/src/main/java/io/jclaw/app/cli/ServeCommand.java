@@ -66,6 +66,7 @@ public class ServeCommand implements Callable<Integer> {
     private final io.jclaw.contracts.identity.SessionStore sessionStore;
     private final io.jclaw.app.identity.LoginProvider oidcLogin;
     private final io.jclaw.contracts.secret.SecretVault vault;
+    private final io.jclaw.storage.projection.RunProjectionCache projections;
     private final Clock clock;
 
     @Option(names = "--host", description = "Interface to bind. Default 127.0.0.1.")
@@ -89,11 +90,13 @@ public class ServeCommand implements Callable<Integer> {
             io.jclaw.app.channel.ChannelService channelService,
             io.jclaw.contracts.identity.SessionStore sessionStore,
             io.jclaw.app.identity.LoginProvider oidcLogin,
-            io.jclaw.contracts.secret.SecretVault vault, Clock clock) {
+            io.jclaw.contracts.secret.SecretVault vault,
+            io.jclaw.storage.projection.RunProjectionCache projections, Clock clock) {
         this.channelService = channelService;
         this.sessionStore = sessionStore;
         this.oidcLogin = oidcLogin;
         this.vault = vault;
+        this.projections = projections;
         this.telemetry = telemetry;
         this.routineStore = routineStore;
         this.properties = properties;
@@ -149,6 +152,7 @@ public class ServeCommand implements Callable<Integer> {
         server.withIdentity(sessionStore, properties.roles(), oidcLogin.orNull(),
                 () -> leaseOidcSecret(), properties.oidcRedirectUri());
         server.withChannels(channelService);
+        server.withProjectionCache(projections);
         server.start(host, port);
         boolean anyAuth = (properties.serveToken() != null && !properties.serveToken().isBlank())
                 || !properties.serveUsers().isEmpty();

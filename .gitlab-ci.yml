@@ -141,6 +141,10 @@ native-image:
     # SQL storage: the H2 driver loads, migrations apply, and a turn round-trips through it.
     - ./jclaw-app/target/jclaw run "sql smoke" --jclaw.workspace=$SMOKE --jclaw.state-dir=$SMOKE/sql --jclaw.provider=mock --jclaw.approval-mode=trusted --jclaw.storage=sql
     - ./jclaw-app/target/jclaw status -n 3 --jclaw.workspace=$SMOKE --jclaw.state-dir=$SMOKE/sql --jclaw.provider=mock --jclaw.storage=sql | grep -q "run.finished"
+    # Schema 2 (a table per busy store) and 3 (materialised projections) reached the database,
+    # and the projection a finished run wrote reads back through the pooled connection.
+    - export SQLRUN=$(./jclaw-app/target/jclaw status -n 20 --jclaw.workspace=$SMOKE --jclaw.state-dir=$SMOKE/sql --jclaw.provider=mock --jclaw.storage=sql | grep -o 'run_[0-9a-f]*' | head -1)
+    - ./jclaw-app/target/jclaw status --run $SQLRUN --spans --jclaw.workspace=$SMOKE --jclaw.state-dir=$SMOKE/sql --jclaw.provider=mock --jclaw.storage=sql | grep -q COMPLETED
     - ./jclaw-app/target/jclaw doctor || true            # informational in CI
     - echo "NATIVE_ARCH=$(uname -m)" > native.env        # the release job names the asset by it
   artifacts:

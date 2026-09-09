@@ -4,6 +4,9 @@ import io.jclaw.contracts.model.ModelProvider;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import org.springframework.boot.context.properties.bind.Binder;
+import org.springframework.boot.context.properties.source.MapConfigurationPropertySource;
+
 import java.nio.file.Path;
 import java.time.Clock;
 import java.util.List;
@@ -24,78 +27,21 @@ class LocalProviderWiringTest {
 
     private final JclawConfiguration configuration = new JclawConfiguration();
 
+    /**
+     * Builds properties the way the application does, through Spring's {@link Binder}, rather
+     * than by listing every record component in order — which made every unrelated setting added
+     * to {@code JclawProperties} break this test.
+     */
     private static JclawProperties properties(String provider, String localBaseUrl) {
-        return new JclawProperties(
-                Path.of("."),
-                Path.of("build", "test-state"),
-                "qwen2.5-coder-7b-instruct",
-                provider,
-                "https://api.openai.com/v1",
-                "http://localhost:11434/v1",
-                localBaseUrl,
-                "https://openrouter.ai/api/v1",
-                "",
-                "jclaw",
-                "interactive",
-                false,
-                25,
-                500_000,
-                200,
-                100_000,
-                "system",
-                List.of(),
-                "none",
-                "",
-                List.of(),
-                List.of(),
-                List.of(),
-                "sanitize",
-                true,
-                1024,
-                java.time.Duration.ofHours(24),
-                java.util.Map.of(),
-                java.util.Map.of(),
-                false,
-                java.time.Duration.ofDays(14),
-                java.time.Duration.ofDays(30),
-                java.time.Duration.ofDays(7),
-                "",
-                java.util.Map.of(),
-                "host",
-                "docker",
-                "alpine:3.20",
-                "none",
-                "512m",
-                "1",
-                256,
-                "host",
-                true,
-                "",
-                "",
-                "jsonl",
-                "",
-                "sa",
-                java.util.Map.of(),
-                java.util.List.of(),
-                "canonical",
-                "",
-                java.util.Map.of(),
-                256,
-                100_000_000L,
-                262_144,
-                java.time.Duration.ofSeconds(5),
-                java.util.Map.of(),
-                java.util.Map.of(),
-                0L,
-                java.util.Map.of(),
-                java.time.Duration.ofHours(12),
-                "",
-                "",
-                "",
-                "",
-                List.of(),
-                java.util.Map.of(),
-                "");
+        java.util.Map<String, Object> source = new java.util.LinkedHashMap<>();
+        source.put("jclaw.workspace", ".");
+        source.put("jclaw.state-dir", Path.of("build", "test-state").toString());
+        source.put("jclaw.model", "qwen2.5-coder-7b-instruct");
+        source.put("jclaw.provider", provider);
+        source.put("jclaw.local-base-url", localBaseUrl);
+        return new Binder(new MapConfigurationPropertySource(source))
+                .bind("jclaw", JclawProperties.class)
+                .orElseThrow(() -> new IllegalStateException("jclaw.* did not bind"));
     }
 
     @Test

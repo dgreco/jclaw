@@ -28,14 +28,20 @@ public class StatusCommand implements Callable<Integer> {
     @Option(names = {"-n", "--limit"}, description = "Number of events to show. Default 20.")
     private int limit = 20;
 
-    @Option(names = "--trace", description = "With --run: print the run's spans (root, model calls, capabilities, gates).")
-    private boolean trace;
+    // Not `--trace`: that name is claimed process-wide by JclawApplication.expandVerbosityFlags,
+    // which rewrites it into logging properties and strips it before picocli sees argv. The
+    // option existed under that name and could never fire.
+    @Option(names = "--spans", description = "With --run: print the run's spans (root, model calls, capabilities, gates).")
+    private boolean spans;
 
     @Option(names = "--run", description = "Show one run's projection folded from its events, instead of the tail.")
     private String run;
 
-    public StatusCommand(EventLog events) {
+    private final io.jclaw.storage.projection.RunProjectionCache projections;
+
+    public StatusCommand(EventLog events, io.jclaw.storage.projection.RunProjectionCache projections) {
         this.events = events;
+        this.projections = projections;
     }
 
     @Override
@@ -65,13 +71,12 @@ public class StatusCommand implements Callable<Integer> {
 
     /** The read model of one run: what a UI would show, folded from the same log. */
     private int projection(io.jclaw.contracts.turn.TurnRunId id) {
-        List<JclawEvent> all = events.readRun(id).stream().map(EventLog.Entry::event).toList();
-        if (all.isEmpty()) {
+        io.jclaw.domain.projection.RunProjection.RunView view = projections.of(id,
+                () -> events.readRun(id).stream().map(EventLog.Entry::event).toList());
+        if (view.status().isEmpty() && view.lastEventAt().isEmpty()) {
             System.out.println("(no events for " + id.value() + ")");
             return 1;
         }
-        io.jclaw.domain.projection.RunProjection.RunView view =
-                io.jclaw.domain.projection.RunProjection.fold(id, all);
         System.out.println("run          " + id.value());
         System.out.println("thread       " + view.scope().map(s -> s.thread().value()).orElse("?"));
         System.out.println("status       " + view.status().map(Enum::name).orElse("?")
@@ -89,9 +94,13 @@ public class StatusCommand implements Callable<Integer> {
             System.out.println("injection    " + view.injectionFindings() + " finding(s)");
         }
         view.openGate().ifPresent(gate -> System.out.println("open gate    " + gate.kind() + " " + gate.id()));
-        if (trace) {
+        if (spans) {
             System.out.println();
             System.out.println("trace        " + io.jclaw.domain.observability.RunTrace.traceId(id));
+            // Spans are not part of the projection, so --spans reads the log whether or not the
+            // summary above came from the cache. That is the honest trade: the cache saves the
+            // common read, not every read.
+            List<JclawEvent> all = events.readRun(id).stream().map(EventLog.Entry::event).toList();
             for (var span : io.jclaw.domain.observability.RunTrace.spans(id, all)) {
                 System.out.printf("  %s%-30s %6d ms  %s%n", span.parentSpanId().isPresent() ? "  " : "",
                         span.name(), span.duration().toMillis(),

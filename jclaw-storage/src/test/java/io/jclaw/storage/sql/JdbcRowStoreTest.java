@@ -60,8 +60,14 @@ class JdbcRowStoreTest {
         assertEquals(Map.of("k", List.of("v")), events.readAll().get(1).get("nested"));
         assertEquals(1, runs.size());
         assertEquals("run_b", new JdbcTemplate(ds).queryForObject(
-                "SELECT run FROM jclaw_rows WHERE store = 'events' ORDER BY seq DESC LIMIT 1", String.class),
+                "SELECT run FROM jclaw_events ORDER BY seq DESC LIMIT 1", String.class),
                 "the run column is lifted for indexing");
+        assertEquals("jclaw_events", events.table());
+        assertEquals("jclaw_rows", new JdbcRowStore(ds, "mcp").table(),
+                "a small configuration store still shares the one table");
+        assertEquals(0, new JdbcTemplate(ds).queryForObject(
+                "SELECT COUNT(*) FROM jclaw_rows", Integer.class),
+                "a busy store's rows are in its own table, not the shared one");
 
         events.rewrite(List.of(Map.of("n", 2)));
         assertEquals(List.of(2), events.readAll().stream().map(r -> r.get("n")).toList());

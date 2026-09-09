@@ -84,6 +84,8 @@ public final class JclawHttpServer {
     private final JclawRuntime runtime;
     private final RunStore runs;
     private final EventLog events;
+    private io.jclaw.storage.projection.RunProjectionCache projections =
+            io.jclaw.storage.projection.RunProjectionCache.none();
     private final ThreadService threads;
     private final JsonlApprovalStore approvals;
     private final Clock clock;
@@ -181,6 +183,16 @@ public final class JclawHttpServer {
         this.oidc = Optional.ofNullable(oidc);
         this.oidcClientSecret = Objects.requireNonNull(clientSecret, "clientSecret");
         this.loginRedirectUri = Objects.requireNonNull(redirectUri, "redirectUri");
+    }
+
+    /**
+     * Uses materialised projections where the storage backend keeps them.
+     *
+     * <p>Optional, and defaulted to none rather than required, because a projection cache is an
+     * optimisation: a server wired without one answers identically, only slower on long runs.
+     */
+    public void withProjectionCache(io.jclaw.storage.projection.RunProjectionCache cache) {
+        this.projections = Objects.requireNonNull(cache, "cache");
     }
 
     /** Serves {@code POST /channels/{adapter}}. Optional: without it the route is a 404. */
@@ -536,8 +548,8 @@ public final class JclawHttpServer {
             send(exchange, 502, OpenAiCompat.error(describeOutcome(result), "jclaw_run_failed"));
             return;
         }
-        RunProjection.RunView view = RunProjection.fold(result.run(),
-                events.readRun(result.run()).stream().map(EventLog.Entry::event).toList());
+        RunProjection.RunView view = projections.of(result.run(),
+                () -> events.readRun(result.run()).stream().map(EventLog.Entry::event).toList());
         String content = result.reply().orElseGet(() -> describeOutcome(result));
         send(exchange, 200, OpenAiCompat.completion(
                 "chatcmpl-" + result.run().value(), created, requestedModel, content, "stop",
@@ -702,8 +714,8 @@ public final class JclawHttpServer {
     }
 
     private Map<String, Object> view(RunStore.RunRecord record) {
-        RunProjection.RunView view = RunProjection.fold(record.run(),
-                events.readRun(record.run()).stream().map(EventLog.Entry::event).toList());
+        RunProjection.RunView view = projections.of(record.run(),
+                () -> events.readRun(record.run()).stream().map(EventLog.Entry::event).toList());
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("run", record.run().value());
         out.put("thread", record.scope().thread().value());

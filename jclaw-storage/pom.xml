@@ -33,6 +33,15 @@
       <groupId>com.h2database</groupId>
       <artifactId>h2</artifactId>
     </dependency>
+    <!--
+      The connection pool. Boot manages the version; without it every JDBC call opened and closed
+      its own connection, which is fine for a CLI and wrong for `serve`, where several runs
+      execute at once and a PostgreSQL connection costs a round trip and a backend process.
+    -->
+    <dependency>
+      <groupId>com.zaxxer</groupId>
+      <artifactId>HikariCP</artifactId>
+    </dependency>
     <dependency>
       <groupId>tools.jackson.core</groupId>
       <artifactId>jackson-databind</artifactId>

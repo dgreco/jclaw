@@ -260,6 +260,8 @@ public record JclawProperties(
 
         @DefaultValue("sa") String datasourceUsername,
 
+        @DefaultValue("8") int datasourcePoolSize,
+
         Map<String, String> trustedPublishers,
 
         @DefaultValue("budget-notice") List<String> hooks,
@@ -404,6 +406,7 @@ public record JclawProperties(
                 "jsonl",
                 "",
                 "sa",
+                8,
                 Map.of(),
                 List.of("budget-notice"),
                 "canonical",

@@ -2,7 +2,7 @@
 
 An honest enumeration of what [IronClaw](https://github.com/nearai/ironclaw) (internally "Reborn") has that jclaw does not, and of what jclaw now has. jclaw is roughly 20k lines of Java (plus 6.5k of tests) against IronClaw's ~1.4M lines of Rust across ~63 crates. The **architecture** is equivalent — layer ladder, turn/run lifecycle, untrusted `LoopExit`, single `CapabilityHost` authority boundary, checkpoint-kind–driven recovery — and, after the September 2026 parity work, most of the runtime *mechanisms* are present in some form. What remains missing is breadth, not mechanism: the long tail catalogued in section 16. This file is the list, organised by IronClaw's own crate families so a gap can be traced to the crate that fills it upstream.
 
-Sources: IronClaw's `README.md`, `crates/Architecture.md`, and the `crates/` listing as of September 2026; jclaw's code on this checkout (332 tests, 0 failures). Where the upstream doc names a concept and jclaw has an equivalent under a different name, the mapping is given. Where the gap is uncertain it is marked *(unverified)*.
+Sources: IronClaw's `README.md`, `crates/Architecture.md`, and the `crates/` listing as of September 2026; jclaw's code on this checkout (342 tests, 0 failures). Where the upstream doc names a concept and jclaw has an equivalent under a different name, the mapping is given. Where the gap is uncertain it is marked *(unverified)*.
 
 Legend: ✅ at parity · 🟡 partial · ❌ missing · ➕ jclaw-only
 
@@ -27,7 +27,7 @@ Legend: ✅ at parity · 🟡 partial · ❌ missing · ➕ jclaw-only
 | Substrates: filesystem, network | `ironclaw_filesystem`, `ironclaw_network` | `WorkspaceGuard`, `EgressGuard` (host-wide and per-tool lists) | ✅ |
 | Substrates: secrets | `ironclaw_secrets` (AES-256-GCM vault, leased handoff) | `FileSecretVault` (AES-256-GCM, owner-only key file or `JCLAW_VAULT_KEY`); `{{secret:NAME}}` references substituted by the kernel host at dispatch under a capability + host binding | ✅ |
 | Substrates: safety | `ironclaw_safety` (injection detection, sanitization, leak detection, policy severities) | `Redaction`, `InjectionHeuristics` with an `off/warn/sanitize/block` policy, egress lists; no leak detection on outbound requests | 🟡 |
-| Substrates: documents, libsql/Postgres, observability | `ironclaw_documents`, `ironclaw_libsql_runtime`, `ironclaw_observability` | JSONL files or a SQL database (`jclaw.storage=sql`: H2 embedded, PostgreSQL hosted, versioned migrations) behind one `RowStore` port; retention; SLF4J logs, Prometheus metrics and OTLP traces projected from the event log; no documents | 🟡 |
+| Substrates: documents, libsql/Postgres, observability | `ironclaw_documents`, `ironclaw_libsql_runtime`, `ironclaw_observability` | JSONL files or a SQL database (`jclaw.storage=sql`: H2 embedded, PostgreSQL hosted, versioned migrations, a table per busy store, pooled connections, materialised run projections) behind one `RowStore` port; retention; SLF4J logs, Prometheus metrics and OTLP traces projected from the event log; no documents | 🟡 |
 | Events | `event_log`, `event_store`, `event_projections`, `event_streams` | `JsonlEventLog` or SQL rows; `RunProjection` read model; SSE stream per run; metrics and traces folded from the same log | 🟡 |
 | Domains: threads, memory, skills, triggers, llm | `ironclaw_threads`, `_memory`, `_skills`, `_triggers`, `_llm` | `ThreadService`, `MemoryStore` + `EmbeddingProvider`, `SkillCatalog`, `RoutineStore`, `ModelProvider` | 🟡 |
 | Domains: attachments | `ironclaw_attachments`, `ironclaw_extractors` | image and UTF-8 text attachments on `run`, `submit`, and HTTP; no PDF or document extraction | 🟡 |
@@ -192,7 +192,7 @@ At parity on the trust model and on the gate mechanics, and on tenant isolation;
 
 | Capability | IronClaw | jclaw |
 |---|---|---|
-| SQL persistence: libsql/SQLite runtime, PostgreSQL for production, migrations | ✅ `ironclaw_libsql_runtime`, `migrations/` | ✅ `jclaw.storage=sql`: every store's rows in `jclaw_rows` (identity-ordered, indexed by store, run, thread) through `JdbcRowStore`; `SqlSchema` applies versioned migrations on start and refuses a newer database; embedded H2 file by default, PostgreSQL by JDBC URL with the password from the environment. Rows stay JSON documents rather than per-concept tables; connections are per operation |
+| SQL persistence: libsql/SQLite runtime, PostgreSQL for production, migrations | ✅ `ironclaw_libsql_runtime`, `migrations/` | ✅ `jclaw.storage=sql` through `JdbcRowStore`: a table per busy store (`jclaw_events`, `jclaw_transcript`, `jclaw_runs`, …), identity-ordered with run and thread indexed, and `jclaw_rows` shared by the small configuration stores; a finished run's projection materialised into `jclaw_run_projection`; HikariCP pooling. `SqlSchema` applies versioned migrations on start, preserving append order across the v2 split, and refuses a newer database; embedded H2 by default, PostgreSQL by JDBC URL with the password from the environment. Rows stay JSON documents rather than typed columns |
 | Event log | ✅ `event_log` | ✅ `JsonlEventLog` |
 | Event store with read models / projections (`event_projections`) | ✅ | 🟡 `RunProjection`, a pure fold of one run's events (status, usage, capability calls, gates, injection findings); `status --run` and `GET /runs/{r}` serve it. Rebuilt on demand from the log; no materialised store, no cross-run projections |
 | Event streams (live subscription; feeds SSE/WebSocket UIs) | ✅ `event_streams` | 🟡 `GET /runs/{r}/events` follows one run's events as server-sent events by polling the log; no fan-out subscription, no cross-run stream |
@@ -297,9 +297,10 @@ Ranked, again, by what a deployment beyond one operator's machine would hit firs
    rewrites any vault value out of an outbound request, and each tenant gets its own vault.
    Still open under this heading: one encryption key across tenants, no rotation or expiry, and
    a scan that matches exact substrings of eight characters or more.
-6. **SQL beyond one table** (§11) — every store's rows live in `jclaw_rows` with versioned
-   migrations. Projections are folded on demand rather than materialised, there are no
-   per-concept tables, and a connection is opened per operation.
+6. ~~**SQL beyond one table**~~ — closed: the busy stores have a table each, a finished run's
+   projection is materialised into `jclaw_run_projection`, and connections come from a HikariCP
+   pool. Still open under this heading: rows are JSON documents rather than typed columns, the
+   run view is the only materialised projection, and there is no read replica or partitioning.
 7. **In-process telemetry** (§13) — metrics and traces are projections of the audit log,
    computed as events are written. There is no OpenTelemetry SDK in the process, no context
    propagation into provider or MCP calls, and no latency histograms (count, sum, max only).

@@ -21,7 +21,7 @@ jclaw is a Java/Spring Boot reimplementation of the **architecture** of
 untrusted-`LoopExit` trust model, and the `CapabilityHost` authority boundary are faithful; the
 feature surface is a fraction of IronClaw's. See **Not built yet** for the honest list.
 
-332 tests pass across 9 modules, including 15 machine-checked architecture rules.
+342 tests pass across 9 modules, including 15 machine-checked architecture rules.
 
 ## Commands
 
@@ -66,7 +66,7 @@ The `native` profile lives in `jclaw-app/pom.xml`. The Boot parent contributes o
 | `retain [--dry-run]` | drop old rows of finished runs from results, events, checkpoints |
 | `secrets set\|list\|remove` | encrypted vault of credentials tools use by `{{secret:NAME}}` reference, bound to one capability and either a host list or `--subprocess` (staged into a child's environment, never an argument); one vault per tenant |
 | `tools` | capability surface with effect/trust/unattended |
-| `status [--run id [--trace]]` | recent activity from the event log, or one run's projection, or its spans |
+| `status [--run id [--spans]]` | recent activity from the event log, or one run's projection, or its spans. Not `--trace`: that name is claimed process-wide for verbosity and never reaches picocli |
 | `doctor` | config + security posture; non-zero on real problems |
 
 `run --stream` prints model output as it arrives, over the Anthropic SDK's event stream or the
@@ -451,9 +451,10 @@ architecture and most runtime mechanisms are equivalent, the breadth is not. PAR
   outbound model requests by the optional `secret-leak-scan` hook, and held in a vault per
   tenant. Every tenant's vault shares one encryption key, there is no rotation or expiry, and
   the leak scan is an exact-substring match that ignores values under eight characters.
-- **SQL beyond one table** — `storage=sql` keeps every store's rows in `jclaw_rows` with
-  versioned migrations; there are no per-concept tables, no materialised projections (folds run
-  on demand over indexed reads), and no connection pool (a connection per operation).
+- **SQL breadth** — `storage=sql` gives the busy stores a table each and shares `jclaw_rows`
+  for the small ones, materialises a finished run's projection into `jclaw_run_projection`, and
+  pools connections through HikariCP. Rows are still JSON documents rather than typed columns,
+  the only materialised projection is the run view, and there is no read replica or partitioning.
 - **A sandbox orchestrator** — shell commands and MCP servers run in containers, and WASM
   extensions run in-process under Chicory with metered instructions, capped memory, and only the
   host imports their manifest asked for. There is no orchestrator with per-job tokens, no LLM
