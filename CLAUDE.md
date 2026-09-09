@@ -16,7 +16,7 @@ jclaw is a Java/Spring Boot reimplementation of the **architecture** of
 untrusted-`LoopExit` trust model, and the `CapabilityHost` authority boundary are faithful; the
 feature surface is a fraction of IronClaw's. See **Not built yet** for the honest list.
 
-182 tests pass across 9 modules, including 13 machine-checked architecture rules.
+201 tests pass across 9 modules, including 13 machine-checked architecture rules.
 
 ## Commands
 
@@ -44,12 +44,13 @@ The `native` profile lives in `jclaw-app/pom.xml`. The Boot parent contributes o
 | Command | Purpose |
 |---|---|
 | `run` | one-shot turn; exits 0 ok, 1 failed, 2 parked on a gate |
+| `submit` | queue a turn durably and return its run id; a `worker` executes it |
 | `repl` | interactive session with readline editing (and still pipes) |
 | `approvals list\|approve\|deny` | resolve gates; approving resumes by default |
 | `resume <run-id>` | continue a parked run |
 | `memory write\|search\|list\|forget\|reindex` | durable memories, BM25 + recency + vector (when an embedding provider is configured) |
 | `routines add\|list\|remove\|pause\|resume\|run-due` | scheduled agent work |
-| `worker` | polling alternative to cron for routines |
+| `worker [--concurrency N]` | long-lived: fires routines, sweeps leases, executes queued runs under a cap |
 | `skills list\|show` | installed skills |
 | `models [--probe]` | provider status; `--probe` proves one actually responds |
 | `onboard` | writes `~/.jclaw/jclaw.yaml` |
@@ -263,6 +264,21 @@ the Anthropic SDK, and tool lanes may not read the process environment.
   of the approval-mode posture and removes the tool from the published surface; the egress lists
   narrow `EgressGuard` and never bypass its private-network or metadata checks. Both are
   validated at startup so a typo fails loudly instead of denying nothing.
+- **Queued runs see the conversation as of their submission.** `JclawRuntime.enqueue` makes the
+  inbound message and a `QUEUED` record durable and nothing else; `resume` (which now also starts
+  queued runs) seeds from the transcript minus any user message accepted after the run was
+  submitted, with the run's own message placed last. Several turns queued on one thread therefore
+  answer in order, each seeing the replies before it. `TurnRunScheduler` only decides when, through
+  the pure `RunScheduling`; execution still goes through the thread lock and the lease.
+- **Auth failures park, they do not fail.** A provider `AUTH` failure makes the interpreter raise
+  a durable auth gate (an `ApprovalStore.Gate` of kind `AUTH` whose fingerprint is the credential
+  hint) and hand the machine `Observation.AuthRequired`; the machine checkpoints `BEFORE_BLOCK`
+  and parks `BLOCKED_AUTH`. Nothing was appended, so resume goes straight back to the model call.
+- **Injection heuristics frame, they do not authorise.** `InjectionHeuristics` is pure and runs in
+  `DefaultCapabilityHost.succeed` after redaction, bounding, and storage: the audit payload is what
+  the tool returned; only the model-facing summary is fenced, defused, or, under `block`, withheld
+  as a `Denied` outcome. The authority gate above it is still what stops an injected instruction
+  from becoming an effect.
 - **The context policy is a view, not a truth.** `ContextCompaction` derives what the model sees
   from the full history under `LoopPolicy.context()`; the loop state and transcript keep
   everything. It is applied at admission (bounding the checkpoint) and by `TurnMachine` before
@@ -346,10 +362,11 @@ architecture is equivalent, the feature surface is not.
 - **Embedding providers beyond the OpenAI-compatible shape** — Voyage, Cohere, and the like need
   their own adapter behind `EmbeddingProvider`; today one adapter covers OpenAI, OpenRouter,
   Ollama, LM Studio, vLLM.
-- **Multi-worker concurrency** — leases, heartbeats, claim contention, and reconciliation are
-  implemented and tested, but nothing runs more than one worker. The pieces are there; the
-  scheduler that would use them (IronClaw's `TurnRunScheduler` with per-user and per-inbound-type
-  caps) is not.
+- **Multi-user caps** — `TurnRunScheduler` bounds concurrency globally and per thread; IronClaw
+  also caps per user and per inbound type. jclaw is single-user, so those collapse into the global
+  cap until a second product surface exists.
+- **Injection review queue** — findings are audited and the output framed or withheld; there is
+  no operator queue to review flagged results, and inbound content is not scanned.
 - **Persistence** — `spring-jdbc` and H2 are dependencies but unused; no SQL layer, no migrations,
   no Postgres profile. Everything is JSONL, which is fine at CLI scale and would not be at
   hosted scale.

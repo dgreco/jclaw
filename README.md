@@ -58,7 +58,7 @@ jclaw reimplements the **architecture** of IronClaw — the seven-layer ladder, 
 
 Everything is durable JSONL under `~/.jclaw`: a run can park in one process, be approved in a second, and resume in a third. There is no server and no database.
 
-**Status.** Milestones M0–M7 plus subagents, MCP, streaming, and lease-based crash recovery are complete. 182 tests pass across the modules, including 13 machine-checked architecture rules (ArchUnit). Both the uber jar and the native image are verified end to end, including subprocess spawning for MCP servers and shell tools.
+**Status.** Milestones M0–M7 plus subagents, MCP, streaming, and lease-based crash recovery are complete. 201 tests pass across the modules, including 13 machine-checked architecture rules (ArchUnit). Both the uber jar and the native image are verified end to end, including subprocess spawning for MCP servers and shell tools.
 
 ---
 
@@ -150,7 +150,7 @@ mvn test -Dtest='ApprovalResumeIntegrationTest#resumeWithoutDecisionParksAgain' 
 ./scripts/byte-verify.sh install && ./scripts/byte-verify.sh validate   # manifest drift check
 ```
 
-Test totals by module (verified on this checkout): contracts 8 · domain 83 · kernel 14 · providers 23 · storage 11 · app 43 = **182, 0 failures**. `DependencyLawTest` in `jclaw-app` machine-checks the layer ladder with ArchUnit; the rules were confirmed to fire by planting deliberate violations.
+Test totals by module (verified on this checkout): contracts 8 · domain 95 · kernel 14 · providers 23 · storage 11 · app 50 = **201, 0 failures**. `DependencyLawTest` in `jclaw-app` machine-checks the layer ladder with ArchUnit; the rules were confirmed to fire by planting deliberate violations.
 
 ### Continuous integration
 
@@ -217,6 +217,7 @@ jclaw:
 | `denied-capabilities` | *(empty)* | Capability ids refused outright in every approval mode and hidden from the model, e.g. `builtin.shell,builtin.http_fetch`. A malformed id fails startup. |
 | `egress-allowlist` | *(empty)* | When set, tools may only reach these hosts: exact names or `*.suffix` wildcards. Private-network and cloud-metadata denials still apply to allowed hosts; the list can only narrow. |
 | `egress-denylist` | *(empty)* | Hosts tools may never reach, on top of the built-in metadata hosts. Wins over the allowlist. |
+| `injection-policy` | `sanitize` | What the kernel does with tool output that looks like a prompt injection: `off`, `warn` (audit event only), `sanitize` (fence it, defuse chat-template tokens, tell the model it is data), `block` (withhold HIGH-severity findings from the model). The stored payload is never altered. |
 | `embedding-model` | *(provider default)* | `text-embedding-3-small` (openai), `openai/text-embedding-3-small` (openrouter), `nomic-embed-text` (ollama); **required for `local`**. Vectors carry their model id, so switching models means `jclaw memory reindex`. |
 
 Logging is controlled through standard Spring properties (`--logging.level.io.jclaw=TRACE`) or the `--debug` / `--trace` shortcuts described under [Tracing a turn](#tracing-a-turn).
@@ -353,6 +354,21 @@ What happens on resume is the point of the design: the run rehydrates its checkp
 
 `resume` reports like `run`: 0 completed, 2 parked again, 1 failed. `approvals approve/deny` exit 1 for an unknown or already-decided gate.
 
+**Auth gates.** A provider that refuses for want of credentials (no `OPENROUTER_API_KEY`, a rejected key) does not fail the turn: the run parks `BLOCKED_AUTH` at a replay-safe checkpoint and the gate, naming the missing credential, appears in `jclaw approvals list` with kind `auth`. There is nothing to approve; set the credential and `jclaw resume <run-id>`, and the model call is re-attempted from exactly where it stopped. Resuming without the credential parks again.
+
+### Queued turns: `submit` and `worker`
+
+`run` executes a turn inline. `submit` only makes it durable, prints the run id, and returns; a worker executes it later under a concurrency cap:
+
+```bash
+jclaw submit -t reviews "summarise yesterday's changes"     # prints run_…, exits at once
+jclaw submit -t reviews "and list open questions"           # queued behind the first on that thread
+jclaw worker --concurrency 4                                # executes queued runs, fires routines, sweeps leases
+jclaw worker --once                                         # one pass, then exit
+```
+
+Scheduling is a pure function over the queue: oldest first, at most `--concurrency` in flight, and never two runs on one thread at a time (the second waits a pass). A queued run is seeded with the conversation as of its own submission, so several turns queued on one thread answer in order, each seeing the replies to the ones before it. Runs requeued by `recover` are picked up the same way, so with a worker running a crashed turn resumes without a human typing `resume`. This is the shape any non-CLI surface needs, which is why it exists before one does.
+
 ### Tools the agent can use
 
 `jclaw tools` prints the live surface with effect class, trust class, and whether each runs unattended under the current policy; `--verbose` adds argument schemas. The built-ins:
@@ -439,8 +455,8 @@ Cron is the classic five fields (`minute hour day-of-month month day-of-week`) w
 * * * * * /usr/local/bin/jclaw routines run-due --jclaw.workspace=/path/to/project
 
 # Option B: a supervised polling process
-jclaw worker                   # poll every 30 s (minimum 5)
-jclaw worker --interval 60
+jclaw worker                   # poll every 30 s (minimum 5); also executes queued runs (see `submit`)
+jclaw worker --interval 60 --concurrency 4
 jclaw worker --once            # one poll, then exit — handy for testing
 ```
 
@@ -496,7 +512,7 @@ jclaw models [--probe]     # providers and credentials; --probe sends a tiny rea
 jclaw doctor               # configuration, security posture, and checks; exit 1 on a real problem
 ```
 
-`status` reads the redacted event log rather than internal state, so what you see is exactly what was durably recorded: claims, model calls with token counts and latency, capability invocations with outcome, gates, checkpoints, and finishes. `doctor` is designed as a CI preflight: `[fail]` lines (unreadable workspace, unwritable state dir, missing credential) set the exit code; warnings (private networks allowed, `trusted` mode) do not.
+`status` reads the redacted event log rather than internal state, so what you see is exactly what was durably recorded: claims, model calls with token counts and latency, capability invocations with outcome, injection findings (severity, rule count, and whether the output was warned about, sanitised, or blocked), gates, checkpoints, and finishes. `doctor` is designed as a CI preflight: `[fail]` lines (unreadable workspace, unwritable state dir, missing credential) set the exit code; warnings (private networks allowed, `trusted` mode) do not.
 
 ### Tracing a turn
 
