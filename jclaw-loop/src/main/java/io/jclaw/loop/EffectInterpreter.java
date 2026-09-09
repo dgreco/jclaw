@@ -460,6 +460,8 @@ public final class EffectInterpreter {
                 case ContentBlock.ToolResult result -> "tool-result(callId " + result.callId()
                         + ", error=" + result.isError() + ", "
                         + boundForTrace(Redaction.redact(result.content())) + ")";
+                case ContentBlock.Image image -> "image(" + image.mediaType() + ", "
+                        + image.data().length() + " base64 chars)";
                 case ContentBlock.Thinking ignored -> "thinking(...)";
             });
         }

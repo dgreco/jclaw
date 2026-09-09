@@ -100,6 +100,7 @@ public final class ContextSummary {
                             + use.input();
                     case ContentBlock.ToolResult result -> "tool result"
                             + (result.isError() ? " (error)" : "") + ": " + result.content();
+                    case ContentBlock.Image image -> role(message) + " attached an image (" + image.mediaType() + ")";
                     case ContentBlock.Thinking ignored -> null;
                 };
                 if (line == null || line.isBlank()) {

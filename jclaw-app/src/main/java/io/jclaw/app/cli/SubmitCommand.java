@@ -34,13 +34,23 @@ public class SubmitCommand implements Callable<Integer> {
     @Option(names = {"-t", "--thread"}, description = "Conversation thread. Defaults to 'default'.")
     private String thread = "default";
 
+    @Option(names = "--attach", description = "Attach a file: an image or a UTF-8 text file. Repeatable.")
+    private java.nio.file.Path[] attach = new java.nio.file.Path[0];
+
     public SubmitCommand(JclawRuntime runtime) {
         this.runtime = runtime;
     }
 
     @Override
     public Integer call() {
-        TurnRunId run = runtime.enqueue(new ThreadId(thread), String.join(" ", prompt));
+        io.jclaw.contracts.Result<io.jclaw.contracts.model.ChatMessage, String> inbound =
+                io.jclaw.app.runtime.Attachments.userMessage(String.join(" ", prompt), java.util.List.of(attach));
+        if (inbound instanceof io.jclaw.contracts.Result.Err<io.jclaw.contracts.model.ChatMessage, String> err) {
+            System.err.println("jclaw: " + err.error());
+            return 1;
+        }
+        TurnRunId run = runtime.enqueue(new ThreadId(thread),
+                ((io.jclaw.contracts.Result.Ok<io.jclaw.contracts.model.ChatMessage, String>) inbound).value());
         System.out.println(run.value());
         return 0;
     }

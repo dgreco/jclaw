@@ -59,6 +59,30 @@ public sealed interface ContentBlock {
     }
 
     /**
+     * An inline image, base64-encoded, as an operator attaches it to a turn.
+     *
+     * @param mediaType one of {@code image/png}, {@code image/jpeg}, {@code image/gif},
+     *                  {@code image/webp}, the set every image-capable provider accepts
+     * @param data      base64 without a data-URL prefix; adapters add whatever framing they need
+     */
+    record Image(String mediaType, String data) implements ContentBlock {
+
+        /** Rough context cost of one image, in characters of the 4-per-token estimate. */
+        static final int WEIGHT = 6_400;
+
+        public Image {
+            Objects.requireNonNull(mediaType, "mediaType");
+            Objects.requireNonNull(data, "data");
+            if (!java.util.Set.of("image/png", "image/jpeg", "image/gif", "image/webp").contains(mediaType)) {
+                throw new IllegalArgumentException("unsupported image media type: " + mediaType);
+            }
+            if (data.isBlank()) {
+                throw new IllegalArgumentException("image data must not be blank");
+            }
+        }
+    }
+
+    /**
      * Provider-side reasoning. Carried so it can round-trip where a provider requires it, but
      * treated as sensitive: never persisted to the transcript and never shown by default.
      */
@@ -80,6 +104,7 @@ public sealed interface ContentBlock {
             case Text t -> t.text().length();
             case ToolUse u -> u.name().length() + u.input().toString().length();
             case ToolResult r -> r.content().length();
+            case Image ignored -> Image.WEIGHT;
             case Thinking t -> t.text().length();
         };
     }

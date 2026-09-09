@@ -648,7 +648,24 @@ public final class OpenAiCompatibleModelProvider implements ModelProvider {
             case SYSTEM -> "system";
             case USER, TOOL -> "user";
         });
-        wire.put("content", message.displayText());
+        List<ContentBlock.Image> images = message.content().stream()
+                .filter(ContentBlock.Image.class::isInstance)
+                .map(ContentBlock.Image.class::cast)
+                .toList();
+        if (images.isEmpty()) {
+            // A plain string is what every server accepts; parts are only for multimodal input.
+            wire.put("content", message.displayText());
+        } else {
+            List<Map<String, Object>> parts = new ArrayList<>();
+            if (!message.displayText().isEmpty()) {
+                parts.add(Map.of("type", "text", "text", message.displayText()));
+            }
+            for (ContentBlock.Image image : images) {
+                parts.add(Map.of("type", "image_url", "image_url",
+                        Map.of("url", "data:" + image.mediaType() + ";base64," + image.data())));
+            }
+            wire.put("content", parts);
+        }
 
         List<Map<String, Object>> toolCalls = message.toolUses().stream()
                 .map(use -> Map.<String, Object>of(

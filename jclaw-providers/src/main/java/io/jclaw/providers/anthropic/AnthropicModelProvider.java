@@ -312,6 +312,14 @@ public final class AnthropicModelProvider implements ModelProvider {
                                 .content(result.content())
                                 .isError(result.isError())
                                 .build()));
+                case io.jclaw.contracts.model.ContentBlock.Image image -> blocks.add(
+                        ContentBlockParam.ofImage(com.anthropic.models.messages.ImageBlockParam.builder()
+                                .source(com.anthropic.models.messages.Base64ImageSource.builder()
+                                        .mediaType(com.anthropic.models.messages.Base64ImageSource.MediaType.of(
+                                                image.mediaType()))
+                                        .data(image.data())
+                                        .build())
+                                .build()));
                 case io.jclaw.contracts.model.ContentBlock.Thinking ignored -> {
                     // Reasoning is not replayed across providers; the SDK re-derives it.
                 }

@@ -12,6 +12,7 @@ import io.jclaw.app.cli.ReplCommand;
 import io.jclaw.app.cli.ResumeCommand;
 import io.jclaw.app.cli.RoutinesCommand;
 import io.jclaw.app.cli.RunCommand;
+import io.jclaw.app.cli.ServeCommand;
 import io.jclaw.app.cli.SubmitCommand;
 import io.jclaw.app.cli.SkillsCommand;
 import io.jclaw.app.cli.StatusCommand;
@@ -98,6 +99,7 @@ import picocli.CommandLine.Command;
                 RecoverCommand.class,
                 RetainCommand.class,
                 WorkerCommand.class,
+                ServeCommand.class,
                 DoctorCommand.class
         })
 public class JclawCommand implements Runnable {

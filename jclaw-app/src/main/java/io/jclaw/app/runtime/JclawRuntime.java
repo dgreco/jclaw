@@ -152,10 +152,30 @@ public class JclawRuntime {
             String userText,
             AtomicBoolean cancelled,
             Optional<Consumer<ModelProvider.StreamEvent>> streamSink) {
+        Objects.requireNonNull(userText, "userText");
+        return submit(thread, ChatMessage.user(userText), cancelled, streamSink);
+    }
+
+    /**
+     * Runs one turn whose inbound message may carry attachments alongside its text.
+     *
+     * <p>The message is the unit of admission: it is written to the transcript whole, so an
+     * attached image is as durable as the words around it and reaches the model in the same
+     * request.
+     */
+    public TurnResult submit(
+            ThreadId thread,
+            ChatMessage inbound,
+            AtomicBoolean cancelled,
+            Optional<Consumer<ModelProvider.StreamEvent>> streamSink) {
         Objects.requireNonNull(streamSink, "streamSink");
         Objects.requireNonNull(thread, "thread");
-        Objects.requireNonNull(userText, "userText");
+        Objects.requireNonNull(inbound, "inbound");
         Objects.requireNonNull(cancelled, "cancelled");
+        if (inbound.role() != ChatMessage.Role.USER) {
+            throw new IllegalArgumentException("an inbound message must have the user role");
+        }
+        String userText = inbound.displayText();
 
         TurnScope scope = TurnScope.local(projectName(), thread);
         TurnRunId run = TurnRunId.fresh();
@@ -178,7 +198,7 @@ public class JclawRuntime {
             return threadBusy(run, thread);
         }
         try (ThreadLock.Held ignored = held.get()) {
-            return admit(run, scope, thread, userText, policy, cancelled, streamSink);
+            return admit(run, scope, thread, inbound, policy, cancelled, streamSink);
         }
     }
 
@@ -187,7 +207,7 @@ public class JclawRuntime {
             TurnRunId run,
             TurnScope scope,
             ThreadId thread,
-            String userText,
+            ChatMessage inbound,
             LoopPolicy policy,
             AtomicBoolean cancelled,
             Optional<Consumer<ModelProvider.StreamEvent>> streamSink) {
@@ -195,7 +215,7 @@ public class JclawRuntime {
         // The inbound message is durable before any run exists, so a crash cannot lose what the
         // user asked for. The run's resolved profile is recorded at the same moment so a resume
         // replays the same model rather than whatever the config says later.
-        threads.acceptInbound(thread, ChatMessage.user(userText));
+        threads.acceptInbound(thread, inbound);
         runs.record(new RunStore.RunRecord(
                 run, scope, TurnStatus.RUNNING, policy.model(), policy.systemPrompt(),
                 clock.instant(), Optional.empty(), Optional.empty()));
@@ -212,7 +232,7 @@ public class JclawRuntime {
         log.debug("run {}: claimed by {} (lease {}s)", run.value(), workerId, LEASE_TTL.toSeconds());
 
         LoopExecutionState initial =
-                LoopExecutionState.start(seedMessages(thread, userText, policy), budget());
+                LoopExecutionState.start(seedMessages(thread, inbound, policy), budget());
         log.debug("run {}: seeded with {} message(s) of history; handing to interpreter",
                 run.value(), initial.messages().size());
         LoopExit exit = interpreter.run(run, scope, initial, policy, cancelled, hooks(run, streamSink));
@@ -320,14 +340,23 @@ public class JclawRuntime {
      * thread execute in submission order, one at a time.
      */
     public TurnRunId enqueue(ThreadId thread, String userText) {
-        Objects.requireNonNull(thread, "thread");
         Objects.requireNonNull(userText, "userText");
+        return enqueue(thread, ChatMessage.user(userText));
+    }
+
+    /** As {@link #enqueue(ThreadId, String)}, with an inbound message that may carry attachments. */
+    public TurnRunId enqueue(ThreadId thread, ChatMessage inbound) {
+        Objects.requireNonNull(thread, "thread");
+        Objects.requireNonNull(inbound, "inbound");
+        if (inbound.role() != ChatMessage.Role.USER) {
+            throw new IllegalArgumentException("an inbound message must have the user role");
+        }
 
         TurnScope scope = TurnScope.local(projectName(), thread);
         TurnRunId run = TurnRunId.fresh();
         LoopPolicy policy = resolvePolicy(scope, properties.model(), assembleSystemPrompt());
 
-        threads.acceptInbound(thread, ChatMessage.user(userText));
+        threads.acceptInbound(thread, inbound);
         runs.record(new RunStore.RunRecord(
                 run, scope, TurnStatus.QUEUED, policy.model(), policy.systemPrompt(),
                 clock.instant(), Optional.empty(), Optional.empty()));
@@ -580,12 +609,12 @@ public class JclawRuntime {
      * reads the whole file to serve any window. The compacted seed bounds the checkpoint size, and
      * the machine compacts again on every model call as a run's own tool results accumulate.
      */
-    private List<ChatMessage> seedMessages(ThreadId thread, String userText, LoopPolicy policy) {
+    private List<ChatMessage> seedMessages(ThreadId thread, ChatMessage inbound, LoopPolicy policy) {
         List<ChatMessage> history = threads.history(thread, Integer.MAX_VALUE).stream()
                 .map(ThreadService.ThreadMessage::message)
                 .toList();
         if (history.isEmpty()) {
-            return List.of(ChatMessage.user(userText));
+            return List.of(inbound);
         }
         return seedFrom(history, policy);
     }

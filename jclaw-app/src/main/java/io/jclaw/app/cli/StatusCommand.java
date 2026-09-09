@@ -28,12 +28,18 @@ public class StatusCommand implements Callable<Integer> {
     @Option(names = {"-n", "--limit"}, description = "Number of events to show. Default 20.")
     private int limit = 20;
 
+    @Option(names = "--run", description = "Show one run's projection folded from its events, instead of the tail.")
+    private String run;
+
     public StatusCommand(EventLog events) {
         this.events = events;
     }
 
     @Override
     public Integer call() {
+        if (run != null && !run.isBlank()) {
+            return projection(new io.jclaw.contracts.turn.TurnRunId(run));
+        }
         EventLog.EventCursor latest = events.latest();
         long from = Math.max(0, latest.position() - limit);
         List<EventLog.Entry> entries = events.readFrom(new EventLog.EventCursor(from), limit);
@@ -51,6 +57,35 @@ public class StatusCommand implements Callable<Integer> {
                     event.run().value(),
                     detail(event));
         }
+        return 0;
+    }
+
+    /** The read model of one run: what a UI would show, folded from the same log. */
+    private int projection(io.jclaw.contracts.turn.TurnRunId id) {
+        List<JclawEvent> all = events.readRun(id).stream().map(EventLog.Entry::event).toList();
+        if (all.isEmpty()) {
+            System.out.println("(no events for " + id.value() + ")");
+            return 1;
+        }
+        io.jclaw.domain.projection.RunProjection.RunView view =
+                io.jclaw.domain.projection.RunProjection.fold(id, all);
+        System.out.println("run          " + id.value());
+        System.out.println("thread       " + view.scope().map(s -> s.thread().value()).orElse("?"));
+        System.out.println("status       " + view.status().map(Enum::name).orElse("?")
+                + view.failure().map(f -> " (" + f.category() + ")").orElse(""));
+        System.out.println("submitted    " + view.submittedAt().map(Object::toString).orElse("?"));
+        System.out.println("finished     " + view.finishedAt().map(Object::toString).orElse("-"));
+        System.out.println("model calls  " + view.modelCalls() + " (" + view.modelFailures() + " failed), "
+                + view.usage().total() + " tokens");
+        System.out.println("iterations   " + view.iterations() + ", checkpoints " + view.checkpoints());
+        System.out.println("capabilities " + view.capabilities().size()
+                + (view.capabilities().isEmpty() ? "" : ":"));
+        view.capabilities().forEach(call -> System.out.printf("    %-28s %-10s %s %dms%n",
+                call.capability(), call.effect(), call.outcome(), call.latencyMillis()));
+        if (view.injectionFindings() > 0) {
+            System.out.println("injection    " + view.injectionFindings() + " finding(s)");
+        }
+        view.openGate().ifPresent(gate -> System.out.println("open gate    " + gate.kind() + " " + gate.id()));
         return 0;
     }
 

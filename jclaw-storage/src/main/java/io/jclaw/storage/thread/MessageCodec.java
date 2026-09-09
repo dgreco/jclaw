@@ -58,6 +58,11 @@ public final class MessageCodec {
                 out.put("content", result.content());
                 out.put("isError", result.isError());
             }
+            case ContentBlock.Image image -> {
+                out.put("kind", "image");
+                out.put("mediaType", image.mediaType());
+                out.put("data", image.data());
+            }
             case ContentBlock.Thinking ignored -> {
                 return java.util.Optional.empty(); // never persisted
             }
@@ -98,6 +103,8 @@ public final class MessageCodec {
                     String.valueOf(map.get("callId")),
                     String.valueOf(map.get("content")),
                     map.get("isError") instanceof Boolean flag && flag);
+            case "image" -> new ContentBlock.Image(
+                    String.valueOf(map.get("mediaType")), String.valueOf(map.get("data")));
             default -> null;
         });
     }

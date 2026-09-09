@@ -58,6 +58,8 @@ import java.util.Map;
  *                             {@code 0} keeps forever
  * @param retentionEvents      the same for {@code events.jsonl}
  * @param retentionCheckpoints the same for {@code checkpoints.jsonl}
+ * @param serveToken           bearer token {@code jclaw serve} requires on every request; blank
+ *                             means no authentication, which is only sensible on loopback
  */
 @ConfigurationProperties(prefix = "jclaw")
 public record JclawProperties(
@@ -151,7 +153,9 @@ public record JclawProperties(
 
         @DefaultValue("30d") Duration retentionEvents,
 
-        @DefaultValue("7d") Duration retentionCheckpoints) {
+        @DefaultValue("7d") Duration retentionCheckpoints,
+
+        @DefaultValue("") String serveToken) {
 
     public JclawProperties {
         // Constructor binding leaves an absent map null; an absent map means no limits.
@@ -200,7 +204,8 @@ public record JclawProperties(
                 false,
                 Duration.ofDays(14),
                 Duration.ofDays(30),
-                Duration.ofDays(7));
+                Duration.ofDays(7),
+                "");
     }
 
     /**

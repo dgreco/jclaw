@@ -46,6 +46,9 @@ public class RunCommand implements Callable<Integer> {
     @Option(names = "--stream", description = "Print the reply as it is generated.")
     private boolean stream;
 
+    @Option(names = "--attach", description = "Attach a file: an image (png, jpg, gif, webp) or a UTF-8 text file. Repeatable.")
+    private java.nio.file.Path[] attach = new java.nio.file.Path[0];
+
     @Option(
             names = {"-t", "--thread"},
             description = "Conversation thread to continue. Defaults to 'default'.")
@@ -75,8 +78,16 @@ public class RunCommand implements Callable<Integer> {
         Runtime.getRuntime().addShutdownHook(interrupt);
 
         try {
+            io.jclaw.contracts.Result<io.jclaw.contracts.model.ChatMessage, String> inbound =
+                    io.jclaw.app.runtime.Attachments.userMessage(String.join(" ", prompt), java.util.List.of(attach));
+            if (inbound instanceof io.jclaw.contracts.Result.Err<io.jclaw.contracts.model.ChatMessage, String> err) {
+                System.err.println("jclaw: " + err.error());
+                return 1;
+            }
             JclawRuntime.TurnResult result = runtime.submit(
-                    new ThreadId(thread), String.join(" ", prompt), cancelled, streamSink());
+                    new ThreadId(thread),
+                    ((io.jclaw.contracts.Result.Ok<io.jclaw.contracts.model.ChatMessage, String>) inbound).value(),
+                    cancelled, streamSink());
 
             return switch (result.status()) {
                 case COMPLETED -> {
