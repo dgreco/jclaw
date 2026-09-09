@@ -58,8 +58,13 @@ import java.util.Map;
  *                             {@code 0} keeps forever
  * @param retentionEvents      the same for {@code events.jsonl}
  * @param retentionCheckpoints the same for {@code checkpoints.jsonl}
- * @param serveToken           bearer token {@code jclaw serve} requires on every request; blank
- *                             means no authentication, which is only sensible on loopback
+ * @param serveToken           the operator's bearer token for {@code jclaw serve}; blank means no
+ *                             authentication (only sensible on loopback). The operator is the
+ *                             {@code local} tenant, sharing threads with the CLI, and may read
+ *                             every tenant's runs
+ * @param serveUsers           named users for {@code jclaw serve}, user name to bearer token; each
+ *                             user is a tenant of their own with separate threads, memories,
+ *                             approvals, and a scheduler share
  * @param shellBackend         {@code host} (default) runs {@code builtin.shell} as a child
  *                             process; {@code docker} runs it in a container per
  *                             {@code jclaw.sandbox-*}
@@ -166,6 +171,8 @@ public record JclawProperties(
 
         @DefaultValue("") String serveToken,
 
+        Map<String, String> serveUsers,
+
         @DefaultValue("host") String shellBackend,
 
         @DefaultValue("docker") String sandboxDocker,
@@ -184,6 +191,7 @@ public record JclawProperties(
         // Constructor binding leaves an absent map null; an absent map means no limits.
         toolEgress = toolEgress == null ? Map.of() : Map.copyOf(toolEgress);
         toolRateLimits = toolRateLimits == null ? Map.of() : Map.copyOf(toolRateLimits);
+        serveUsers = serveUsers == null ? Map.of() : Map.copyOf(serveUsers);
     }
 
     /**
@@ -229,6 +237,7 @@ public record JclawProperties(
                 Duration.ofDays(30),
                 Duration.ofDays(7),
                 "",
+                Map.of(),
                 "host",
                 "docker",
                 "alpine:3.20",

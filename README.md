@@ -61,7 +61,7 @@ jclaw reimplements the **architecture** of IronClaw — the seven-layer ladder, 
 
 Everything is durable JSONL under `~/.jclaw`: a run can park in one process, be approved in a second, and resume in a third. There is no database, and no server unless you start one (`jclaw serve`).
 
-**Status.** Milestones M0–M7 plus subagents (synchronous or asynchronous), MCP, streaming on every provider, lease-based crash recovery, a per-thread run lock, context compaction with model summaries, vector memory, configurable denials and egress lists, per-tool rate limits, injection heuristics, auth and process gates with expiry, a scheduler with `submit` and `worker`, an HTTP surface with run projections and event streams, attachments, store retention, and a container sandbox for the shell lane. 240 tests pass across the modules, including 13 machine-checked architecture rules (ArchUnit). Both the uber jar and the native image are verified end to end, including subprocess spawning for MCP servers and shell tools. [PARITY.md](PARITY.md) lists what IronClaw still has that jclaw does not.
+**Status.** Milestones M0–M7 plus subagents (synchronous or asynchronous), MCP, streaming on every provider, lease-based crash recovery, a per-thread run lock, context compaction with model summaries, vector memory, configurable denials and egress lists, per-tool rate limits, injection heuristics, auth and process gates with expiry, a scheduler with `submit` and `worker`, an HTTP surface with run projections, event streams, and per-user tenants, attachments, store retention, and a container sandbox for the shell lane. 245 tests pass across the modules, including 13 machine-checked architecture rules (ArchUnit). Both the uber jar and the native image are verified end to end, including subprocess spawning for MCP servers and shell tools. [PARITY.md](PARITY.md) lists what IronClaw still has that jclaw does not.
 
 ---
 
@@ -229,7 +229,8 @@ jclaw:
 | `embedding-model` | *(provider default)* | `text-embedding-3-small` (openai), `openai/text-embedding-3-small` (openrouter), `nomic-embed-text` (ollama); **required for `local`**. Vectors carry their model id, so switching models means `jclaw memory reindex`. |
 | `subagents-async` | `false` | `true` queues a subagent for a worker and parks the parent `WAITING_PROCESS` until the child finishes; needs `worker` or `serve` running. `false` runs the child inside the parent's tool call. |
 | `retention-results` / `retention-events` / `retention-checkpoints` | `14d` / `30d` / `7d` | Maximum age of a **finished** run's rows in each store before `retain` (or the worker's hourly sweep) drops them. `0` keeps forever. The transcript is never swept. |
-| `serve-token` | *(blank)* | Bearer token `serve` requires on every request (`JCLAW_SERVE_TOKEN` works too). Blank means no authentication: keep it on loopback. |
+| `serve-token` | *(blank)* | The operator's bearer token for `serve` (`JCLAW_SERVE_TOKEN` works too). The operator is the same `local` tenant as the CLI and can read every user's runs. Blank with no `serve-users` means no authentication: keep it on loopback. |
+| `serve-users` | *(none)* | Named users for `serve`, as a map of user name to bearer token (`jclaw.serve-users.alice=<token>`). Each user is a tenant: their thread names are namespaced, their memories, routines, and approvals are their own, and they see only their own runs and gates. |
 | `shell-backend` | `host` | `host` runs `builtin.shell` as a child process; `docker` runs each command in a container (see [Tools](#tools-the-agent-can-use)). |
 | `sandbox-docker` / `sandbox-image` / `sandbox-network` / `sandbox-memory` / `sandbox-cpus` / `sandbox-pids-limit` | `docker` / `alpine:3.20` / `none` / `512m` / `1` / `256` | The container contract for `shell-backend: docker`: binary, image, network (`none` unless you say otherwise), memory, CPU, and pid limits. |
 
@@ -396,6 +397,8 @@ Scheduling is a pure function over the queue: oldest first, at most `--concurren
 ```bash
 export JCLAW_SERVE_TOKEN=$(openssl rand -hex 16)      # optional but wise; blank = no auth
 jclaw serve --port 8080 --concurrency 4                # binds 127.0.0.1 unless --host says otherwise
+jclaw serve --concurrency 4 --per-user 1 \
+  --jclaw.serve-users.alice=$(openssl rand -hex 16)    # named users are tenants of their own
 ```
 
 | Route | Does |
@@ -409,7 +412,9 @@ jclaw serve --port 8080 --concurrency 4                # binds 127.0.0.1 unless 
 | `GET /approvals`, `POST /approvals/{gate}` `{"approved": true}` | Pending gates; decide one and requeue its run for the scheduler. |
 | `GET /health` | Liveness. |
 
-Every route requires `Authorization: Bearer <token>` when `serve-token` is set, health included; the browser UI's event stream passes it as `?access_token=` because `EventSource` cannot set headers. There is no TLS: put a reverse proxy in front if it leaves the machine. What this surface is *not*: a Slack or Telegram adapter, or a multi-user service (see PARITY.md).
+Every route requires `Authorization: Bearer <token>` when `serve-token` or `serve-users` is set, health included; the browser UI's event stream passes it as `?access_token=` because `EventSource` cannot set headers. There is no TLS: put a reverse proxy in front if it leaves the machine.
+
+**Users are tenants.** A caller presenting a `serve-users` token runs as that user: thread `work` is really `alice:work`, so two users on the same thread name hold two conversations; their runs carry the user as the tenant of their `TurnScope`, and everything that keys on scope, memories, routines, approvals, the thread lock, separates by it without the stores knowing about HTTP. A user sees only their own runs and gates (another user's is a 404). The operator token is the `local` tenant, the one the CLI uses, so what you do in a terminal and in the browser is one conversation, and the operator reads every tenant's runs. `--per-user N` caps how many of one tenant's runs execute at once, so one busy user cannot take every slot. What this surface is *not*: a Slack or Telegram adapter, or a login system; tokens are static (see PARITY.md).
 
 ### Tools the agent can use
 

@@ -28,6 +28,13 @@ class RunSchedulingTest {
                 "m", "p", T0.plusSeconds(secondsAfterT0), Optional.empty(), Optional.empty());
     }
 
+    private static RunRecord withTenant(RunRecord record, String tenant) {
+        return new RunRecord(record.run(),
+                new TurnScope(tenant, "default", record.scope().project(), record.scope().thread()),
+                record.status(), record.model(), record.systemPrompt(), record.submittedAt(),
+                record.finishedAt(), record.lease());
+    }
+
     private static List<String> ids(List<RunRecord> records) {
         return records.stream().map(record -> record.run().value()).toList();
     }
@@ -60,6 +67,22 @@ class RunSchedulingTest {
 
         assertEquals(List.of("a1", "b"), ids(RunScheduling.select(queued, Set.of(), 0, TWO)),
                 "the second run on thread t waits for the first; the slot goes to another thread");
+    }
+
+    @Test
+    @DisplayName("a per-tenant cap keeps one busy tenant from taking every slot")
+    void perTenantCap() {
+        List<RunRecord> queued = List.of(
+                withTenant(queued("a1", "alice:t1", 10), "alice"),
+                withTenant(queued("a2", "alice:t2", 20), "alice"),
+                withTenant(queued("b1", "bob:t1", 30), "bob"));
+        RunScheduling.Caps caps = new RunScheduling.Caps(3, 1);
+
+        assertEquals(List.of("a1", "b1"), ids(RunScheduling.select(queued, Set.of(), 0, java.util.Map.of(), caps)),
+                "alice gets one slot, bob the next; alice's second waits");
+        assertEquals(List.of("b1"), ids(RunScheduling.select(
+                queued, Set.of(), 1, java.util.Map.of("alice", 1), caps)),
+                "an in-flight alice run already fills her share");
     }
 
     @Test

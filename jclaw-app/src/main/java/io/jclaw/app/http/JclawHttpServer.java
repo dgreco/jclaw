@@ -77,6 +77,7 @@ public final class JclawHttpServer {
     private final JsonlApprovalStore approvals;
     private final Clock clock;
     private final Optional<String> token;
+    private final Map<String, String> tokensToUsers;
     private final String model;
     private final JsonMapper mapper = JsonMapper.builder().build();
     private HttpServer server;
@@ -84,6 +85,17 @@ public final class JclawHttpServer {
     public JclawHttpServer(
             JclawRuntime runtime, RunStore runs, EventLog events, ThreadService threads,
             JsonlApprovalStore approvals, Clock clock, Optional<String> token, String model) {
+        this(runtime, runs, events, threads, approvals, clock, token, Map.of(), model);
+    }
+
+    /**
+     * @param token operator token; the operator is the {@code local} tenant and reads everything
+     * @param users user name to bearer token; each user is a tenant
+     */
+    public JclawHttpServer(
+            JclawRuntime runtime, RunStore runs, EventLog events, ThreadService threads,
+            JsonlApprovalStore approvals, Clock clock, Optional<String> token,
+            Map<String, String> users, String model) {
         this.runtime = Objects.requireNonNull(runtime, "runtime");
         this.runs = Objects.requireNonNull(runs, "runs");
         this.events = Objects.requireNonNull(events, "events");
@@ -91,6 +103,14 @@ public final class JclawHttpServer {
         this.approvals = Objects.requireNonNull(approvals, "approvals");
         this.clock = Objects.requireNonNull(clock, "clock");
         this.token = Objects.requireNonNull(token, "token").filter(t -> !t.isBlank());
+        Map<String, String> byToken = new LinkedHashMap<>();
+        Objects.requireNonNull(users, "users").forEach((name, secret) -> {
+            new Principal(name); // validates the name
+            if (secret != null && !secret.isBlank()) {
+                byToken.put(secret, name);
+            }
+        });
+        this.tokensToUsers = Map.copyOf(byToken);
         this.model = Objects.requireNonNull(model, "model");
     }
 
@@ -121,10 +141,12 @@ public final class JclawHttpServer {
 
     private void dispatch(HttpExchange exchange) throws IOException {
         try {
-            if (!authorized(exchange)) {
+            Optional<Principal> who = authenticate(exchange);
+            if (who.isEmpty()) {
                 send(exchange, 401, Map.of("error", "unauthorized"));
                 return;
             }
+            Principal principal = who.get();
             String method = exchange.getRequestMethod();
             String path = exchange.getRequestURI().getPath();
             Matcher m;
@@ -137,21 +159,28 @@ public final class JclawHttpServer {
                 send(exchange, 200, Map.of("object", "list", "data", List.of(Map.of(
                         "id", model, "object", "model", "owned_by", "jclaw"))));
             } else if (method.equals("POST") && path.equals("/v1/chat/completions")) {
-                chatCompletions(exchange);
+                chatCompletions(exchange, principal);
             } else if (method.equals("POST") && (m = THREAD_TURNS.matcher(path)).matches()) {
-                submitTurn(exchange, new ThreadId(m.group(1)));
+                submitTurn(exchange, principal, principal.thread(m.group(1)));
             } else if (method.equals("GET") && (m = THREAD_MESSAGES.matcher(path)).matches()) {
                 send(exchange, 200, Map.of("thread", m.group(1), "messages",
-                        threads.history(new ThreadId(m.group(1)), Integer.MAX_VALUE).stream()
+                        threads.history(principal.thread(m.group(1)), Integer.MAX_VALUE).stream()
                                 .map(this::message).toList()));
             } else if (method.equals("GET") && (m = RUN.matcher(path)).matches()) {
-                run(exchange, new TurnRunId(m.group(1)));
+                run(exchange, principal, new TurnRunId(m.group(1)));
             } else if (method.equals("GET") && (m = RUN_EVENTS.matcher(path)).matches()) {
-                stream(exchange, new TurnRunId(m.group(1)));
+                TurnRunId run = new TurnRunId(m.group(1));
+                if (!owned(principal, run)) {
+                    send(exchange, 404, Map.of("error", "no such run"));
+                } else {
+                    stream(exchange, run);
+                }
             } else if (method.equals("GET") && path.equals("/approvals")) {
-                send(exchange, 200, Map.of("gates", approvals.allPending().stream().map(this::gate).toList()));
+                send(exchange, 200, Map.of("gates", approvals.allPending().stream()
+                        .filter(gate -> principal.mayRead(gate.scope()))
+                        .map(this::gate).toList()));
             } else if (method.equals("POST") && (m = APPROVAL.matcher(path)).matches()) {
-                decide(exchange, new GateId(m.group(1)));
+                decide(exchange, principal, new GateId(m.group(1)));
             } else {
                 send(exchange, 404, Map.of("error", "no such route"));
             }
@@ -163,26 +192,41 @@ public final class JclawHttpServer {
         }
     }
 
-    private boolean authorized(HttpExchange exchange) {
-        if (token.isEmpty()) {
-            return true;
+    /**
+     * Who is calling: the operator (by {@code serve-token}, or unauthenticated when no auth is
+     * configured), a named user by their token, or nobody.
+     */
+    private Optional<Principal> authenticate(HttpExchange exchange) {
+        if (token.isEmpty() && tokensToUsers.isEmpty()) {
+            return Optional.of(Principal.operator());
         }
+        String presented = null;
         String header = exchange.getRequestHeaders().getFirst("Authorization");
-        if (header != null && header.equals("Bearer " + token.get())) {
-            return true;
+        if (header != null && header.startsWith("Bearer ")) {
+            presented = header.substring("Bearer ".length()).trim();
         }
         // EventSource cannot set headers; the browser UI passes the token as a query parameter.
         String query = exchange.getRequestURI().getRawQuery();
-        if (query != null) {
+        if (presented == null && query != null) {
             for (String pair : query.split("&")) {
                 int eq = pair.indexOf('=');
                 if (eq > 0 && pair.substring(0, eq).equals("access_token")) {
-                    String value = java.net.URLDecoder.decode(pair.substring(eq + 1), StandardCharsets.UTF_8);
-                    return value.equals(token.get());
+                    presented = java.net.URLDecoder.decode(pair.substring(eq + 1), StandardCharsets.UTF_8);
                 }
             }
         }
-        return false;
+        if (presented == null) {
+            return Optional.empty();
+        }
+        if (token.isPresent() && token.get().equals(presented)) {
+            return Optional.of(Principal.operator());
+        }
+        String user = tokensToUsers.get(presented);
+        return user == null ? Optional.empty() : Optional.of(new Principal(user));
+    }
+
+    private boolean owned(Principal principal, TurnRunId run) {
+        return runs.find(run).map(record -> principal.mayRead(record.scope())).orElse(false);
     }
 
     /**
@@ -195,14 +239,14 @@ public final class JclawHttpServer {
      * says what it is waiting for, with the run and gate ids in response headers, since the
      * OpenAI shape has no notion of a gate.
      */
-    private void chatCompletions(HttpExchange exchange) throws IOException {
+    private void chatCompletions(HttpExchange exchange, Principal principal) throws IOException {
         OpenAiCompat.Parsed parsed = OpenAiCompat.parse(readJson(exchange));
         String named = exchange.getRequestHeaders().getFirst("X-Jclaw-Thread");
         ThreadId thread;
         if (named != null && !named.isBlank()) {
-            thread = new ThreadId(named.trim());
+            thread = principal.thread(named);
         } else {
-            thread = new ThreadId("oai-" + java.util.UUID.randomUUID().toString().substring(0, 8));
+            thread = principal.thread("oai-" + java.util.UUID.randomUUID().toString().substring(0, 8));
             for (ChatMessage prior : parsed.priorTurns()) {
                 if (prior.role() == ChatMessage.Role.USER) {
                     threads.acceptInbound(thread, prior);
@@ -215,7 +259,7 @@ public final class JclawHttpServer {
         String requestedModel = parsed.model().orElse(model);
 
         if (!parsed.stream()) {
-            JclawRuntime.TurnResult result = runtime.submit(
+            JclawRuntime.TurnResult result = runtime.submit(principal.tenant(),
                     thread, parsed.inbound(), new java.util.concurrent.atomic.AtomicBoolean(false), Optional.empty());
             respondCompletion(exchange, result, thread, created, requestedModel);
             return;
@@ -239,7 +283,7 @@ public final class JclawHttpServer {
             };
             JclawRuntime.TurnResult result;
             try {
-                result = runtime.submit(thread, parsed.inbound(),
+                result = runtime.submit(principal.tenant(), thread, parsed.inbound(),
                         new java.util.concurrent.atomic.AtomicBoolean(false), Optional.of(sink));
             } catch (java.io.UncheckedIOException clientGone) {
                 return;
@@ -307,7 +351,7 @@ public final class JclawHttpServer {
 
     /** {@code POST /threads/{thread}/turns} with {@code {"text": …, "attachments": [{mediaType, data}]}}. */
     @SuppressWarnings("unchecked")
-    private void submitTurn(HttpExchange exchange, ThreadId thread) throws IOException {
+    private void submitTurn(HttpExchange exchange, Principal principal, ThreadId thread) throws IOException {
         Map<String, Object> body = readJson(exchange);
         String text = body.get("text") instanceof String t ? t : "";
         List<ContentBlock> blocks = new ArrayList<>();
@@ -327,13 +371,13 @@ public final class JclawHttpServer {
             send(exchange, 400, Map.of("error", "text or attachments required"));
             return;
         }
-        TurnRunId run = runtime.enqueue(thread, new ChatMessage(ChatMessage.Role.USER, blocks));
+        TurnRunId run = runtime.enqueue(principal.tenant(), thread, new ChatMessage(ChatMessage.Role.USER, blocks));
         send(exchange, 202, Map.of("run", run.value(), "thread", thread.value(), "status", "QUEUED"));
     }
 
     /** {@code GET /runs/{run}}: the projection, plus the reply when the run completed. */
-    private void run(HttpExchange exchange, TurnRunId run) throws IOException {
-        Optional<RunStore.RunRecord> record = runs.find(run);
+    private void run(HttpExchange exchange, Principal principal, TurnRunId run) throws IOException {
+        Optional<RunStore.RunRecord> record = runs.find(run).filter(r -> principal.mayRead(r.scope()));
         if (record.isEmpty()) {
             send(exchange, 404, Map.of("error", "no such run"));
             return;
@@ -409,10 +453,10 @@ public final class JclawHttpServer {
     }
 
     /** {@code POST /approvals/{gate}} with {@code {"approved": true|false}}: decide and requeue. */
-    private void decide(HttpExchange exchange, GateId gate) throws IOException {
+    private void decide(HttpExchange exchange, Principal principal, GateId gate) throws IOException {
         Map<String, Object> body = readJson(exchange);
         boolean approved = body.get("approved") instanceof Boolean b && b;
-        Optional<ApprovalStore.Gate> found = approvals.find(gate);
+        Optional<ApprovalStore.Gate> found = approvals.find(gate).filter(g -> principal.mayRead(g.scope()));
         if (found.isEmpty()) {
             send(exchange, 404, Map.of("error", "no such gate"));
             return;

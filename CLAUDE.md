@@ -20,7 +20,7 @@ jclaw is a Java/Spring Boot reimplementation of the **architecture** of
 untrusted-`LoopExit` trust model, and the `CapabilityHost` authority boundary are faithful; the
 feature surface is a fraction of IronClaw's. See **Not built yet** for the honest list.
 
-240 tests pass across 9 modules, including 13 machine-checked architecture rules.
+245 tests pass across 9 modules, including 13 machine-checked architecture rules.
 
 ## Commands
 
@@ -49,7 +49,7 @@ The `native` profile lives in `jclaw-app/pom.xml`. The Boot parent contributes o
 |---|---|
 | `run [--stream] [--attach f]…` | one-shot turn; exits 0 ok, 1 failed, 2 parked on a gate |
 | `submit` | queue a turn durably and return its run id; a `worker` or `serve` executes it. `--attach` like `run` |
-| `serve [--host --port --concurrency]` | HTTP ingress + worker loop: browser UI at `/`, OpenAI-compatible `/v1/chat/completions`, enqueue, run projections, SSE event streams, approvals; bearer token via `jclaw.serve-token` |
+| `serve [--host --port --concurrency --per-user]` | HTTP ingress + worker loop: browser UI at `/`, OpenAI-compatible `/v1/chat/completions`, enqueue, run projections, SSE event streams, approvals; operator token via `jclaw.serve-token`, per-user tenants via `jclaw.serve-users` |
 | `repl` | interactive session with readline editing (and still pipes) |
 | `approvals list [--all]\|approve\|deny` | resolve gates (approval, auth, process); approving resumes by default; expired gates are hidden and refuse decisions |
 | `resume <run-id>` | continue a parked run |
@@ -402,9 +402,9 @@ architecture and most runtime mechanisms are equivalent, the breadth is not. PAR
 
 - **Channel adapters** — `serve` has a browser UI and an OpenAI-compatible endpoint; there is no
   Slack or Telegram adapter and no reply-target binding beyond stdout and HTTP read-back.
-- **Identity and multi-tenancy** — `TurnScope` carries tenant and agent fields that are always
-  `local`; scheduler caps, memory scoping, and the thread lock assume one operator. `serve` has
-  one static bearer token, not users.
+- **Identity beyond static tokens** — `serve` users are tenants (`TurnScope.tenant()`), and every
+  scope-keyed store and the scheduler separate by tenant. There is no login flow, no roles, no
+  per-tenant policy or token accounting, and `TurnScope.agent()` is always `default`.
 - **A secrets vault** — tools cannot see secrets (right) but also cannot use one: no leased
   credential handoff, so an authenticated `http_fetch` is impossible.
 - **SQL persistence** — `spring-jdbc` and H2 are dependencies but unused; no SQL layer, no

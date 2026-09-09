@@ -60,6 +60,7 @@ class LocalProviderWiringTest {
                 java.time.Duration.ofDays(30),
                 java.time.Duration.ofDays(7),
                 "",
+                java.util.Map.of(),
                 "host",
                 "docker",
                 "alpine:3.20",

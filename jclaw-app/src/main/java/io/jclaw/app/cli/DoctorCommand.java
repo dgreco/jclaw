@@ -81,6 +81,11 @@ public class DoctorCommand implements Callable<Integer> {
         System.out.println("  approval ttl         " + properties.approvalTtl());
         System.out.println("  context summaries    " + (properties.contextSummarise() ? "on" : "off"));
         System.out.println("  subagents            " + (properties.subagentsAsync() ? "async (needs a worker)" : "sync"));
+        System.out.println("  serve auth           " + ((properties.serveToken() == null || properties.serveToken().isBlank())
+                && properties.serveUsers().isEmpty()
+                ? "none (loopback only)"
+                : (properties.serveToken() != null && !properties.serveToken().isBlank() ? "operator token" : "no operator token")
+                        + ", " + properties.serveUsers().size() + " user(s)"));
         System.out.println("  shell backend        " + ("docker".equals(properties.shellBackend())
                 ? "docker (" + properties.sandboxImage() + ", network " + properties.sandboxNetwork()
                         + ", " + properties.sandboxMemory() + ", " + properties.sandboxCpus() + " cpu)"

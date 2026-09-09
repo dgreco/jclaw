@@ -55,7 +55,7 @@ public class TurnRunScheduler {
     /** In-flight runs keyed by thread lock key; the value is the task executing the run. */
     private final Map<String, InFlight> inFlight = new ConcurrentHashMap<>();
 
-    private record InFlight(TurnRunId run, Future<JclawRuntime.TurnResult> future) {
+    private record InFlight(TurnRunId run, String tenant, Future<JclawRuntime.TurnResult> future) {
     }
 
     /** The result of one run the scheduler executed. */
@@ -73,13 +73,20 @@ public class TurnRunScheduler {
      * @return the runs started by this pass
      */
     public synchronized List<TurnRunId> tick(int maxConcurrent, AtomicBoolean cancelled) {
+        return tick(maxConcurrent, maxConcurrent, cancelled);
+    }
+
+    /** As {@link #tick(int, AtomicBoolean)} with a separate cap on runs per tenant. */
+    public synchronized List<TurnRunId> tick(int maxConcurrent, int maxPerTenant, AtomicBoolean cancelled) {
         Objects.requireNonNull(cancelled, "cancelled");
         reapFinished();
 
+        Map<String, Integer> byTenant = new java.util.HashMap<>();
+        inFlight.values().forEach(entry -> byTenant.merge(entry.tenant(), 1, Integer::sum));
         List<RunStore.RunRecord> queued = runs.byStatus(TurnStatus.QUEUED, Integer.MAX_VALUE);
         List<RunStore.RunRecord> chosen = RunScheduling.select(
-                queued, Set.copyOf(inFlight.keySet()), inFlight.size(),
-                new RunScheduling.Caps(maxConcurrent));
+                queued, Set.copyOf(inFlight.keySet()), inFlight.size(), byTenant,
+                new RunScheduling.Caps(maxConcurrent, maxPerTenant));
 
         List<TurnRunId> started = new ArrayList<>();
         for (RunStore.RunRecord record : chosen) {
@@ -89,7 +96,7 @@ public class TurnRunScheduler {
                     run.value(), record.scope().thread().value(), inFlight.size());
             Future<JclawRuntime.TurnResult> future =
                     executor.submit(() -> runtime.resume(run, cancelled));
-            inFlight.put(key, new InFlight(run, future));
+            inFlight.put(key, new InFlight(run, record.scope().tenant(), future));
             started.add(run);
         }
         return List.copyOf(started);

@@ -71,6 +71,9 @@ public class ServeCommand implements Callable<Integer> {
     @Option(names = "--concurrency", description = "Queued runs executed at once. Default 2.")
     private int concurrency = 2;
 
+    @Option(names = "--per-user", description = "Queued runs executed at once per user. Default: the concurrency.")
+    private int perUser = 0;
+
     public ServeCommand(
             JclawProperties properties, JclawRuntime runtime, RunStore runs, EventLog events,
             ThreadService threads, JsonlApprovalStore approvals, TurnRunScheduler scheduler,
@@ -96,11 +99,14 @@ public class ServeCommand implements Callable<Integer> {
 
         JclawHttpServer server = new JclawHttpServer(
                 runtime, runs, events, threads, approvals, clock, Optional.ofNullable(properties.serveToken()),
-                properties.model());
+                properties.serveUsers(), properties.model());
         server.start(host, port);
+        boolean anyAuth = (properties.serveToken() != null && !properties.serveToken().isBlank())
+                || !properties.serveUsers().isEmpty();
         System.out.println("jclaw serving on http://" + host + ":" + server.port()
-                + (properties.serveToken() == null || properties.serveToken().isBlank()
-                        ? " (no token: loopback only is wise)" : " (bearer token required)")
+                + (anyAuth
+                        ? " (bearer tokens required; " + properties.serveUsers().size() + " user(s))"
+                        : " (no token: loopback only is wise)")
                 + ". Ctrl-C to stop.");
 
         long lastSweep = 0;
@@ -120,7 +126,7 @@ public class ServeCommand implements Callable<Integer> {
                 }
                 scheduler.reapFinished().forEach(outcome ->
                         System.out.printf("%s -> %s%n", outcome.run().value(), outcome.result().status()));
-                scheduler.tick(Math.max(1, concurrency), stop);
+                scheduler.tick(Math.max(1, concurrency), perUser > 0 ? perUser : Math.max(1, concurrency), stop);
                 try {
                     Thread.sleep(TICK.toMillis());
                 } catch (InterruptedException e) {

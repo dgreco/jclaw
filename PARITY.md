@@ -1,8 +1,8 @@
 # jclaw vs IronClaw — Parity
 
-An honest enumeration of what [IronClaw](https://github.com/nearai/ironclaw) (internally "Reborn") has that jclaw does not, and of what jclaw now has. jclaw is roughly 20k lines of Java (plus 6.5k of tests) against IronClaw's ~1.4M lines of Rust across ~63 crates. The **architecture** is equivalent — layer ladder, turn/run lifecycle, untrusted `LoopExit`, single `CapabilityHost` authority boundary, checkpoint-kind–driven recovery — and, after the September 2026 parity work, most of the runtime *mechanisms* are present in some form. What remains missing is breadth: product surfaces, the extension ecosystem, multi-tenancy, SQL persistence, and observability plumbing. This file is the list, organised by IronClaw's own crate families so a gap can be traced to the crate that fills it upstream.
+An honest enumeration of what [IronClaw](https://github.com/nearai/ironclaw) (internally "Reborn") has that jclaw does not, and of what jclaw now has. jclaw is roughly 20k lines of Java (plus 6.5k of tests) against IronClaw's ~1.4M lines of Rust across ~63 crates. The **architecture** is equivalent — layer ladder, turn/run lifecycle, untrusted `LoopExit`, single `CapabilityHost` authority boundary, checkpoint-kind–driven recovery — and, after the September 2026 parity work, most of the runtime *mechanisms* are present in some form. What remains missing is breadth: channel adapters, the extension ecosystem, a secrets vault, SQL persistence, and observability plumbing. This file is the list, organised by IronClaw's own crate families so a gap can be traced to the crate that fills it upstream.
 
-Sources: IronClaw's `README.md`, `crates/Architecture.md`, and the `crates/` listing as of September 2026; jclaw's code on this checkout (240 tests, 0 failures). Where the upstream doc names a concept and jclaw has an equivalent under a different name, the mapping is given. Where the gap is uncertain it is marked *(unverified)*.
+Sources: IronClaw's `README.md`, `crates/Architecture.md`, and the `crates/` listing as of September 2026; jclaw's code on this checkout (245 tests, 0 failures). Where the upstream doc names a concept and jclaw has an equivalent under a different name, the mapping is given. Where the gap is uncertain it is marked *(unverified)*.
 
 Legend: ✅ at parity · 🟡 partial · ❌ missing · ➕ jclaw-only
 
@@ -80,7 +80,7 @@ IronClaw's premise is that already-authorized work runs **in isolation**. jclaw 
 
 ## 4. Kernel boundary
 
-At parity on the trust model and on the gate mechanics; missing the multi-tenant, multi-process, and resource-accounting machinery.
+At parity on the trust model and on the gate mechanics, and on tenant isolation; missing the multi-process and resource-accounting machinery.
 
 | Capability | IronClaw | jclaw |
 |---|---|---|
@@ -89,11 +89,11 @@ At parity on the trust model and on the gate mechanics; missing the multi-tenant
 | Approval gates with **leases** (`ironclaw_approvals`) | ✅ gates expire / are re-leased | ✅ gates carry `expiresAt` (`jclaw.approval-ttl`, 24h): an unexpired open gate re-parks a resumed run on the same question, an expired one is asked afresh and can no longer be answered; decisions never expire |
 | Auth gates (`GateKind::Auth`, `BLOCKED_AUTH`) — run parks until the user authenticates | ✅ | ✅ a provider `AUTH` failure raises a durable auth gate naming the missing credential; the run parks `BLOCKED_AUTH` at a replay-safe checkpoint and `resume` re-attempts the model call |
 | Process gates (`WAITING_PROCESS`) — run waits on an external process / child | ✅ | ✅ a lane returning `HandlerError.Waiting` raises a process gate keyed by the invocation; used by asynchronous subagents. Only child runs use it today; there is no gate on arbitrary external processes |
-| Budget reservation and process ownership (`ironclaw_resources`) | ✅ | 🟡 `Budget` (tokens, iterations, 10-min wall clock) per run; per-tool rate limits per process; no reservation, no per-user or per-tenant accounting |
+| Budget reservation and process ownership (`ironclaw_resources`) | ✅ | 🟡 `Budget` (tokens, iterations, 10-min wall clock) per run; per-tool rate limits per process; a per-tenant concurrency cap in the scheduler; no reservation, no per-tenant token accounting |
 | Deployment modes / runtime policy / safety context (`ironclaw_runtime_policy`) | ✅ | 🟡 three fixed `approval-mode` postures plus `jclaw.denied-capabilities`, `jclaw.injection-policy`, per-tool egress and rate limits; no deployment modes or safety contexts |
 | Neutral process journal, lifecycle transitions, suspension, **process trees** (`ironclaw_processes`, `JournaledProcessSnapshot`) | ✅ | 🟡 `RunStore` records status + lease; the parent/child relation of subagents lives in the thread id and the process gate; no journal cursor, no suspension |
 | Turn admission and coordinator API (`ironclaw_turns`) | ✅ | ✅ `JclawRuntime.submit` / `enqueue` / `resume` |
-| `TurnScope` as tenant / agent / project / thread isolation key | ✅ | 🟡 `TurnScope.local(project, thread)` — no tenant, no agent id; single user assumed |
+| `TurnScope` as tenant / agent / project / thread isolation key | ✅ | ✅ the tenant is the authenticated `serve` user (`jclaw.serve-users`), or `local` for the CLI and the operator; memories, routines, approvals, the thread lock, and the scheduler's per-tenant cap all key on it. The agent field is always `default` |
 | "One active run per canonical thread" enforced before side effects | ✅ | ✅ `ThreadLock` (OS file lock per canonical scope) taken in `submit`/`resume` before the inbound message is written; refusal is `THREAD_BUSY` with nothing recorded. Single-host, like the JSONL stores |
 | Capability manifest publishing (`ironclaw_capabilities`) | ✅ | 🟡 descriptors are compiled in; `visibleSurface` publishes them; no manifests |
 | Per-tool rate limiting | ✅ | ✅ `jclaw.tool-rate-limits` (`N/window` per capability), a sliding window checked before approval and counted at dispatch; per process |
@@ -126,7 +126,7 @@ At parity on the trust model and on the gate mechanics; missing the multi-tenant
 | Capability | IronClaw | jclaw |
 |---|---|---|
 | Leases with heartbeat renewal; expiry → terminal or requeue by checkpoint kind | ✅ | ✅ (`LEASE_TTL` 2 min; grace of one further TTL) |
-| `TurnRunScheduler` claiming durable queued work with bounded concurrency; per-user and per-inbound-type caps | ✅ | 🟡 `TurnRunScheduler` claims `QUEUED` runs under a global cap with one run per thread, decided by the pure `RunScheduling`; single-user, so per-user and per-inbound-type caps collapse into the global one |
+| `TurnRunScheduler` claiming durable queued work with bounded concurrency; per-user and per-inbound-type caps | ✅ | 🟡 `TurnRunScheduler` claims `QUEUED` runs under a global cap and a per-tenant cap (`serve --per-user`) with one run per thread, decided by the pure `RunScheduling`; no per-inbound-type cap |
 | Queued runs (a `QUEUED` state that something later picks up) | ✅ | ✅ `submit` and HTTP enqueue; `recover` requeues; a finished child requeues its waiting parent; `worker` and `serve` execute all of them. A queued run is seeded with the conversation as of its own submission |
 | Priorities, parallel jobs with isolated contexts | ✅ | 🟡 parallel across threads under the cap; no priorities |
 | Self-repair of stuck operations | ✅ | 🟡 `recover` / worker sweep on each tick; requeued runs are executed by the same worker |
@@ -181,8 +181,8 @@ At parity on the trust model and on the gate mechanics; missing the multi-tenant
 |---|---|---|
 | Encrypted secret vault (AES-256-GCM), leased/staged per runtime handoff | ✅ `ironclaw_secrets` | ❌ — environment variables only |
 | Secret references usable by tools without exposure | ✅ | ❌ |
-| Multi-user identity (`ironclaw_identity`), per-user scoping | ✅ | ❌ — single operator; `serve` has one bearer token, not users |
-| Auth domain (`ironclaw_auth`): Google OAuth, NEAR AI login, WebUI login tokens | ✅ | ❌ (Anthropic `ANTHROPIC_AUTH_TOKEN` OAuth-style credential is honoured; `jclaw.serve-token` is a static bearer) |
+| Multi-user identity (`ironclaw_identity`), per-user scoping | ✅ | 🟡 `jclaw.serve-users` names users with static bearer tokens; each is the tenant of its runs, with namespaced threads (`alice:work`), its own memories and approvals, and read access only to its own runs and gates. The operator (`serve-token`) is the `local` tenant the CLI uses and reads everything. No user directory, roles, or per-user policy |
+| Auth domain (`ironclaw_auth`): Google OAuth, NEAR AI login, WebUI login tokens | ✅ | ❌ (Anthropic `ANTHROPIC_AUTH_TOKEN` OAuth-style credential is honoured; `serve-token` and `serve-users` are static bearers, no login flow) |
 | Auth gates that park a run until credentials arrive | ✅ | ✅ (see §4); cleared by setting the credential and resuming, shown by `approvals list` |
 | Outbound domain (`ironclaw_outbound`) — typed outbound messages to channels | ✅ | ❌ |
 
@@ -270,7 +270,7 @@ Listed so the comparison is not read as one-directional:
 The twelve items of the original list and the six that followed are closed (sections above mark each ✅ or 🟡 with the caveat). What remains is breadth rather than mechanism. Ranked by what a deployment beyond one operator's machine would hit first:
 
 1. ~~**A real product surface**~~ — closed: the browser UI and the OpenAI-compatible endpoint sit on `serve`. Still open under this heading: Slack/Telegram channel adapters and reply-target bindings.
-2. **Identity and multi-tenancy** (§4, §10) — `TurnScope` has tenant and agent fields that are always `local`; the scheduler caps, the memory scope, and the thread lock all assume one operator. A per-user identity is the prerequisite for everything hosted.
+2. ~~**Identity and multi-tenancy**~~ — closed at the mechanism level: `serve` users are tenants, and every scope-keyed store and the scheduler separate by tenant. Still open under this heading: a login flow instead of static tokens, roles, per-tenant policy and token accounting, and the `agent` field of `TurnScope`, which is always `default`.
 3. **A secrets vault with credential injection** (§9, §10) — tools cannot see secrets, which is right, but they also cannot use one; an authenticated `http_fetch` needs leased credential handoff at the host boundary.
 4. **SQL persistence** (§11) — JSONL with retention is fine on one machine; a hosted deployment needs Postgres, migrations, and materialised projections instead of on-demand folds.
 5. **Sandboxing beyond the shell lane** (§3) — the container backend covers `builtin.shell`; file, http, memory, and MCP lanes still run in-process, and MCP servers' network access is unmediated. A WASM lane with capability-based host imports is the upstream answer.

@@ -168,6 +168,22 @@ public class JclawRuntime {
             ChatMessage inbound,
             AtomicBoolean cancelled,
             Optional<Consumer<ModelProvider.StreamEvent>> streamSink) {
+        return submit(LOCAL_TENANT, thread, inbound, cancelled, streamSink);
+    }
+
+    /**
+     * Runs one turn on behalf of a tenant.
+     *
+     * <p>The tenant is the isolation key everything scope-aware separates by: memories,
+     * approvals, the thread lock, the scheduler's per-tenant cap. The CLI is the {@code local}
+     * tenant; the HTTP surface passes the authenticated user.
+     */
+    public TurnResult submit(
+            String tenant,
+            ThreadId thread,
+            ChatMessage inbound,
+            AtomicBoolean cancelled,
+            Optional<Consumer<ModelProvider.StreamEvent>> streamSink) {
         Objects.requireNonNull(streamSink, "streamSink");
         Objects.requireNonNull(thread, "thread");
         Objects.requireNonNull(inbound, "inbound");
@@ -177,7 +193,7 @@ public class JclawRuntime {
         }
         String userText = inbound.displayText();
 
-        TurnScope scope = TurnScope.local(projectName(), thread);
+        TurnScope scope = scopeFor(tenant, thread);
         TurnRunId run = TurnRunId.fresh();
         LoopPolicy policy = resolvePolicy(scope, properties.model(), assembleSystemPrompt());
 
@@ -346,13 +362,18 @@ public class JclawRuntime {
 
     /** As {@link #enqueue(ThreadId, String)}, with an inbound message that may carry attachments. */
     public TurnRunId enqueue(ThreadId thread, ChatMessage inbound) {
+        return enqueue(LOCAL_TENANT, thread, inbound);
+    }
+
+    /** As {@link #enqueue(ThreadId, ChatMessage)}, on behalf of a tenant. */
+    public TurnRunId enqueue(String tenant, ThreadId thread, ChatMessage inbound) {
         Objects.requireNonNull(thread, "thread");
         Objects.requireNonNull(inbound, "inbound");
         if (inbound.role() != ChatMessage.Role.USER) {
             throw new IllegalArgumentException("an inbound message must have the user role");
         }
 
-        TurnScope scope = TurnScope.local(projectName(), thread);
+        TurnScope scope = scopeFor(tenant, thread);
         TurnRunId run = TurnRunId.fresh();
         LoopPolicy policy = resolvePolicy(scope, properties.model(), assembleSystemPrompt());
 
@@ -651,6 +672,17 @@ public class JclawRuntime {
      */
     public TurnScope scopeFor(ThreadId thread) {
         return TurnScope.local(projectName(), thread);
+    }
+
+    /** The tenant the CLI runs as. */
+    public static final String LOCAL_TENANT = TurnScope.local("p", new ThreadId("t")).tenant();
+
+    /** The scope a turn on {@code thread} would run under for {@code tenant}. */
+    public TurnScope scopeFor(String tenant, ThreadId thread) {
+        Objects.requireNonNull(tenant, "tenant");
+        return LOCAL_TENANT.equals(tenant)
+                ? TurnScope.local(projectName(), thread)
+                : new TurnScope(tenant, "default", projectName(), thread);
     }
 
     /** Capabilities publishable to the model for a scope. Used by {@code jclaw tools}. */

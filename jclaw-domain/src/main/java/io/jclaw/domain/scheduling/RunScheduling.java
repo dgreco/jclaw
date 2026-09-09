@@ -4,8 +4,10 @@ import io.jclaw.contracts.turn.RunStore.RunRecord;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
@@ -26,9 +28,9 @@ import java.util.Set;
  *       threads, oldest submission first.</li>
  * </ul>
  *
- * <p>IronClaw's scheduler adds per-user and per-inbound-type caps. jclaw is single-user, and the
- * one inbound type is the CLI, so those collapse to the global cap; the shape leaves room to add
- * them as further filters here.
+ * <p>A third rule, IronClaw's per-user cap: at most {@code maxPerTenant} runs in flight for any
+ * one tenant, so one busy user cannot take every slot from the others. The CLI's {@code local}
+ * tenant and each HTTP user count separately.
  */
 public final class RunScheduling {
 
@@ -36,11 +38,19 @@ public final class RunScheduling {
     }
 
     /** Concurrency limits for one scheduler. */
-    public record Caps(int maxConcurrent) {
+    public record Caps(int maxConcurrent, int maxPerTenant) {
         public Caps {
             if (maxConcurrent <= 0) {
                 throw new IllegalArgumentException("maxConcurrent must be positive, got " + maxConcurrent);
             }
+            if (maxPerTenant <= 0) {
+                throw new IllegalArgumentException("maxPerTenant must be positive, got " + maxPerTenant);
+            }
+        }
+
+        /** No per-tenant cap beyond the global one. */
+        public Caps(int maxConcurrent) {
+            this(maxConcurrent, maxConcurrent);
         }
     }
 
@@ -55,9 +65,21 @@ public final class RunScheduling {
      */
     public static List<RunRecord> select(
             List<RunRecord> queued, Set<String> busyThreads, int inFlight, Caps caps) {
+        return select(queued, busyThreads, inFlight, Map.of(), caps);
+    }
+
+    /**
+     * Chooses which queued runs to start, honouring the per-tenant cap.
+     *
+     * @param inFlightByTenant how many runs each tenant has executing now
+     */
+    public static List<RunRecord> select(
+            List<RunRecord> queued, Set<String> busyThreads, int inFlight,
+            Map<String, Integer> inFlightByTenant, Caps caps) {
 
         Objects.requireNonNull(queued, "queued");
         Objects.requireNonNull(busyThreads, "busyThreads");
+        Objects.requireNonNull(inFlightByTenant, "inFlightByTenant");
         Objects.requireNonNull(caps, "caps");
         if (inFlight < 0) {
             throw new IllegalArgumentException("inFlight must be non-negative");
@@ -69,6 +91,7 @@ public final class RunScheduling {
         }
 
         Set<String> taken = new HashSet<>(busyThreads);
+        Map<String, Integer> perTenant = new HashMap<>(inFlightByTenant);
         List<RunRecord> chosen = new ArrayList<>();
         List<RunRecord> oldestFirst = queued.stream()
                 .sorted(Comparator.comparing(RunRecord::submittedAt)
@@ -78,10 +101,15 @@ public final class RunScheduling {
             if (chosen.size() >= slots) {
                 break;
             }
+            String tenant = record.scope().tenant();
+            if (perTenant.getOrDefault(tenant, 0) >= caps.maxPerTenant()) {
+                continue; // this tenant has its share; the slot goes to another
+            }
             String key = record.scope().lockKey();
             if (!taken.add(key)) {
                 continue; // that thread is busy, or already chosen this pass
             }
+            perTenant.merge(tenant, 1, Integer::sum);
             chosen.add(record);
         }
         return List.copyOf(chosen);
