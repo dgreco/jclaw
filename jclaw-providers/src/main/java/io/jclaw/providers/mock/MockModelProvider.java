@@ -62,6 +62,7 @@ public final class MockModelProvider implements ModelProvider {
 
     private final Deque<Script> remaining;
     private final AtomicInteger callCount = new AtomicInteger();
+    private volatile ModelRequest lastRequest;
     private final String modelId;
 
     /** When true the final scripted turn repeats instead of the script running dry. */
@@ -107,6 +108,7 @@ public final class MockModelProvider implements ModelProvider {
     public Result<ModelResponse, ProviderFailure> complete(ModelRequest request) {
         Objects.requireNonNull(request, "request");
         callCount.incrementAndGet();
+        lastRequest = request;
 
         Script next = remaining.poll();
         if (next == null && repeatLast) {
@@ -159,6 +161,11 @@ public final class MockModelProvider implements ModelProvider {
     }
 
     /** How many times the provider has been called. Lets a test assert on retry behaviour. */
+    /** The most recent request, so a test can assert what the loop actually sent. */
+    public java.util.Optional<ModelRequest> lastRequest() {
+        return java.util.Optional.ofNullable(lastRequest);
+    }
+
     public int callCount() {
         return callCount.get();
     }

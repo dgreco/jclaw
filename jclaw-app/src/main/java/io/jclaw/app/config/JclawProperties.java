@@ -26,6 +26,11 @@ import java.util.List;
  * @param contextMaxTokens     estimated token budget (4 chars/token) for those messages; lower it
  *                             for local models with small context windows
  * @param systemPrompt         system prompt prepended to every turn
+ * @param embeddingProvider    {@code none} (default), {@code openai}, {@code openrouter},
+ *                             {@code ollama}, or {@code local}; adds vector similarity to memory
+ *                             retrieval. Credentials come from the same environment variables as
+ *                             the chat providers
+ * @param embeddingModel       embedding model id; blank picks the provider's default
  */
 @ConfigurationProperties(prefix = "jclaw")
 public record JclawProperties(
@@ -89,7 +94,11 @@ public record JclawProperties(
          * <p>Each entry is either {@code text:<reply>} or
          * {@code tool:<capability>:<k=v,k=v>}. Ignored unless the provider is {@code mock}.
          */
-        @DefaultValue("") List<String> mockScript) {
+        @DefaultValue("") List<String> mockScript,
+
+        @DefaultValue("none") String embeddingProvider,
+
+        @DefaultValue("") String embeddingModel) {
 
     /**
      * Properties with every default applied, for programmatic construction.
@@ -117,7 +126,36 @@ public record JclawProperties(
                 200,
                 100_000,
                 "You are jclaw, a helpful agent operating inside a bounded workspace.",
-                List.of());
+                List.of(),
+                "none",
+                "");
+    }
+
+    /**
+     * The embedding model to use: the configured one, or the provider's conventional default.
+     *
+     * <p>Defaults exist for the hosted and Ollama providers because each has one obvious choice.
+     * {@code local} has none, since the model is whatever the operator loaded, so it must be set.
+     */
+    public String resolvedEmbeddingModel() {
+        if (!embeddingModel.isBlank()) {
+            return embeddingModel;
+        }
+        return switch (embeddingProvider) {
+            case "openai" -> "text-embedding-3-small";
+            case "openrouter" -> "openai/text-embedding-3-small";
+            case "ollama" -> "nomic-embed-text";
+            default -> "";
+        };
+    }
+
+    /** The environment variable the embedding provider reads its credential from, if any. */
+    public java.util.Optional<String> embeddingCredentialEnvVar() {
+        return switch (embeddingProvider) {
+            case "openai" -> java.util.Optional.of("OPENAI_API_KEY");
+            case "openrouter" -> java.util.Optional.of("OPENROUTER_API_KEY");
+            default -> java.util.Optional.empty();
+        };
     }
 
     /** Where the append-only event log lives. */

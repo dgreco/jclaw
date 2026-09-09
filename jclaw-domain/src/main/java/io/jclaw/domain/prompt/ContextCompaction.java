@@ -6,6 +6,8 @@ import io.jclaw.contracts.model.ContentBlock;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Pure context compaction: the view of a conversation a model request carries.
@@ -29,6 +31,12 @@ import java.util.Objects;
  * belong in a pure function. A future compaction effect can hand a summary into this policy as
  * ordinary history.
  *
+ * <p>Compaction is applied twice in a run's life, at admission to bound the seed and by the
+ * machine before every model call, so it is <b>idempotent</b>: it recognises its own notice, does
+ * not count a synthetic notice against the message cap, and when a later pass drops a notice it
+ * carries that notice's count forward. The model always sees the total omitted since the start of
+ * the thread, never just the last pass.
+ *
  * <p>The current message is always kept, whatever the budget says. Dropping the turn the user just
  * typed to satisfy a limit would be worse than an oversized request the provider rejects.
  */
@@ -40,6 +48,11 @@ public final class ContextCompaction {
     /** Per-message framing overhead in the estimate: role, delimiters, ids. */
     static final int MESSAGE_OVERHEAD_TOKENS = 4;
 
+    private static final String NOTICE_PREFIX = "[Context notice: ";
+
+    private static final Pattern NOTICE = Pattern.compile(
+            "^\\[Context notice: (\\d+) earlier message");
+
     private ContextCompaction() {
     }
 
@@ -47,7 +60,8 @@ public final class ContextCompaction {
      * The compacted view.
      *
      * @param messages        what to send, oldest first, structurally valid
-     * @param omittedMessages how many leading messages of the input were dropped
+     * @param omittedMessages how many real messages of the thread are not in the view, including
+     *                        those dropped by earlier passes
      * @param estimatedTokens estimated size of {@code messages}
      */
     public record Compacted(List<ChatMessage> messages, int omittedMessages, int estimatedTokens) {
@@ -79,12 +93,15 @@ public final class ContextCompaction {
         int count = 0;
         int cut = -1;
         for (int i = n - 1; i >= 0; i--) {
-            tokens += estimateTokens(messages.get(i));
-            count++;
+            ChatMessage message = messages.get(i);
+            tokens += estimateTokens(message);
+            if (!isSyntheticNotice(message)) {
+                count++;
+            }
             if (count > policy.maxMessages() || tokens > policy.maxInputTokens()) {
                 break;
             }
-            if (isBoundary(messages.get(i))) {
+            if (isBoundary(message)) {
                 cut = i;
             }
         }
@@ -98,21 +115,34 @@ public final class ContextCompaction {
             }
         }
         if (cut == 0) {
-            return new Compacted(messages, 0, estimateTokens(messages));
+            return new Compacted(messages, priorOmitted(messages.get(0)), estimateTokens(messages));
+        }
+
+        // Real messages dropped in this pass, plus whatever an earlier pass already reported.
+        int omitted = 0;
+        for (int i = 0; i < cut; i++) {
+            ChatMessage dropped = messages.get(i);
+            omitted += priorOmitted(dropped);
+            if (!isSyntheticNotice(dropped)) {
+                omitted++;
+            }
         }
 
         List<ChatMessage> kept = new ArrayList<>(messages.subList(cut, n));
-        ContentBlock.Text notice = new ContentBlock.Text(notice(cut));
         ChatMessage first = kept.get(0);
+        ContentBlock.Text notice = new ContentBlock.Text(notice(omitted));
         if (first.role() == ChatMessage.Role.USER) {
             List<ContentBlock> content = new ArrayList<>();
             content.add(notice);
-            content.addAll(first.content());
+            // Replace an existing notice rather than stacking a second one in front of it.
+            content.addAll(carriesNotice(first)
+                    ? first.content().subList(1, first.content().size())
+                    : first.content());
             kept.set(0, new ChatMessage(ChatMessage.Role.USER, content));
         } else {
             kept.add(0, new ChatMessage(ChatMessage.Role.USER, List.of(notice)));
         }
-        return new Compacted(kept, cut, estimateTokens(kept));
+        return new Compacted(kept, omitted, estimateTokens(kept));
     }
 
     /** Estimated tokens for one message: characters over four, plus framing. */
@@ -151,9 +181,31 @@ public final class ContextCompaction {
         return -1;
     }
 
+    /** A user message whose first block is a notice from an earlier pass. */
+    private static boolean carriesNotice(ChatMessage message) {
+        return message.role() == ChatMessage.Role.USER
+                && !message.content().isEmpty()
+                && message.content().get(0) instanceof ContentBlock.Text text
+                && text.text().startsWith(NOTICE_PREFIX);
+    }
+
+    /** A message that is <em>only</em> a notice: synthetic, not a real turn, free of charge. */
+    private static boolean isSyntheticNotice(ChatMessage message) {
+        return carriesNotice(message) && message.content().size() == 1;
+    }
+
+    /** The count an earlier pass reported in this message's notice, or zero. */
+    static int priorOmitted(ChatMessage message) {
+        if (!carriesNotice(message)) {
+            return 0;
+        }
+        Matcher matcher = NOTICE.matcher(((ContentBlock.Text) message.content().get(0)).text());
+        return matcher.find() ? Integer.parseInt(matcher.group(1)) : 0;
+    }
+
     /** The notice text. Stable wording, so a prompt-cache prefix survives across turns. */
     static String notice(int omitted) {
-        return "[Context notice: " + omitted + " earlier message" + (omitted == 1 ? "" : "s")
+        return NOTICE_PREFIX + omitted + " earlier message" + (omitted == 1 ? "" : "s")
                 + " in this conversation " + (omitted == 1 ? "was" : "were")
                 + " omitted to fit the context window. Continue from the messages that follow.]";
     }

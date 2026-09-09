@@ -148,6 +148,40 @@ class ContextCompactionTest {
     }
 
     @Test
+    @DisplayName("compacting an already compacted view changes nothing")
+    void idempotent() {
+        ContextPolicy policy = new ContextPolicy(2, 100_000);
+        Compacted once = ContextCompaction.compact(conversation(), policy);
+        Compacted twice = ContextCompaction.compact(once.messages(), policy);
+
+        assertEquals(once.messages(), twice.messages(),
+                "the synthetic notice must not count against the cap or be stacked");
+        assertEquals(once.omittedMessages(), twice.omittedMessages(),
+                "a pass that drops nothing still reports the running total");
+    }
+
+    @Test
+    @DisplayName("a later pass that drops the notice carries its count forward")
+    void carriesOmittedCountForward() {
+        ContextPolicy wide = new ContextPolicy(4, 100_000);
+        ContextPolicy narrow = new ContextPolicy(2, 100_000);
+        // Seed pass: keeps [notice, toolUse, result, a1, u2], reports 3 omitted.
+        Compacted seed = ContextCompaction.compact(conversation(), wide);
+        assertEquals(3, seed.omittedMessages());
+
+        // The run then grows by a tool round and the machine compacts under a tighter cap.
+        List<ChatMessage> grown = new ArrayList<>(seed.messages());
+        grown.add(toolUse("c2"));
+        grown.add(toolResult("c2", "more"));
+        Compacted later = ContextCompaction.compact(grown, narrow);
+
+        assertEquals(3 + 4, later.omittedMessages(),
+                "3 from the seed pass plus the 4 real messages dropped now");
+        assertTrue(later.messages().get(0).displayText().startsWith("[Context notice: 7 earlier"));
+        assertEquals(3, later.messages().size(), "notice + tool call + result");
+    }
+
+    @Test
     @DisplayName("compaction is deterministic")
     void deterministic() {
         ContextPolicy policy = new ContextPolicy(3, 1000);

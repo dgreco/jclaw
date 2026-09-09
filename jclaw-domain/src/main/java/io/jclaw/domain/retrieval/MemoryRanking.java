@@ -1,5 +1,6 @@
 package io.jclaw.domain.retrieval;
 
+import io.jclaw.contracts.memory.Embedding;
 import io.jclaw.contracts.memory.MemoryRecord;
 
 import java.time.Instant;
@@ -10,17 +11,20 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.regex.Pattern;
 
 /**
- * Pure hybrid ranking of memories: lexical relevance fused with recency.
+ * Pure hybrid ranking of memories: lexical relevance, recency, and vector similarity, fused.
  *
- * <p>Two independent rankings, combined by {@link RrfFusion}:
+ * <p>Up to three independent rankings, combined by {@link RrfFusion}:
  *
  * <ul>
  *   <li><b>Lexical</b> — Okapi BM25 over the memory text. Rewards rare query terms and dampens the
  *       advantage of long documents that merely contain more words.</li>
  *   <li><b>Recency</b> — newest first, ignoring the query entirely.</li>
+ *   <li><b>Vector</b> — cosine similarity to the query's embedding, when the caller supplies one
+ *       ({@link VectorRanking}). Catches paraphrase and synonymy that BM25 cannot.</li>
  * </ul>
  *
  * <p>Fusing them rather than blending scores is the whole reason RRF is here: a BM25 score and an
@@ -28,9 +32,10 @@ import java.util.regex.Pattern;
  * RRF discards magnitudes and uses only rank, so "recent" and "relevant" can disagree without one
  * silently dominating.
  *
- * <p>The obvious missing third ranking is vector similarity. The design has room for it — it would
- * be one more list handed to {@code fuse} — but it needs an embedding model, so lexical and recency
- * are what actually run today.
+ * <p>The vector ranking is additive by construction: it is one more list handed to {@code fuse},
+ * present when an embedding provider is configured and the query could be embedded, absent
+ * otherwise. Retrieval never depends on it. The query embedding is a parameter because computing
+ * it is an effect; this class stays pure.
  *
  * <p>Pure: {@code now} is a parameter, so the same corpus and query always produce the same order.
  */
@@ -57,10 +62,21 @@ public final class MemoryRanking {
      */
     public static List<MemoryRecord> rank(
             List<MemoryRecord> candidates, String query, Instant now, int limit) {
+        return rank(candidates, query, now, limit, Optional.empty());
+    }
+
+    /**
+     * Ranks {@code candidates} against {@code query}, with vector similarity as a third signal
+     * when {@code queryEmbedding} is present.
+     */
+    public static List<MemoryRecord> rank(
+            List<MemoryRecord> candidates, String query, Instant now, int limit,
+            Optional<Embedding> queryEmbedding) {
 
         Objects.requireNonNull(candidates, "candidates");
         Objects.requireNonNull(query, "query");
         Objects.requireNonNull(now, "now");
+        Objects.requireNonNull(queryEmbedding, "queryEmbedding");
         if (limit < 0) {
             throw new IllegalArgumentException("limit must be non-negative");
         }
@@ -76,8 +92,16 @@ public final class MemoryRanking {
             return byRecency.stream().limit(limit).toList();
         }
 
-        List<MemoryRecord> byLexical = rankLexically(candidates, query);
-        return RrfFusion.fuseTop(List.of(byLexical, byRecency), limit);
+        List<List<MemoryRecord>> rankings = new ArrayList<>();
+        rankings.add(rankLexically(candidates, query));
+        rankings.add(byRecency);
+        queryEmbedding.ifPresent(embedding -> {
+            List<MemoryRecord> byVector = VectorRanking.rank(candidates, embedding);
+            if (!byVector.isEmpty()) {
+                rankings.add(byVector);
+            }
+        });
+        return RrfFusion.fuseTop(rankings, limit);
     }
 
     /** BM25 ranking, best first. Memories matching no query term are dropped entirely. */

@@ -301,7 +301,7 @@ public final class OpenAiCompatibleModelProvider implements ModelProvider {
         int status = response.statusCode();
         log.debug("{}: HTTP {} ({} bytes)", id, status, response.body().length());
         if (status >= 400) {
-            ProviderFailure failure = classify(status, response.body());
+            ProviderFailure failure = OpenAiCompatibleFailures.classify(status, response.body(), mapper);
             log.debug("{}: classified as {} (retryable={})", id, failure.kind(), failure.retryable());
             return Result.err(failure);
         }
@@ -317,46 +317,6 @@ public final class OpenAiCompatibleModelProvider implements ModelProvider {
             return Result.err(ProviderFailure.of(
                     ProviderFailure.Kind.UPSTREAM, "unparseable response"));
         }
-    }
-
-    /**
-     * Maps an HTTP status to a failure category.
-     *
-     * <p>For a rejected request the provider's own {@code error.message} is included. It describes
-     * the shape of the request <em>we</em> sent — a bad tool name, an unsupported parameter — and
-     * is by far the most useful thing available at that moment. Without it, "request rejected" is
-     * all a user ever sees, and the actual cause takes a packet capture to find.
-     *
-     * <p>Only extracted for 4xx invalid-request responses, bounded, and redacted downstream before
-     * it reaches the event log.
-     */
-    private ProviderFailure classify(int status, String body) {
-        return switch (status) {
-            case 401, 403 -> ProviderFailure.of(ProviderFailure.Kind.AUTH, "credentials rejected");
-            case 404 -> ProviderFailure.of(
-                    ProviderFailure.Kind.UNKNOWN_MODEL, "model or endpoint not found");
-            case 429 -> ProviderFailure.of(ProviderFailure.Kind.RATE_LIMIT, "rate limited");
-            case 400, 422 -> ProviderFailure.of(
-                    ProviderFailure.Kind.INVALID_REQUEST, errorMessage(body));
-            default -> ProviderFailure.of(ProviderFailure.Kind.UPSTREAM, "http " + status);
-        };
-    }
-
-    /** Pulls {@code error.message} out of a provider error body, falling back to a bare category. */
-    @SuppressWarnings("unchecked")
-    private String errorMessage(String body) {
-        try {
-            Map<String, Object> parsed = mapper.readValue(body, Map.class);
-            if (parsed.get("error") instanceof Map<?, ?> error) {
-                Object message = ((Map<String, Object>) error).get("message");
-                if (message != null) {
-                    return String.valueOf(message);
-                }
-            }
-        } catch (RuntimeException e) {
-            // Not JSON, or not the shape we expected.
-        }
-        return "request rejected";
     }
 
     // --- wire encoding ---

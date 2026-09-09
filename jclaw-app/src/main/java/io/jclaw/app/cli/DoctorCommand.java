@@ -67,6 +67,9 @@ public class DoctorCommand implements Callable<Integer> {
         System.out.println("  provider        " + properties.provider());
         System.out.println("  model           " + properties.model());
         System.out.println("  approval mode   " + properties.approvalMode());
+        System.out.println("  embeddings      " + ("none".equals(properties.embeddingProvider())
+                ? "none"
+                : properties.embeddingProvider() + " (" + properties.resolvedEmbeddingModel() + ")"));
 
         System.out.println();
         System.out.println("Security posture");
@@ -107,6 +110,10 @@ public class DoctorCommand implements Callable<Integer> {
                 },
                 () -> System.out.println(
                         "  [skip] provider '" + properties.provider() + "' needs no credentials"));
+
+        properties.embeddingCredentialEnvVar().ifPresent(variable ->
+                check("embedding credentials present", hasEnv(variable), problems,
+                        "embedding provider '" + properties.embeddingProvider() + "' needs " + variable));
 
         System.out.println();
         if (!warnings.isEmpty()) {

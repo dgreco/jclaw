@@ -1,5 +1,6 @@
 package io.jclaw.domain.retrieval;
 
+import io.jclaw.contracts.memory.Embedding;
 import io.jclaw.contracts.memory.MemoryRecord;
 import io.jclaw.contracts.turn.ThreadId;
 import io.jclaw.contracts.turn.TurnScope;
@@ -8,9 +9,11 @@ import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class MemoryRankingTest {
@@ -126,6 +129,43 @@ class MemoryRankingTest {
     void emptyCorpus() {
         assertTrue(MemoryRanking.rank(List.of(), "anything", T0, 5).isEmpty());
         assertFalse(MemoryRanking.rank(List.of(), "", T0, 5).iterator().hasNext());
+    }
+
+    @Test
+    @DisplayName("vector similarity surfaces a paraphrase that shares no term with the query")
+    void vectorRankingIsFusedIn() {
+        Embedding carLike = new Embedding("m", new float[]{1f, 0f});
+        Embedding unrelated = new Embedding("m", new float[]{0f, 1f});
+        List<MemoryRecord> corpus = List.of(
+                new MemoryRecord(new MemoryRecord.MemoryId("paraphrase"), SCOPE,
+                        "the automobile needs new tyres", List.of(), T0.minusSeconds(86400L * 30),
+                        Optional.of(carLike)),
+                new MemoryRecord(new MemoryRecord.MemoryId("noise-1"), SCOPE,
+                        "buy milk", List.of(), T0, Optional.of(unrelated)),
+                new MemoryRecord(new MemoryRecord.MemoryId("noise-2"), SCOPE,
+                        "call the dentist", List.of(), T0, Optional.of(unrelated)));
+
+        List<MemoryRecord> withoutVector = MemoryRanking.rank(corpus, "car", T0, 3);
+        List<MemoryRecord> withVector = MemoryRanking.rank(corpus, "car", T0, 3, Optional.of(carLike));
+
+        assertEquals("paraphrase", withVector.get(0).id().value(),
+                "the vector ranking should lift the paraphrase to the top");
+        assertNotEquals("paraphrase", withoutVector.get(0).id().value(),
+                "without it, no term matches and recency decides");
+    }
+
+    @Test
+    @DisplayName("a query embedding in a different space than the corpus changes nothing")
+    void foreignSpaceIsIgnored() {
+        List<MemoryRecord> corpus = List.of(
+                new MemoryRecord(new MemoryRecord.MemoryId("a"), SCOPE, "alpha", List.of(), T0,
+                        Optional.of(new Embedding("m", new float[]{1f, 0f}))),
+                memory("b", "beta", 1));
+        Embedding foreign = new Embedding("other-model", new float[]{1f, 0f});
+
+        assertEquals(
+                ids(MemoryRanking.rank(corpus, "alpha beta", T0, 2)),
+                ids(MemoryRanking.rank(corpus, "alpha beta", T0, 2, Optional.of(foreign))));
     }
 
     @Test

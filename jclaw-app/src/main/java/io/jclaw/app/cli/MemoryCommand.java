@@ -1,11 +1,14 @@
 package io.jclaw.app.cli;
 
 import io.jclaw.app.runtime.JclawRuntime;
+import io.jclaw.contracts.Result;
+import io.jclaw.contracts.memory.Embedding;
+import io.jclaw.contracts.memory.EmbeddingProvider;
 import io.jclaw.contracts.memory.MemoryRecord;
 import io.jclaw.contracts.memory.MemoryStore;
+import io.jclaw.contracts.model.ModelProvider.ProviderFailure;
 import io.jclaw.contracts.turn.ThreadId;
 import io.jclaw.contracts.turn.TurnScope;
-import io.jclaw.domain.retrieval.MemoryRanking;
 import io.jclaw.tools.MemoryTools;
 import org.springframework.stereotype.Component;
 import picocli.CommandLine.Command;
@@ -21,7 +24,8 @@ import java.util.concurrent.Callable;
  *
  * <p>Every subcommand resolves its scope through {@link JclawRuntime#scopeFor}, so the CLI reads
  * and writes exactly the memories the agent does. Constructing a scope independently here is how
- * a listing quietly diverges from what the model actually sees.
+ * a listing quietly diverges from what the model actually sees. Writing and searching go through
+ * {@link MemoryTools} for the same reason: one embedding path, one ranking path.
  */
 @Component
 @Command(
@@ -32,7 +36,8 @@ import java.util.concurrent.Callable;
                 MemoryCommand.Write.class,
                 MemoryCommand.Search.class,
                 MemoryCommand.ListAll.class,
-                MemoryCommand.Forget.class
+                MemoryCommand.Forget.class,
+                MemoryCommand.Reindex.class
         })
 public class MemoryCommand implements Runnable {
 
@@ -50,7 +55,8 @@ public class MemoryCommand implements Runnable {
             return;
         }
         for (MemoryRecord record : records) {
-            System.out.printf("%s  %s%n", record.id().value(), record.createdAt());
+            System.out.printf("%s  %s%s%n", record.id().value(), record.createdAt(),
+                    record.embedding().map(e -> "  [" + e.model() + "]").orElse(""));
             System.out.println("    " + record.preview(200)
                     + (record.tags().isEmpty() ? "" : "  [" + String.join(", ", record.tags()) + "]"));
         }
@@ -63,6 +69,7 @@ public class MemoryCommand implements Runnable {
     public static class Write implements Callable<Integer> {
 
         private final MemoryStore store;
+        private final EmbeddingProvider embeddings;
         private final JclawRuntime runtime;
 
         @Parameters(arity = "1..*", description = "The fact to remember.")
@@ -71,27 +78,30 @@ public class MemoryCommand implements Runnable {
         @Option(names = "--tags", description = "Comma-separated labels.")
         private String tags = "";
 
-        public Write(MemoryStore store, JclawRuntime runtime) {
+        public Write(MemoryStore store, EmbeddingProvider embeddings, JclawRuntime runtime) {
             this.store = store;
+            this.embeddings = embeddings;
             this.runtime = runtime;
         }
 
         @Override
         public Integer call() {
             TurnScope scope = runtime.scopeFor(SCOPE_THREAD);
-            MemoryRecord.MemoryId id =
-                    store.write(scope, String.join(" ", text), MemoryTools.parseTags(tags));
+            MemoryRecord.MemoryId id = MemoryTools.write(
+                    store, embeddings, scope, String.join(" ", text), MemoryTools.parseTags(tags));
             System.out.println("Remembered " + id.value());
             return 0;
         }
     }
 
     @Component
-    @Command(name = "search", description = "Search memories (lexical + recency, RRF-fused).",
+    @Command(name = "search",
+            description = "Search memories (lexical + recency + vector when configured, RRF-fused).",
             mixinStandardHelpOptions = true)
     public static class Search implements Callable<Integer> {
 
         private final MemoryStore store;
+        private final EmbeddingProvider embeddings;
         private final JclawRuntime runtime;
         private final Clock clock;
 
@@ -101,8 +111,9 @@ public class MemoryCommand implements Runnable {
         @Option(names = {"-n", "--limit"}, description = "Maximum results. Default 5.")
         private int limit = 5;
 
-        public Search(MemoryStore store, JclawRuntime runtime, Clock clock) {
+        public Search(MemoryStore store, EmbeddingProvider embeddings, JclawRuntime runtime, Clock clock) {
             this.store = store;
+            this.embeddings = embeddings;
             this.runtime = runtime;
             this.clock = clock;
         }
@@ -110,8 +121,8 @@ public class MemoryCommand implements Runnable {
         @Override
         public Integer call() {
             TurnScope scope = runtime.scopeFor(SCOPE_THREAD);
-            print(MemoryRanking.rank(
-                    store.all(scope), String.join(" ", query), clock.instant(), limit));
+            print(MemoryTools.search(
+                    store, embeddings, scope, String.join(" ", query), clock.instant(), limit));
             return 0;
         }
     }
@@ -162,6 +173,63 @@ public class MemoryCommand implements Runnable {
                 return 1;
             }
             System.out.println("Forgot " + id);
+            return 0;
+        }
+    }
+
+    /**
+     * Embeds memories that have no vector for the configured embedding model.
+     *
+     * <p>Needed once when embeddings are first configured, and again after switching embedding
+     * model: vectors from another model are not comparable, so those memories drop out of the
+     * vector ranking until re-embedded. Idempotent, and it stops at the first provider failure
+     * rather than hammering a server that is down.
+     */
+    @Component
+    @Command(name = "reindex",
+            description = "Embed memories missing a vector for the configured embedding model.",
+            mixinStandardHelpOptions = true)
+    public static class Reindex implements Callable<Integer> {
+
+        private final MemoryStore store;
+        private final EmbeddingProvider embeddings;
+        private final JclawRuntime runtime;
+
+        public Reindex(MemoryStore store, EmbeddingProvider embeddings, JclawRuntime runtime) {
+            this.store = store;
+            this.embeddings = embeddings;
+            this.runtime = runtime;
+        }
+
+        @Override
+        public Integer call() {
+            if (!embeddings.available()) {
+                System.err.println("jclaw: no embedding provider configured; "
+                        + "set jclaw.embedding-provider (openai, openrouter, ollama, or local)");
+                return 1;
+            }
+            List<MemoryRecord> all = store.all(runtime.scopeFor(SCOPE_THREAD));
+            List<MemoryRecord> missing = all.stream()
+                    .filter(record -> record.embedding()
+                            .map(existing -> !existing.model().equals(embeddings.model()))
+                            .orElse(true))
+                    .toList();
+            System.out.printf("%d memories, %d without a %s vector%n",
+                    all.size(), missing.size(), embeddings.model());
+
+            int embedded = 0;
+            for (MemoryRecord record : missing) {
+                Result<Embedding, ProviderFailure> result = embeddings.embed(record.text());
+                if (result instanceof Result.Err<Embedding, ProviderFailure> err) {
+                    System.err.println("jclaw: embedding failed for " + record.id().value() + ": "
+                            + err.error().kind() + err.error().detail().map(d -> " (" + d + ")").orElse(""));
+                    System.out.println(embedded + " embedded before the failure.");
+                    return 1;
+                }
+                store.attachEmbedding(record.id(), ((Result.Ok<Embedding, ProviderFailure>) result).value());
+                embedded++;
+            }
+            System.out.println(embedded + " embedded.");
             return 0;
         }
     }

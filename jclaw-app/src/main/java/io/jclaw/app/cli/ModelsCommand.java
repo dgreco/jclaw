@@ -1,6 +1,7 @@
 package io.jclaw.app.cli;
 
 import io.jclaw.app.config.JclawProperties;
+import io.jclaw.contracts.memory.EmbeddingProvider;
 import io.jclaw.contracts.model.ChatMessage;
 import io.jclaw.contracts.model.ModelExchange.ModelRequest;
 import io.jclaw.contracts.model.ModelProvider;
@@ -30,19 +31,24 @@ public class ModelsCommand implements Callable<Integer> {
 
     private final JclawProperties properties;
     private final ModelProvider provider;
+    private final EmbeddingProvider embeddings;
 
     @Option(names = "--probe", description = "Send a minimal request to verify the provider works.")
     private boolean probe;
 
-    public ModelsCommand(JclawProperties properties, ModelProvider provider) {
+    public ModelsCommand(JclawProperties properties, ModelProvider provider, EmbeddingProvider embeddings) {
         this.properties = properties;
         this.provider = provider;
+        this.embeddings = embeddings;
     }
 
     @Override
     public Integer call() {
         System.out.println("Active provider: " + provider.id());
         System.out.println("Model:           " + properties.model());
+        System.out.println("Embeddings:      " + (embeddings.available()
+                ? embeddings.id() + " (" + embeddings.model() + ")"
+                : "none (set jclaw.embedding-provider to add vector ranking to memory search)"));
         System.out.println();
 
         System.out.println("Providers");

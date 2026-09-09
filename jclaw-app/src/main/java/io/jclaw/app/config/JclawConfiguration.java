@@ -9,6 +9,7 @@ import io.jclaw.contracts.event.EventLog;
 import io.jclaw.contracts.loop.CheckpointStore;
 import io.jclaw.app.runtime.McpRegistry;
 import io.jclaw.contracts.mcp.McpServerStore;
+import io.jclaw.contracts.memory.EmbeddingProvider;
 import io.jclaw.contracts.memory.MemoryStore;
 import io.jclaw.contracts.model.ModelProvider;
 import io.jclaw.contracts.routine.RoutineStore;
@@ -25,6 +26,7 @@ import io.jclaw.loop.EffectInterpreter;
 import io.jclaw.providers.anthropic.AnthropicModelProvider;
 import io.jclaw.providers.failover.FailoverModelProvider;
 import io.jclaw.providers.mock.MockModelProvider;
+import io.jclaw.providers.openai.OpenAiCompatibleEmbeddingProvider;
 import io.jclaw.providers.openai.OpenAiCompatibleModelProvider;
 import io.jclaw.contracts.turn.RunStore;
 import io.jclaw.contracts.turn.ThreadLock;
@@ -110,11 +112,12 @@ public class JclawConfiguration {
      */
     @Bean
     public List<CapabilityHandler> capabilityHandlers(
-            Clock clock, MemoryStore memoryStore, SkillCatalog skillCatalog,
-            SubagentHost subagentHost, RoutineStore routineStore, McpRegistry mcp) {
+            Clock clock, MemoryStore memoryStore, EmbeddingProvider embeddingProvider,
+            SkillCatalog skillCatalog, SubagentHost subagentHost, RoutineStore routineStore,
+            McpRegistry mcp) {
         List<CapabilityHandler> handlers = new ArrayList<>(CoreTools.all(clock));
         handlers.addAll(FileTools.all());
-        handlers.addAll(MemoryTools.all(memoryStore, clock));
+        handlers.addAll(MemoryTools.all(memoryStore, clock, embeddingProvider));
         handlers.addAll(SkillTools.all(skillCatalog));
         handlers.addAll(TriggerTools.all(routineStore));
         handlers.add(new ShellTool());
@@ -158,6 +161,44 @@ public class JclawConfiguration {
     @Bean
     public MemoryStore memoryStore(JclawProperties properties, Clock clock) {
         return new JsonlMemoryStore(new JsonlFile(properties.memoryPath()), clock);
+    }
+
+    /**
+     * Embedding provider for memory retrieval. {@code none} by default: vector ranking is an
+     * addition to lexical and recency ranking, and a default that required a running embedding
+     * server would break {@code jclaw memory} for everyone who has not set one up.
+     *
+     * <p>Like the chat providers, credentials are resolved per request, so a missing key is a
+     * degraded search rather than a context that refuses to start.
+     */
+    @Bean
+    public EmbeddingProvider embeddingProvider(JclawProperties properties) {
+        String model = properties.resolvedEmbeddingModel();
+        return switch (properties.embeddingProvider()) {
+            case "none" -> EmbeddingProvider.disabled();
+            case "openai" -> OpenAiCompatibleEmbeddingProvider.openai(
+                    model, System.getenv("OPENAI_API_KEY"));
+            case "openrouter" -> OpenAiCompatibleEmbeddingProvider.openrouter(
+                    model, System.getenv("OPENROUTER_API_KEY"), properties.openrouterBaseUrl(),
+                    properties.openrouterReferer(), properties.openrouterTitle());
+            case "ollama" -> OpenAiCompatibleEmbeddingProvider.ollama(properties.ollamaBaseUrl(), model);
+            case "local" -> {
+                if (properties.localBaseUrl().isBlank()) {
+                    throw new IllegalArgumentException(
+                            "jclaw.embedding-provider=local requires jclaw.local-base-url");
+                }
+                if (model.isBlank()) {
+                    throw new IllegalArgumentException(
+                            "jclaw.embedding-provider=local requires jclaw.embedding-model: "
+                                    + "there is no default for a server that hosts whatever was loaded");
+                }
+                yield OpenAiCompatibleEmbeddingProvider.local(
+                        properties.localBaseUrl(), model, System.getenv("LOCAL_API_KEY"));
+            }
+            default -> throw new IllegalArgumentException(
+                    "unknown jclaw.embedding-provider '" + properties.embeddingProvider()
+                            + "'; expected none, openai, openrouter, ollama, or local");
+        };
     }
 
     @Bean

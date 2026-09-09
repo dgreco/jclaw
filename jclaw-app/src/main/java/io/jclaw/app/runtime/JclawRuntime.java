@@ -23,6 +23,7 @@ import io.jclaw.domain.budget.Budget;
 import io.jclaw.domain.loop.LoopExecutionState;
 import io.jclaw.domain.loop.LoopPolicy;
 import io.jclaw.domain.loop.LoopStateCodec;
+import io.jclaw.domain.prompt.ContextCompaction;
 import io.jclaw.domain.prompt.ContextPolicy;
 import io.jclaw.domain.prompt.PromptAssembly;
 import io.jclaw.contracts.skill.SkillCatalog;
@@ -441,17 +442,28 @@ public class JclawRuntime {
     }
 
     /**
-     * Seeds the machine with prior conversation plus the new message.
+     * Seeds the machine with prior conversation plus the new message, compacted to the policy.
      *
-     * <p>Reads as much history as the context policy could ever admit; the machine then compacts
-     * the view on every model call. Fetching more than the policy's message cap would only be
-     * dropped, and fetching less would starve a policy that has room.
+     * <p>The full transcript is read and compacted here rather than sliced by the transcript
+     * service, for two reasons. Compaction needs to see what it drops to tell the model how much
+     * was omitted, and a slice taken by count alone can open with an assistant message or a tool
+     * result, which providers reject. Reading everything costs nothing extra: the JSONL service
+     * reads the whole file to serve any window. The compacted seed bounds the checkpoint size, and
+     * the machine compacts again on every model call as a run's own tool results accumulate.
      */
     private List<ChatMessage> seedMessages(ThreadId thread, String userText, LoopPolicy policy) {
-        List<ChatMessage> history = threads.history(thread, policy.context().maxMessages()).stream()
+        List<ChatMessage> history = threads.history(thread, Integer.MAX_VALUE).stream()
                 .map(ThreadService.ThreadMessage::message)
                 .toList();
-        return history.isEmpty() ? List.of(ChatMessage.user(userText)) : history;
+        if (history.isEmpty()) {
+            return List.of(ChatMessage.user(userText));
+        }
+        ContextCompaction.Compacted seed = ContextCompaction.compact(history, policy.context());
+        if (seed.compacted()) {
+            log.debug("thread {}: seed compacted, {} of {} message(s) omitted (~{} tokens kept)",
+                    thread.value(), seed.omittedMessages(), history.size(), seed.estimatedTokens());
+        }
+        return seed.messages();
     }
 
     private Budget budget() {

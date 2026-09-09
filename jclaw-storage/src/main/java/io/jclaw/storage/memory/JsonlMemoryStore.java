@@ -1,5 +1,6 @@
 package io.jclaw.storage.memory;
 
+import io.jclaw.contracts.memory.Embedding;
 import io.jclaw.contracts.memory.MemoryRecord;
 import io.jclaw.contracts.memory.MemoryRecord.MemoryId;
 import io.jclaw.contracts.memory.MemoryStore;
@@ -9,6 +10,7 @@ import io.jclaw.storage.jsonl.JsonlFile;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -21,15 +23,21 @@ import java.util.Optional;
  *
  * <p>Deletion is a tombstone record rather than a rewrite, keeping the file append-only like every
  * other log here. Current state is the fold: a memory exists until a {@code deleted} record for its
- * id appears.
+ * id appears, and carries the embedding from the latest {@code written} or {@code embedded} record.
+ *
+ * <p>Embeddings are stored inline as a JSON number array with the model that produced them. A
+ * 768-dimensional vector is a few kilobytes per memory, which is fine at the scale a JSONL store
+ * serves; a store facing millions of memories would index vectors separately, and the port leaves
+ * room for that by keeping ranking outside the store.
  *
  * <p>Scope isolation is enforced on read. Memories are retrieved into prompts, so a leak across
- * scopes is a prompt-injection vector — content written in one project could steer a run in
+ * scopes is a prompt-injection vector: content written in one project could steer a run in
  * another. The filter is applied here rather than trusted to callers.
  */
 public final class JsonlMemoryStore implements MemoryStore {
 
     private static final String KIND_WRITTEN = "written";
+    private static final String KIND_EMBEDDED = "embedded";
     private static final String KIND_DELETED = "deleted";
 
     private final JsonlFile file;
@@ -41,13 +49,14 @@ public final class JsonlMemoryStore implements MemoryStore {
     }
 
     @Override
-    public MemoryId write(TurnScope scope, String text, List<String> tags) {
+    public MemoryId write(TurnScope scope, String text, List<String> tags, Optional<Embedding> embedding) {
         Objects.requireNonNull(scope, "scope");
         Objects.requireNonNull(text, "text");
         Objects.requireNonNull(tags, "tags");
+        Objects.requireNonNull(embedding, "embedding");
 
         MemoryRecord record = new MemoryRecord(
-                MemoryId.fresh(), scope, text, tags, clock.instant());
+                MemoryId.fresh(), scope, text, tags, clock.instant(), embedding);
 
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("kind", KIND_WRITTEN);
@@ -59,8 +68,25 @@ public final class JsonlMemoryStore implements MemoryStore {
         row.put("text", record.text());
         row.put("tags", record.tags());
         row.put("createdAt", record.createdAt().toString());
+        record.embedding().ifPresent(vector -> row.put("embedding", encode(vector)));
         file.append(row);
         return record.id();
+    }
+
+    @Override
+    public boolean attachEmbedding(MemoryId id, Embedding embedding) {
+        Objects.requireNonNull(id, "id");
+        Objects.requireNonNull(embedding, "embedding");
+        if (find(id).isEmpty()) {
+            return false;
+        }
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("kind", KIND_EMBEDDED);
+        row.put("id", id.value());
+        row.put("embedding", encode(embedding));
+        row.put("at", clock.instant().toString());
+        file.append(row);
+        return true;
     }
 
     @Override
@@ -111,6 +137,36 @@ public final class JsonlMemoryStore implements MemoryStore {
                 && stored.project().equals(requested.project());
     }
 
+    private static Map<String, Object> encode(Embedding embedding) {
+        float[] values = embedding.values();
+        List<Double> numbers = new ArrayList<>(values.length);
+        for (float value : values) {
+            numbers.add((double) value);
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("model", embedding.model());
+        out.put("values", numbers);
+        return out;
+    }
+
+    private static Optional<Embedding> decode(Object raw) {
+        if (!(raw instanceof Map<?, ?> map) || !(map.get("values") instanceof List<?> numbers)) {
+            return Optional.empty();
+        }
+        float[] values = new float[numbers.size()];
+        for (int i = 0; i < numbers.size(); i++) {
+            if (!(numbers.get(i) instanceof Number number)) {
+                return Optional.empty();
+            }
+            values[i] = number.floatValue();
+        }
+        try {
+            return Optional.of(new Embedding(String.valueOf(map.get("model")), values));
+        } catch (RuntimeException e) {
+            return Optional.empty();
+        }
+    }
+
     @SuppressWarnings("unchecked")
     private Map<String, MemoryRecord> replay() {
         Map<String, MemoryRecord> memories = new LinkedHashMap<>();
@@ -120,6 +176,14 @@ public final class JsonlMemoryStore implements MemoryStore {
                 String id = String.valueOf(row.get("id"));
                 if (KIND_DELETED.equals(kind)) {
                     memories.remove(id);
+                    continue;
+                }
+                if (KIND_EMBEDDED.equals(kind)) {
+                    MemoryRecord existing = memories.get(id);
+                    if (existing != null) {
+                        decode(row.get("embedding"))
+                                .ifPresent(vector -> memories.put(id, existing.withEmbedding(vector)));
+                    }
                     continue;
                 }
                 if (!KIND_WRITTEN.equals(kind)) {
@@ -137,7 +201,8 @@ public final class JsonlMemoryStore implements MemoryStore {
                                 new ThreadId(String.valueOf(row.get("thread")))),
                         String.valueOf(row.get("text")),
                         tags,
-                        Instant.parse(String.valueOf(row.get("createdAt")))));
+                        Instant.parse(String.valueOf(row.get("createdAt"))),
+                        decode(row.get("embedding"))));
             } catch (RuntimeException e) {
                 // A damaged line loses one memory, not the whole store.
             }
