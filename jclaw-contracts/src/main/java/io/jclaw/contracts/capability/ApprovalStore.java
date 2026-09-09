@@ -88,6 +88,13 @@ public interface ApprovalStore {
      */
     Gate raiseAuth(TurnRunId run, TurnScope scope, String providerId, String credentialHint, String prompt);
 
+    /**
+     * Raises a process gate: the invocation started work that completes elsewhere, and the run
+     * parks until it does. Keyed by the invocation fingerprint like an approval gate, so a resume
+     * that re-dispatches the same call finds the same open gate.
+     */
+    Gate raiseProcess(TurnRunId run, TurnScope scope, CapabilityInvocation invocation, String prompt);
+
     /** Records a human decision. */
     void resolve(GateId gate, boolean approved);
 

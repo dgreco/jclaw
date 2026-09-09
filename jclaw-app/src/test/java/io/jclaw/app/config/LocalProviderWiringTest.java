@@ -54,7 +54,11 @@ class LocalProviderWiringTest {
                 1024,
                 java.time.Duration.ofHours(24),
                 java.util.Map.of(),
-                java.util.Map.of());
+                java.util.Map.of(),
+                false,
+                java.time.Duration.ofDays(14),
+                java.time.Duration.ofDays(30),
+                java.time.Duration.ofDays(7));
     }
 
     @Test

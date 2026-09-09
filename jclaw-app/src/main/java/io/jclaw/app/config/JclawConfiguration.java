@@ -121,9 +121,9 @@ public class JclawConfiguration {
      */
     @Bean
     public List<CapabilityHandler> capabilityHandlers(
-            Clock clock, MemoryStore memoryStore, EmbeddingProvider embeddingProvider,
-            SkillCatalog skillCatalog, SubagentHost subagentHost, RoutineStore routineStore,
-            McpRegistry mcp) {
+            JclawProperties properties, Clock clock, MemoryStore memoryStore,
+            EmbeddingProvider embeddingProvider, SkillCatalog skillCatalog, SubagentHost subagentHost,
+            RoutineStore routineStore, McpRegistry mcp) {
         List<CapabilityHandler> handlers = new ArrayList<>(CoreTools.all(clock));
         handlers.addAll(FileTools.all());
         handlers.addAll(MemoryTools.all(memoryStore, clock, embeddingProvider));
@@ -131,7 +131,7 @@ public class JclawConfiguration {
         handlers.addAll(TriggerTools.all(routineStore));
         handlers.add(new ShellTool());
         handlers.add(new HttpTool());
-        handlers.add(new SubagentTool(subagentHost));
+        handlers.add(new SubagentTool(subagentHost, properties.subagentsAsync()));
         // External tools last: they are third-party and must never shadow a built-in. The
         // kernel rejects duplicate ids outright, and the mcp.* namespace makes collision
         // impossible anyway.

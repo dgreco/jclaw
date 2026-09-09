@@ -106,7 +106,32 @@ public class TurnRunScheduler {
             finished.add(new Outcome(entry.getValue().run(), resultOf(future)));
             return true;
         });
+        finished.forEach(this::requeueWaitingParent);
         return List.copyOf(finished);
+    }
+
+    /**
+     * A finished child run wakes the parent parked on it.
+     *
+     * <p>The parent is found by thread: a subagent thread names its parent, and the parent run is
+     * whichever run on that thread is {@code WAITING_PROCESS}. It goes back to {@code QUEUED} and
+     * the next pass resumes it, whereupon it re-dispatches the subagent call and gets the child's
+     * conclusion. Nothing here inspects the child's result; the tool does that.
+     */
+    private void requeueWaitingParent(Outcome child) {
+        runs.find(child.run())
+                .flatMap(record -> RuntimeSubagentHost.parentOf(record.scope().thread()))
+                .ifPresent(parentThread -> runs.byStatus(TurnStatus.WAITING_PROCESS, Integer.MAX_VALUE).stream()
+                        .filter(parent -> parent.scope().thread().equals(parentThread))
+                        .forEach(parent -> {
+                            try {
+                                runs.updateStatus(parent.run(), TurnStatus.QUEUED);
+                                log.debug("scheduler: child {} finished; parent {} requeued",
+                                        child.run().value(), parent.run().value());
+                            } catch (IllegalStateException raced) {
+                                // Someone else moved it first; the lifecycle guard is doing its job.
+                            }
+                        }));
     }
 
     /** Waits for every in-flight run to finish and returns their results. */

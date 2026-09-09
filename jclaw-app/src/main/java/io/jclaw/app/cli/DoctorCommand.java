@@ -80,6 +80,10 @@ public class DoctorCommand implements Callable<Integer> {
         System.out.println("  injection policy     " + policy.injection().name().toLowerCase(java.util.Locale.ROOT));
         System.out.println("  approval ttl         " + properties.approvalTtl());
         System.out.println("  context summaries    " + (properties.contextSummarise() ? "on" : "off"));
+        System.out.println("  subagents            " + (properties.subagentsAsync() ? "async (needs a worker)" : "sync"));
+        System.out.println("  retention            results " + properties.retentionResults()
+                + ", events " + properties.retentionEvents() + ", checkpoints " + properties.retentionCheckpoints()
+                + " (0 = keep forever; transcript is never swept)");
         System.out.println("  per-tool limits      " + (policy.toolEgress().isEmpty() && policy.rateLimits().isEmpty()
                 ? "none"
                 : policy.toolEgress().size() + " egress allowlist(s), " + policy.rateLimits().size() + " rate limit(s)"));

@@ -96,7 +96,14 @@ public class RunCommand implements Callable<Integer> {
                             + "jclaw resume " + result.run().value());
                     yield EXIT_BLOCKED;
                 }
-                case BLOCKED_APPROVAL, WAITING_PROCESS -> {
+                case WAITING_PROCESS -> {
+                    System.err.println("jclaw: run waiting on a child run"
+                            + result.gatePrompt().map(gate -> " (gate " + gate + ")").orElse(""));
+                    System.err.println("A running 'jclaw worker' (or 'jclaw serve') executes the child and "
+                            + "resumes this run; or resume it yourself once the child has finished.");
+                    yield EXIT_BLOCKED;
+                }
+                case BLOCKED_APPROVAL -> {
                     System.err.println("jclaw: run parked awaiting approval"
                             + result.gatePrompt().map(gate -> " (gate " + gate + ")").orElse(""));
                     System.err.println("Re-run with --approval-mode trusted, or approve the gate.");

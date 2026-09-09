@@ -105,6 +105,35 @@ public final class JsonlFile {
         return records;
     }
 
+    /**
+     * Replaces the whole file with {@code records}, atomically.
+     *
+     * <p>The one deliberate departure from append-only, used by retention. The new content is
+     * written to a sibling temp file and moved over the original, so a reader never sees a
+     * half-written file: it sees the old one or the new one.
+     */
+    public void rewrite(List<Map<String, Object>> records) {
+        Objects.requireNonNull(records, "records");
+        StringBuilder content = new StringBuilder();
+        for (Map<String, Object> record : records) {
+            String line = mapper.writeValueAsString(record);
+            if (line.indexOf('\n') >= 0) {
+                throw new IllegalArgumentException("serialized record contains a newline; would corrupt JSONL");
+            }
+            content.append(line).append('\n');
+        }
+        synchronized (writeLock) {
+            Path temp = path.resolveSibling(path.getFileName() + ".rewrite");
+            try {
+                Files.writeString(temp, content.toString(), StandardCharsets.UTF_8);
+                Files.move(temp, path, java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                        java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+            } catch (IOException e) {
+                throw new UncheckedIOException("cannot rewrite " + path, e);
+            }
+        }
+    }
+
     /** Number of well-formed records currently stored. */
     public int size() {
         return readAll().size();

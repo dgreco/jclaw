@@ -51,6 +51,13 @@ import java.util.Map;
  *                             host list ({@code *.suffix} allowed); applied on top of the host guard
  * @param toolRateLimits       per-capability invocation caps, capability id to {@code N/window}
  *                             ({@code 5/1m}, {@code 100/1h}); enforced per process
+ * @param subagentsAsync       when true a subagent is queued for a worker and the parent parks
+ *                             {@code WAITING_PROCESS}; when false (default) the child runs inside
+ *                             the parent's tool call. Async needs a running worker or server
+ * @param retentionResults     maximum age of a finished run's rows in {@code results.jsonl};
+ *                             {@code 0} keeps forever
+ * @param retentionEvents      the same for {@code events.jsonl}
+ * @param retentionCheckpoints the same for {@code checkpoints.jsonl}
  */
 @ConfigurationProperties(prefix = "jclaw")
 public record JclawProperties(
@@ -136,7 +143,15 @@ public record JclawProperties(
 
         Map<String, String> toolEgress,
 
-        Map<String, String> toolRateLimits) {
+        Map<String, String> toolRateLimits,
+
+        @DefaultValue("false") boolean subagentsAsync,
+
+        @DefaultValue("14d") Duration retentionResults,
+
+        @DefaultValue("30d") Duration retentionEvents,
+
+        @DefaultValue("7d") Duration retentionCheckpoints) {
 
     public JclawProperties {
         // Constructor binding leaves an absent map null; an absent map means no limits.
@@ -181,7 +196,11 @@ public record JclawProperties(
                 1024,
                 Duration.ofHours(24),
                 Map.of(),
-                Map.of());
+                Map.of(),
+                false,
+                Duration.ofDays(14),
+                Duration.ofDays(30),
+                Duration.ofDays(7));
     }
 
     /**

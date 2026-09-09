@@ -44,9 +44,19 @@ public final class SubagentTool implements CapabilityHandler {
                     List.of("prompt")));
 
     private final SubagentHost host;
+    private final boolean async;
 
     public SubagentTool(SubagentHost host) {
+        this(host, false);
+    }
+
+    /**
+     * @param async when true the child is queued for a worker and the parent parks on a process
+     *              gate instead of blocking its tool call; requires a running worker or server
+     */
+    public SubagentTool(SubagentHost host, boolean async) {
         this.host = Objects.requireNonNull(host, "host");
+        this.async = async;
     }
 
     @Override
@@ -61,6 +71,20 @@ public final class SubagentTool implements CapabilityHandler {
             return Result.err(HandlerError.failed("prompt_required"));
         }
         String description = invocation.stringArg("description", "subtask");
+
+        if (async) {
+            return host.spawnAsync(invocation.scope(), description, prompt)
+                    .mapErr(HandlerError::failed)
+                    .flatMap(progress -> switch (progress) {
+                        case SubagentHost.Progress.Running running -> Result.err(HandlerError.waiting(
+                                running.child().value(),
+                                "subagent '" + description + "' running as " + running.child().value()));
+                        case SubagentHost.Progress.Finished finished -> Result.ok(
+                                finished.result().succeeded()
+                                        ? finished.result().reply()
+                                        : "The subagent did not complete: " + finished.result().reply());
+                    });
+        }
 
         // Depth is derived from the scope by the host, so a model cannot claim to be shallower
         // than it is by passing a smaller number.

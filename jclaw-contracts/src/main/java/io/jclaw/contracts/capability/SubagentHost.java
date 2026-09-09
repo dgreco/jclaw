@@ -1,6 +1,7 @@
 package io.jclaw.contracts.capability;
 
 import io.jclaw.contracts.Result;
+import io.jclaw.contracts.turn.TurnRunId;
 import io.jclaw.contracts.turn.TurnScope;
 
 import java.util.Objects;
@@ -45,4 +46,33 @@ public interface SubagentHost {
      */
     Result<SubagentResult, String> spawn(
             TurnScope parentScope, String description, String prompt, int depth);
+
+    /** Where an asynchronous child stands. */
+    sealed interface Progress {
+
+        /** Queued or executing; the parent should park on a process gate and ask again later. */
+        record Running(TurnRunId child) implements Progress {
+            public Running {
+                Objects.requireNonNull(child, "child");
+            }
+        }
+
+        /** Done, one way or the other. */
+        record Finished(TurnRunId child, SubagentResult result) implements Progress {
+            public Finished {
+                Objects.requireNonNull(child, "child");
+                Objects.requireNonNull(result, "result");
+            }
+        }
+    }
+
+    /**
+     * Starts a child turn if none exists for this task, or reports how the existing one is doing.
+     *
+     * <p>Idempotent by design: the parent parks and later re-dispatches the same invocation, and
+     * the second call must find the child the first one started rather than start another. The
+     * child is identified by the parent thread and the task, never by anything the model supplies
+     * separately.
+     */
+    Result<Progress, String> spawnAsync(TurnScope parentScope, String description, String prompt);
 }

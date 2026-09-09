@@ -2,12 +2,19 @@ package io.jclaw.app.runtime;
 
 import io.jclaw.contracts.Result;
 import io.jclaw.contracts.capability.SubagentHost;
+import io.jclaw.contracts.model.ChatMessage;
+import io.jclaw.contracts.thread.ThreadService;
+import io.jclaw.contracts.turn.RunStore;
 import io.jclaw.contracts.turn.ThreadId;
+import io.jclaw.contracts.turn.TurnRunId;
 import io.jclaw.contracts.turn.TurnScope;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 
+import java.util.Comparator;
+import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -36,9 +43,13 @@ public class RuntimeSubagentHost implements SubagentHost {
     private static final String DEPTH_MARKER = "~sub";
 
     private final ObjectProvider<JclawRuntime> runtime;
+    private final RunStore runs;
+    private final ThreadService threads;
 
-    public RuntimeSubagentHost(ObjectProvider<JclawRuntime> runtime) {
+    public RuntimeSubagentHost(ObjectProvider<JclawRuntime> runtime, RunStore runs, ThreadService threads) {
         this.runtime = Objects.requireNonNull(runtime, "runtime");
+        this.runs = Objects.requireNonNull(runs, "runs");
+        this.threads = Objects.requireNonNull(threads, "threads");
     }
 
     @Override
@@ -53,11 +64,7 @@ public class RuntimeSubagentHost implements SubagentHost {
             return Result.err("subagent_depth_exceeded");
         }
 
-        // A fresh child thread: the subagent gets the prompt and nothing else. Inheriting the
-        // parent's transcript would defeat the purpose, which is to keep detail out of it.
-        ThreadId childThread = new ThreadId(
-                parentScope.thread().value() + DEPTH_MARKER + (depth + 1) + "-"
-                        + Integer.toHexString(prompt.hashCode()));
+        ThreadId childThread = childThread(parentScope.thread(), depth, prompt);
 
         JclawRuntime.TurnResult result =
                 runtime.getObject().submit(childThread, prompt, new AtomicBoolean(false));
@@ -67,6 +74,61 @@ public class RuntimeSubagentHost implements SubagentHost {
                         + result.failure().map(kind -> " (" + kind.category() + ")").orElse("")),
                 result.isSuccess(),
                 result.tokensSpent()));
+    }
+
+    /**
+     * Asynchronous form: enqueue the child once, then report on it.
+     *
+     * <p>The child thread is a pure function of the parent thread, the depth, and the task, so a
+     * re-dispatched invocation finds the same child. The most recent run on that thread is the
+     * child's state: absent means start one, terminal means report it, anything else means still
+     * running.
+     */
+    @Override
+    public Result<Progress, String> spawnAsync(TurnScope parentScope, String description, String prompt) {
+        Objects.requireNonNull(parentScope, "parentScope");
+        Objects.requireNonNull(prompt, "prompt");
+
+        int depth = depthOf(parentScope.thread());
+        if (depth >= MAX_DEPTH) {
+            return Result.err("subagent_depth_exceeded");
+        }
+        ThreadId childThread = childThread(parentScope.thread(), depth, prompt);
+
+        Optional<RunStore.RunRecord> latest = runs.recent(Integer.MAX_VALUE).stream()
+                .filter(record -> record.scope().thread().equals(childThread))
+                .max(Comparator.comparing(RunStore.RunRecord::submittedAt));
+        if (latest.isEmpty()) {
+            TurnRunId child = runtime.getObject().enqueue(childThread, prompt);
+            return Result.ok(new Progress.Running(child));
+        }
+        RunStore.RunRecord child = latest.get();
+        if (!child.status().isTerminal()) {
+            return Result.ok(new Progress.Running(child.run()));
+        }
+        String reply = threads.history(childThread, Integer.MAX_VALUE).stream()
+                .map(ThreadService.ThreadMessage::message)
+                .filter(message -> message.role() == ChatMessage.Role.ASSISTANT)
+                .reduce((first, second) -> second)
+                .map(ChatMessage::displayText)
+                .orElse("status: " + child.status());
+        return Result.ok(new Progress.Finished(child.run(), new SubagentResult(
+                reply, child.status() == io.jclaw.contracts.turn.TurnStatus.COMPLETED, 0)));
+    }
+
+    /**
+     * A fresh child thread: the subagent gets the prompt and nothing else. Inheriting the
+     * parent's transcript would defeat the purpose, which is to keep detail out of it.
+     */
+    private static ThreadId childThread(ThreadId parent, int depth, String prompt) {
+        return new ThreadId(parent.value() + DEPTH_MARKER + (depth + 1) + "-"
+                + Integer.toHexString(prompt.hashCode()));
+    }
+
+    /** The parent thread of a subagent thread, if it is one. */
+    public static Optional<ThreadId> parentOf(ThreadId thread) {
+        int marker = thread.value().lastIndexOf(DEPTH_MARKER);
+        return marker <= 0 ? Optional.empty() : Optional.of(new ThreadId(thread.value().substring(0, marker)));
     }
 
     /** Counts the depth markers in a thread id. A top-level thread has none. */

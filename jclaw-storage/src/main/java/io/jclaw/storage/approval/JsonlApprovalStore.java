@@ -110,6 +110,28 @@ public final class JsonlApprovalStore implements ApprovalStore {
         return gate;
     }
 
+    @Override
+    public Gate raiseProcess(TurnRunId run, TurnScope scope, CapabilityInvocation invocation, String prompt) {
+        Objects.requireNonNull(run, "run");
+        Objects.requireNonNull(scope, "scope");
+        Objects.requireNonNull(invocation, "invocation");
+        Objects.requireNonNull(prompt, "prompt");
+
+        Gate gate = new Gate(
+                GateId.fresh(),
+                GateKind.PROCESS,
+                run,
+                scope,
+                invocation.capability(),
+                invocation.fingerprint(),
+                prompt,
+                clock.instant(),
+                clock.instant().plus(ttl),
+                Optional.empty());
+        append(gate);
+        return gate;
+    }
+
     private void append(Gate gate) {
         TurnScope scope = gate.scope();
         Map<String, Object> record = new LinkedHashMap<>();

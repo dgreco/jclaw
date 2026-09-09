@@ -296,7 +296,34 @@ public final class DefaultCapabilityHost implements CapabilityHost {
                             denied(invocation, descriptor, denied.reason());
                     case HandlerError.Failed failed ->
                             fail(invocation, descriptor, failed.category(), elapsed);
+                    case HandlerError.Waiting waiting ->
+                            waitOn(invocation, descriptor, waiting, elapsed);
                 });
+    }
+
+    /**
+     * The lane started something that finishes elsewhere. The run parks on a process gate keyed
+     * by the invocation, so a resume that re-dispatches the same call lands on the same gate until
+     * the lane reports an outcome.
+     */
+    private CapabilityOutcome waitOn(
+            CapabilityInvocation invocation, CapabilityDescriptor descriptor,
+            HandlerError.Waiting waiting, long elapsed) {
+
+        ApprovalStore.Gate gate = approvals.findGrant(invocation.scope(), invocation.fingerprint())
+                .filter(existing -> existing.kind() == GateKind.PROCESS)
+                .filter(existing -> existing.isPending() && !existing.isExpiredAt(clock.instant()))
+                .orElseGet(() -> {
+                    ApprovalStore.Gate raised = approvals.raiseProcess(
+                            invocation.run(), invocation.scope(), invocation, waiting.prompt());
+                    events.append(new JclawEvent.GateRaised(
+                            clock.instant(), invocation.run(), GateKind.PROCESS, raised.id().value()));
+                    return raised;
+                });
+        emit(invocation, descriptor, "waiting", elapsed);
+        log.debug("capability {}: waiting on process {} (gate {})",
+                descriptor.id().value(), waiting.process(), gate.id().value());
+        return new CapabilityOutcome.NeedsApproval(GateKind.PROCESS, LoopGateRef.of(gate.id()), gate.prompt());
     }
 
     private CapabilityOutcome succeed(

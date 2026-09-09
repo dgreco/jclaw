@@ -7,6 +7,7 @@ import io.jclaw.app.cli.MemoryCommand;
 import io.jclaw.app.cli.ModelsCommand;
 import io.jclaw.app.cli.OnboardCommand;
 import io.jclaw.app.cli.RecoverCommand;
+import io.jclaw.app.cli.RetainCommand;
 import io.jclaw.app.cli.ReplCommand;
 import io.jclaw.app.cli.ResumeCommand;
 import io.jclaw.app.cli.RoutinesCommand;
@@ -95,6 +96,7 @@ import picocli.CommandLine.Command;
                 ToolsCommand.class,
                 StatusCommand.class,
                 RecoverCommand.class,
+                RetainCommand.class,
                 WorkerCommand.class,
                 DoctorCommand.class
         })

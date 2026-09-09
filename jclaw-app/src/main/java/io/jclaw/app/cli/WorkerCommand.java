@@ -1,6 +1,7 @@
 package io.jclaw.app.cli;
 
 import io.jclaw.app.runtime.RecoveryService;
+import io.jclaw.app.runtime.RetentionService;
 import io.jclaw.app.runtime.RoutineRunner;
 import io.jclaw.app.runtime.TurnRunScheduler;
 import org.springframework.stereotype.Component;
@@ -38,6 +39,10 @@ public class WorkerCommand implements Callable<Integer> {
     private final RoutineRunner runner;
     private final RecoveryService recovery;
     private final TurnRunScheduler scheduler;
+    private final RetentionService retention;
+
+    /** Retention rewrites files; once an hour is plenty and keeps the sweep off the hot path. */
+    private static final Duration RETENTION_INTERVAL = Duration.ofHours(1);
 
     @Option(names = "--concurrency", description = "Queued runs executed at once. Default 2.")
     private int concurrency = 2;
@@ -48,10 +53,12 @@ public class WorkerCommand implements Callable<Integer> {
     @Option(names = "--once", description = "Poll a single time and exit. Useful for testing.")
     private boolean once;
 
-    public WorkerCommand(RoutineRunner runner, RecoveryService recovery, TurnRunScheduler scheduler) {
+    public WorkerCommand(RoutineRunner runner, RecoveryService recovery, TurnRunScheduler scheduler,
+                         RetentionService retention) {
         this.runner = runner;
         this.recovery = recovery;
         this.scheduler = scheduler;
+        this.retention = retention;
     }
 
     @Override
@@ -63,8 +70,16 @@ public class WorkerCommand implements Callable<Integer> {
         Runtime.getRuntime().addShutdownHook(shutdown);
 
         System.out.println("jclaw worker started (polling every " + interval.toSeconds() + "s). Ctrl-C to stop.");
+        long lastRetention = 0;
         try {
             do {
+                if (System.nanoTime() - lastRetention > RETENTION_INTERVAL.toNanos() || lastRetention == 0) {
+                    retention.sweep(false).stream()
+                            .filter(swept -> swept.dropped() > 0)
+                            .forEach(swept -> System.out.printf("retention %s: dropped %d%n",
+                                    swept.store(), swept.dropped()));
+                    lastRetention = System.nanoTime();
+                }
                 // Reconcile before claiming new work: a worker that starts while a predecessor's
                 // runs are still leased would leave them stranded until something else swept.
                 recovery.sweep(false).stream()

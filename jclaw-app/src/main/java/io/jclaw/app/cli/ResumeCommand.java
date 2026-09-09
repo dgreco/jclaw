@@ -58,7 +58,12 @@ public class ResumeCommand implements Callable<Integer> {
                         + "; see 'jclaw approvals list'");
                 yield EXIT_BLOCKED;
             }
-            case BLOCKED_APPROVAL, WAITING_PROCESS -> {
+            case WAITING_PROCESS -> {
+                System.err.println("jclaw: run still waiting on a child run"
+                        + result.gatePrompt().map(g -> " (gate " + g + ")").orElse(""));
+                yield EXIT_BLOCKED;
+            }
+            case BLOCKED_APPROVAL -> {
                 System.err.println("jclaw: run parked again"
                         + result.gatePrompt().map(g -> " (gate " + g + ")").orElse(""));
                 yield EXIT_BLOCKED;

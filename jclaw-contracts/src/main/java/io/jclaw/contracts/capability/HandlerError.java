@@ -38,8 +38,29 @@ public sealed interface HandlerError {
         }
     }
 
+    /**
+     * The lane started work that will finish elsewhere: a child run, an external process.
+     *
+     * <p>Not a failure and not a refusal. The kernel turns it into a process gate so the run
+     * parks {@code WAITING_PROCESS} and is resumed when the process completes; the same
+     * invocation is then dispatched again and the lane reports the outcome.
+     *
+     * @param process a stable identifier the lane can be asked about again, e.g. a child run id
+     * @param prompt  what a human would see: what the run is waiting for
+     */
+    record Waiting(String process, String prompt) implements HandlerError {
+        public Waiting {
+            Objects.requireNonNull(process, "process");
+            Objects.requireNonNull(prompt, "prompt");
+        }
+    }
+
     static HandlerError denied(String reason) {
         return new Denied(reason);
+    }
+
+    static HandlerError waiting(String process, String prompt) {
+        return new Waiting(process, prompt);
     }
 
     static HandlerError failed(String category) {
@@ -51,6 +72,7 @@ public sealed interface HandlerError {
         return switch (this) {
             case Denied denied -> denied.reason();
             case Failed failed -> failed.category();
+            case Waiting ignored -> "waiting_on_process";
         };
     }
 }
