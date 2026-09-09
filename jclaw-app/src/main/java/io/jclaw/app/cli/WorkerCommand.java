@@ -2,6 +2,7 @@ package io.jclaw.app.cli;
 
 import io.jclaw.app.runtime.RecoveryService;
 import io.jclaw.app.runtime.RoutineRunner;
+import io.jclaw.app.runtime.TurnRunScheduler;
 import org.springframework.stereotype.Component;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
@@ -28,7 +29,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @Component
 @Command(
         name = "worker",
-        description = "Poll for due routines and run them until interrupted.",
+        description = "Poll for due routines and queued runs, executing them until interrupted.",
         mixinStandardHelpOptions = true)
 public class WorkerCommand implements Callable<Integer> {
 
@@ -36,6 +37,10 @@ public class WorkerCommand implements Callable<Integer> {
 
     private final RoutineRunner runner;
     private final RecoveryService recovery;
+    private final TurnRunScheduler scheduler;
+
+    @Option(names = "--concurrency", description = "Queued runs executed at once. Default 2.")
+    private int concurrency = 2;
 
     @Option(names = "--interval", description = "Seconds between polls. Default 30, minimum 5.")
     private int intervalSeconds = 30;
@@ -43,9 +48,10 @@ public class WorkerCommand implements Callable<Integer> {
     @Option(names = "--once", description = "Poll a single time and exit. Useful for testing.")
     private boolean once;
 
-    public WorkerCommand(RoutineRunner runner, RecoveryService recovery) {
+    public WorkerCommand(RoutineRunner runner, RecoveryService recovery, TurnRunScheduler scheduler) {
         this.runner = runner;
         this.recovery = recovery;
+        this.scheduler = scheduler;
     }
 
     @Override
@@ -69,6 +75,15 @@ public class WorkerCommand implements Callable<Integer> {
                 for (RoutineRunner.Fired entry : fired) {
                     System.out.printf("%s -> %s%n", entry.routine().name(), entry.result().status());
                 }
+
+                // Queued work: submitted turns and runs requeued by recovery. Started here under
+                // the concurrency cap; finished ones are reported on a later pass.
+                scheduler.reapFinished().forEach(WorkerCommand::report);
+                scheduler.tick(Math.max(1, concurrency), stop)
+                        .forEach(run -> System.out.println("started " + run.value()));
+                if (once) {
+                    scheduler.drain().forEach(WorkerCommand::report);
+                }
                 if (once || stop.get()) {
                     break;
                 }
@@ -86,7 +101,13 @@ public class WorkerCommand implements Callable<Integer> {
                 // Shutdown in progress; nothing to remove.
             }
         }
+        scheduler.drain().forEach(WorkerCommand::report);
         System.out.println("jclaw worker stopped.");
         return 0;
+    }
+
+    private static void report(TurnRunScheduler.Outcome outcome) {
+        System.out.printf("%s -> %s%s%n", outcome.run().value(), outcome.result().status(),
+                outcome.result().failureDetail().map(d -> " (" + d + ")").orElse(""));
     }
 }

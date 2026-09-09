@@ -19,15 +19,23 @@ import java.util.Set;
  * @param interactive        whether a human is actually reachable. When false, work that would
  *                           need approval is <em>denied</em> rather than parked — a gate nobody can
  *                           answer is just a hung run, and failing closed is the honest outcome.
+ * @param injection          what to do with tool output that looks like a prompt injection
  */
 public record CapabilityPolicy(
         EffectClass autoApproveCeiling,
         Set<CapabilityId> denied,
-        boolean interactive) {
+        boolean interactive,
+        InjectionPolicy injection) {
 
     public CapabilityPolicy {
         Objects.requireNonNull(autoApproveCeiling, "autoApproveCeiling");
         denied = Set.copyOf(Objects.requireNonNull(denied, "denied"));
+        Objects.requireNonNull(injection, "injection");
+    }
+
+    /** With the default injection policy, {@link InjectionPolicy#SANITIZE}. */
+    public CapabilityPolicy(EffectClass autoApproveCeiling, Set<CapabilityId> denied, boolean interactive) {
+        this(autoApproveCeiling, denied, interactive, InjectionPolicy.SANITIZE);
     }
 
     /**
@@ -54,11 +62,15 @@ public record CapabilityPolicy(
     }
 
     public CapabilityPolicy withDenied(Set<CapabilityId> denied) {
-        return new CapabilityPolicy(autoApproveCeiling, denied, interactive);
+        return new CapabilityPolicy(autoApproveCeiling, denied, interactive, injection);
     }
 
     public CapabilityPolicy withInteractive(boolean interactive) {
-        return new CapabilityPolicy(autoApproveCeiling, denied, interactive);
+        return new CapabilityPolicy(autoApproveCeiling, denied, interactive, injection);
+    }
+
+    public CapabilityPolicy withInjection(InjectionPolicy injection) {
+        return new CapabilityPolicy(autoApproveCeiling, denied, interactive, injection);
     }
 
     public boolean isDenied(CapabilityId id) {

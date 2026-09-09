@@ -11,6 +11,7 @@ import io.jclaw.app.cli.ReplCommand;
 import io.jclaw.app.cli.ResumeCommand;
 import io.jclaw.app.cli.RoutinesCommand;
 import io.jclaw.app.cli.RunCommand;
+import io.jclaw.app.cli.SubmitCommand;
 import io.jclaw.app.cli.SkillsCommand;
 import io.jclaw.app.cli.StatusCommand;
 import io.jclaw.app.cli.ToolsCommand;
@@ -81,6 +82,7 @@ import picocli.CommandLine.Command;
         },
         subcommands = {
                 RunCommand.class,
+                SubmitCommand.class,
                 ReplCommand.class,
                 ApprovalsCommand.class,
                 ResumeCommand.class,

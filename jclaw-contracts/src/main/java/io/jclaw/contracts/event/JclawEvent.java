@@ -114,6 +114,30 @@ public sealed interface JclawEvent {
         }
     }
 
+    /**
+     * Tool output looked like a prompt injection.
+     *
+     * @param severity the worst finding, as a stable token ({@code LOW}, {@code MEDIUM}, {@code HIGH})
+     * @param findings how many rules matched
+     * @param action   what the kernel did: {@code warned}, {@code sanitized}, or {@code blocked}
+     */
+    record InjectionDetected(
+            Instant at,
+            TurnRunId run,
+            CapabilityId capability,
+            String severity,
+            int findings,
+            String action) implements JclawEvent {
+
+        public InjectionDetected {
+            Objects.requireNonNull(at, "at");
+            Objects.requireNonNull(run, "run");
+            Objects.requireNonNull(capability, "capability");
+            Objects.requireNonNull(severity, "severity");
+            Objects.requireNonNull(action, "action");
+        }
+    }
+
     /** An approval or auth gate was raised; the run is parked. */
     record GateRaised(Instant at, TurnRunId run, GateKind gate, String gateId) implements JclawEvent {
         public GateRaised {
@@ -171,6 +195,7 @@ public sealed interface JclawEvent {
             case ModelCalled ignored -> "model.called";
             case ModelFailed ignored -> "model.failed";
             case CapabilityInvoked ignored -> "capability.invoked";
+            case InjectionDetected ignored -> "injection.detected";
             case GateRaised ignored -> "gate.raised";
             case GateResolved ignored -> "gate.resolved";
             case CheckpointWritten ignored -> "checkpoint.written";

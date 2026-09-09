@@ -238,8 +238,8 @@ public class JclawRuntime {
             return failed(run, FailureKind.INTERNAL);
         }
         RunStore.RunRecord record = found.get();
-        if (!record.isResumable()) {
-            log.debug("run {}: status {} is not resumable", run.value(), record.status());
+        if (!record.isResumable() && record.status() != TurnStatus.QUEUED) {
+            log.debug("run {}: status {} is neither parked nor queued", run.value(), record.status());
             return new TurnResult(run, record.status(), Optional.empty(),
                     Optional.empty(), Optional.empty(), Optional.empty(), 0, 0);
         }
@@ -257,9 +257,18 @@ public class JclawRuntime {
         }
     }
 
-    /** The rest of {@link #resume}, executed while the thread lock is held. */
+    /**
+     * The rest of {@link #resume}, executed while the thread lock is held.
+     *
+     * <p>Two shapes of run arrive here. A parked run, or one requeued by recovery, has a
+     * checkpoint and is re-driven from it. A run queued by {@link #enqueue} has none and is
+     * started fresh from the transcript, which already holds its inbound message.
+     */
     private TurnResult resumeHeld(TurnRunId run, RunStore.RunRecord record, AtomicBoolean cancelled) {
         Optional<CheckpointStore.Checkpoint> checkpoint = checkpoints.latestFor(run);
+        if (checkpoint.isEmpty() && record.status() == TurnStatus.QUEUED) {
+            return startQueued(run, record, cancelled);
+        }
         if (checkpoint.isEmpty()) {
             // Without a checkpoint there is no safe continuation point; restarting could repeat
             // effects, so the run stays failed and the user resubmits explicitly.
@@ -286,7 +295,9 @@ public class JclawRuntime {
         LoopPolicy policy = resolvePolicy(record.scope(), record.model(), record.systemPrompt());
         log.debug("run {}: replaying admitted profile (model {}, {} tools visible)",
                 run.value(), policy.model(), policy.tools().size());
-        runs.updateStatus(run, TurnStatus.QUEUED);
+        if (record.status() != TurnStatus.QUEUED) {
+            runs.updateStatus(run, TurnStatus.QUEUED);
+        }
         runs.updateStatus(run, TurnStatus.RUNNING);
 
         if (!runs.claim(run, workerId, clock.instant().plus(LEASE_TTL))) {
@@ -297,6 +308,91 @@ public class JclawRuntime {
         }
         LoopExit exit = interpreter.resume(
                 run, record.scope(), state, policy, cancelled, hooks(run, Optional.empty()));
+        return validate(run, exit);
+    }
+
+    /**
+     * Admits a turn without executing it.
+     *
+     * <p>The inbound message and the run record become durable, in that order, and the run is
+     * left {@code QUEUED} with no lease for a scheduler to claim. No thread lock is taken: nothing
+     * executes here, and the lock is taken by whichever worker runs it. Two queued runs on one
+     * thread execute in submission order, one at a time.
+     */
+    public TurnRunId enqueue(ThreadId thread, String userText) {
+        Objects.requireNonNull(thread, "thread");
+        Objects.requireNonNull(userText, "userText");
+
+        TurnScope scope = TurnScope.local(projectName(), thread);
+        TurnRunId run = TurnRunId.fresh();
+        LoopPolicy policy = resolvePolicy(scope, properties.model(), assembleSystemPrompt());
+
+        threads.acceptInbound(thread, ChatMessage.user(userText));
+        runs.record(new RunStore.RunRecord(
+                run, scope, TurnStatus.QUEUED, policy.model(), policy.systemPrompt(),
+                clock.instant(), Optional.empty(), Optional.empty()));
+        events.append(new JclawEvent.TurnSubmitted(clock.instant(), run, scope));
+        log.debug("run {}: queued on thread {} (project {})", run.value(), thread.value(), scope.project());
+        return run;
+    }
+
+    /**
+     * The conversation a queued run should see.
+     *
+     * <p>Several turns may be queued on one thread before any executes, so the transcript can
+     * hold inbound messages that belong to <em>later</em> runs. Those are left out: a run answers
+     * the conversation as of its own submission. Replies written since are kept, since they answer
+     * earlier turns, and the run's own message is placed last so it is the current turn rather
+     * than a message the model has already seemingly answered.
+     */
+    private List<ChatMessage> conversationAsOf(RunStore.RunRecord record) {
+        List<ChatMessage> earlier = new java.util.ArrayList<>();
+        ThreadService.ThreadMessage own = null;
+        for (ThreadService.ThreadMessage message : threads.history(record.scope().thread(), Integer.MAX_VALUE)) {
+            if (message.message().role() != ChatMessage.Role.USER) {
+                earlier.add(message.message());
+                continue;
+            }
+            if (message.createdAt().isAfter(record.submittedAt())) {
+                continue; // a later run's turn
+            }
+            if (own != null) {
+                earlier.add(own.message());
+            }
+            own = message;
+        }
+        if (own != null) {
+            earlier.add(own.message());
+        }
+        return List.copyOf(earlier);
+    }
+
+    /** Starts a run queued by {@link #enqueue}: fresh state seeded from the transcript. */
+    private TurnResult startQueued(TurnRunId run, RunStore.RunRecord record, AtomicBoolean cancelled) {
+        LoopPolicy policy = resolvePolicy(record.scope(), record.model(), record.systemPrompt());
+        runs.updateStatus(run, TurnStatus.RUNNING);
+        if (!runs.claim(run, workerId, clock.instant().plus(LEASE_TTL))) {
+            log.debug("run {}: lease already held elsewhere; not starting here", run.value());
+            return new TurnResult(run, record.status(), Optional.empty(),
+                    Optional.empty(), Optional.empty(), Optional.empty(), 0, 0);
+        }
+        events.append(new JclawEvent.RunClaimed(
+                clock.instant(), run, workerId, clock.instant().plus(LEASE_TTL)));
+
+        List<ChatMessage> history = conversationAsOf(record);
+        if (history.isEmpty()) {
+            // A queued run whose inbound message vanished has nothing to run.
+            log.debug("run {}: queued run has no transcript to seed from -> failed", run.value());
+            recordStatus(run, TurnStatus.FAILED);
+            runs.releaseLease(run);
+            return failed(run, FailureKind.INTERNAL);
+        }
+        LoopExecutionState initial = LoopExecutionState.start(
+                ContextCompaction.compact(history, policy.context()).messages(), budget());
+        log.debug("run {}: queued run started with {} message(s) of history", run.value(),
+                initial.messages().size());
+        LoopExit exit = interpreter.run(run, record.scope(), initial, policy, cancelled,
+                hooks(run, Optional.empty()));
         return validate(run, exit);
     }
 

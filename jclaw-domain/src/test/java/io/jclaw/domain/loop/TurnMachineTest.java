@@ -66,6 +66,37 @@ class TurnMachineTest {
     }
 
     @Nested
+    @DisplayName("auth gates")
+    class AuthGates {
+
+        @Test
+        @DisplayName("a provider refusing for want of credentials parks the run, and resume retries the model")
+        void authRequiredParksAndResumeRetries() {
+            LoopExecutionState awaitingModel = advanceToAwaitingModel(fresh());
+
+            LoopStep parked = step(awaitingModel,
+                    new Observation.AuthRequired(new io.jclaw.contracts.turn.TurnRef.LoopGateRef("gate_auth")));
+            LoopDecision.Checkpoint checkpoint =
+                    assertInstanceOf(LoopDecision.Checkpoint.class, parked.decision());
+            assertEquals(CheckpointKind.BEFORE_BLOCK, checkpoint.kind(),
+                    "nothing was appended, so the block checkpoint is replay-safe");
+
+            LoopStep blocked = step(parked.state(), checkpointed(CheckpointKind.BEFORE_BLOCK));
+            LoopExit.Blocked exit = assertInstanceOf(LoopExit.Blocked.class,
+                    assertInstanceOf(LoopDecision.Finish.class, blocked.decision()).exit());
+            assertEquals(GateKind.AUTH, exit.gate());
+            assertEquals("gate_auth", exit.gateRef().value());
+
+            // Resume: no outstanding tool calls, so the machine goes straight back to the model.
+            LoopStep resumed = step(
+                    blocked.state().withPhase(Phase.RESUMING), new Observation.Resumed());
+            assertEquals(CheckpointKind.BEFORE_MODEL,
+                    assertInstanceOf(LoopDecision.Checkpoint.class, resumed.decision()).kind());
+            assertTrue(resumed.state().pendingBlock().isEmpty(), "the gate is cleared on resume");
+        }
+    }
+
+    @Nested
     @DisplayName("context policy")
     class ContextPolicyView {
 

@@ -21,6 +21,7 @@ import io.jclaw.domain.loop.LoopStateCodec;
 import io.jclaw.kernel.capability.CapabilityPolicy;
 import io.jclaw.kernel.capability.DefaultCapabilityHost;
 import io.jclaw.kernel.capability.GuardedHandlerContext;
+import io.jclaw.kernel.capability.InjectionPolicy;
 import io.jclaw.kernel.guard.EgressGuard;
 import io.jclaw.kernel.guard.WorkspaceGuard;
 import io.jclaw.loop.EffectInterpreter;
@@ -229,7 +230,7 @@ public class JclawConfiguration {
                                 + "(expected e.g. builtin.shell)", e);
             }
         }
-        return posture.withDenied(denied);
+        return posture.withDenied(denied).withInjection(InjectionPolicy.parse(properties.injectionPolicy()));
     }
 
     @Bean
@@ -416,6 +417,7 @@ public class JclawConfiguration {
     public EffectInterpreter effectInterpreter(
             ModelProvider modelProvider,
             CapabilityHost capabilityHost,
+            ApprovalStore approvalStore,
             ThreadService threadService,
             CheckpointStore checkpointStore,
             EventLog eventLog,
@@ -423,7 +425,7 @@ public class JclawConfiguration {
             Clock clock) {
 
         return new EffectInterpreter(
-                modelProvider, capabilityHost, threadService,
+                modelProvider, capabilityHost, approvalStore, threadService,
                 checkpointStore, eventLog, loopStateCodec, clock);
     }
 

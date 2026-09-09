@@ -48,7 +48,8 @@ class PolicyWiringTest {
                 "",
                 denied,
                 allow,
-                deny);
+                deny,
+                "sanitize");
     }
 
     @Test

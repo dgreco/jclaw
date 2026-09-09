@@ -1,5 +1,6 @@
 package io.jclaw.contracts.capability;
 
+import io.jclaw.contracts.loop.GateKind;
 import io.jclaw.contracts.turn.GateId;
 import io.jclaw.contracts.turn.TurnRunId;
 import io.jclaw.contracts.turn.TurnScope;
@@ -18,9 +19,18 @@ import java.util.Optional;
  */
 public interface ApprovalStore {
 
-    /** A gate awaiting a human decision. */
+    /**
+     * A gate awaiting a human.
+     *
+     * <p>Two kinds share the record. An {@link GateKind#APPROVAL} gate names a capability
+     * invocation by fingerprint and is resolved by a decision. An {@link GateKind#AUTH} gate names
+     * the provider and the credential it lacks (as the {@code fingerprint}); it is "resolved" by
+     * the credential appearing, so approving it merely records that the human says it has, and
+     * resuming re-attempts the model call either way.
+     */
     record Gate(
             GateId id,
+            GateKind kind,
             TurnRunId run,
             TurnScope scope,
             CapabilityId capability,
@@ -31,6 +41,7 @@ public interface ApprovalStore {
 
         public Gate {
             Objects.requireNonNull(id, "id");
+            Objects.requireNonNull(kind, "kind");
             Objects.requireNonNull(run, "run");
             Objects.requireNonNull(scope, "scope");
             Objects.requireNonNull(capability, "capability");
@@ -47,10 +58,24 @@ public interface ApprovalStore {
         public boolean isApproved() {
             return approved.orElse(false);
         }
+
+        public boolean isAuth() {
+            return kind == GateKind.AUTH;
+        }
     }
 
-    /** Raises a new gate and returns it. */
+    /** Raises a new approval gate and returns it. */
     Gate raise(TurnRunId run, TurnScope scope, CapabilityInvocation invocation, String prompt);
+
+    /**
+     * Raises an authentication gate: the model provider refused for want of credentials, and the
+     * run parks until a human supplies them and resumes it.
+     *
+     * @param providerId     which provider, recorded as the gate's capability {@code model.<id>}
+     * @param credentialHint what is missing, e.g. the environment variable name; the fingerprint
+     * @param prompt         what to show the human
+     */
+    Gate raiseAuth(TurnRunId run, TurnScope scope, String providerId, String credentialHint, String prompt);
 
     /** Records a human decision. */
     void resolve(GateId gate, boolean approved);

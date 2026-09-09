@@ -3,6 +3,7 @@ package io.jclaw.domain.loop;
 import io.jclaw.contracts.capability.CapabilityOutcome;
 import io.jclaw.contracts.loop.CheckpointKind;
 import io.jclaw.contracts.loop.FailureKind;
+import io.jclaw.contracts.loop.GateKind;
 import io.jclaw.contracts.loop.LoopExit;
 import io.jclaw.contracts.model.ChatMessage;
 import io.jclaw.contracts.model.ContentBlock;
@@ -156,8 +157,24 @@ public final class TurnMachine {
         return switch (observation) {
             case Observation.ModelReplied replied -> onModelReplied(state, replied);
             case Observation.ModelFailed failed -> onModelFailed(state, failed, policy, now);
-            default -> protocolViolation(state, "expected ModelReplied or ModelFailed");
+            case Observation.AuthRequired auth -> onAuthRequired(state, auth);
+            default -> protocolViolation(state, "expected ModelReplied, ModelFailed, or AuthRequired");
         };
+    }
+
+    /**
+     * Parks the run on an auth gate.
+     *
+     * <p>Nothing was appended: the model produced nothing, so the checkpoint written next is the
+     * same replay-safe {@code BEFORE_BLOCK} an approval gate uses, and a resume goes straight back
+     * to the model call with the state it had.
+     */
+    private static LoopStep onAuthRequired(LoopExecutionState state, Observation.AuthRequired auth) {
+        LoopExecutionState blocked = state.withPendingBlock(
+                new LoopExecutionState.PendingBlock(GateKind.AUTH, auth.gateRef()));
+        return new LoopStep(
+                blocked.withPhase(Phase.AWAITING_CHECKPOINT),
+                new LoopDecision.Checkpoint(CheckpointKind.BEFORE_BLOCK));
     }
 
     private static LoopStep onModelReplied(LoopExecutionState state, Observation.ModelReplied replied) {

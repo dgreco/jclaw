@@ -67,6 +67,8 @@ public class StatusCommand implements Callable<Integer> {
                     + e.detail().map(d -> " (" + d + ")").orElse("");
             case JclawEvent.CapabilityInvoked e -> e.capability().value()
                     + " [" + e.effect() + "] " + e.outcome() + " " + e.latencyMillis() + "ms";
+            case JclawEvent.InjectionDetected e -> e.capability().value()
+                    + " " + e.severity() + " x" + e.findings() + " " + e.action();
             case JclawEvent.GateRaised e -> e.gate() + " " + e.gateId();
             case JclawEvent.GateResolved e -> e.gateId() + " approved=" + e.approved();
             case JclawEvent.CheckpointWritten e -> e.kind() + " iteration=" + e.iteration();

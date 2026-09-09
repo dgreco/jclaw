@@ -77,6 +77,7 @@ public class DoctorCommand implements Callable<Integer> {
         System.out.println("  interactive gates    " + (policy.interactive() ? "enabled" : "disabled"));
         System.out.println("  private networks     "
                 + (egress.privateNetworksAllowed() ? "ALLOWED" : "blocked"));
+        System.out.println("  injection policy     " + policy.injection().name().toLowerCase(java.util.Locale.ROOT));
         System.out.println("  denied capabilities  " + (policy.denied().isEmpty() ? "none"
                 : policy.denied().stream().map(id -> id.value()).sorted()
                         .collect(java.util.stream.Collectors.joining(", "))));

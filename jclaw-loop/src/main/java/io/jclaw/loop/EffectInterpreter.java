@@ -1,5 +1,6 @@
 package io.jclaw.loop;
 
+import io.jclaw.contracts.capability.ApprovalStore;
 import io.jclaw.contracts.capability.CapabilityHost;
 import io.jclaw.contracts.capability.CapabilityId;
 import io.jclaw.contracts.capability.CapabilityInvocation;
@@ -8,6 +9,7 @@ import io.jclaw.contracts.event.EventLog;
 import io.jclaw.contracts.event.JclawEvent;
 import io.jclaw.contracts.loop.CheckpointStore;
 import io.jclaw.contracts.loop.FailureKind;
+import io.jclaw.contracts.loop.GateKind;
 import io.jclaw.contracts.loop.LoopExit;
 import io.jclaw.contracts.model.ChatMessage;
 import io.jclaw.contracts.model.ContentBlock;
@@ -15,6 +17,7 @@ import io.jclaw.contracts.model.ModelExchange.ModelResponse;
 import io.jclaw.contracts.model.ModelProvider;
 import io.jclaw.contracts.thread.ThreadService;
 import io.jclaw.contracts.turn.TurnRef.LoopCheckpointStateRef;
+import io.jclaw.contracts.turn.TurnRef.LoopGateRef;
 import io.jclaw.contracts.turn.TurnRef.LoopMessageRef;
 import io.jclaw.contracts.turn.TurnRunId;
 import io.jclaw.contracts.turn.TurnScope;
@@ -113,6 +116,7 @@ public final class EffectInterpreter {
 
     private final ModelProvider provider;
     private final CapabilityHost capabilities;
+    private final ApprovalStore gates;
     private final ThreadService threads;
     private final CheckpointStore checkpoints;
     private final EventLog events;
@@ -122,6 +126,7 @@ public final class EffectInterpreter {
     public EffectInterpreter(
             ModelProvider provider,
             CapabilityHost capabilities,
+            ApprovalStore gates,
             ThreadService threads,
             CheckpointStore checkpoints,
             EventLog events,
@@ -129,6 +134,7 @@ public final class EffectInterpreter {
             Clock clock) {
         this.provider = Objects.requireNonNull(provider, "provider");
         this.capabilities = Objects.requireNonNull(capabilities, "capabilities");
+        this.gates = Objects.requireNonNull(gates, "gates");
         this.threads = Objects.requireNonNull(threads, "threads");
         this.checkpoints = Objects.requireNonNull(checkpoints, "checkpoints");
         this.events = Objects.requireNonNull(events, "events");
@@ -252,7 +258,7 @@ public final class EffectInterpreter {
             LoopDecision decision, RunHooks hooks) {
 
         return switch (decision) {
-            case LoopDecision.CallModel call -> callModel(run, call, hooks);
+            case LoopDecision.CallModel call -> callModel(run, scope, call, hooks);
             case LoopDecision.InvokeCapabilities invoke -> invokeCapabilities(run, scope, invoke);
             case LoopDecision.PersistReply persist -> persistReply(scope, persist);
             case LoopDecision.Checkpoint checkpoint -> writeCheckpoint(run, state, checkpoint);
@@ -261,7 +267,8 @@ public final class EffectInterpreter {
         };
     }
 
-    private Observation callModel(TurnRunId run, LoopDecision.CallModel call, RunHooks hooks) {
+    private Observation callModel(
+            TurnRunId run, TurnScope scope, LoopDecision.CallModel call, RunHooks hooks) {
         log.debug("run {}: calling model {} via provider '{}' ({} messages, {} tools, maxTokens {}, streaming {})",
                 run.value(), call.request().model(), provider.id(), call.request().messages().size(),
                 call.request().tools().size(), call.request().maxTokens(), hooks.streamSink().isPresent());
@@ -306,6 +313,21 @@ public final class EffectInterpreter {
                     events.append(new JclawEvent.ModelFailed(
                             clock.instant(), run, provider.id(), failure.kind().name(),
                             failure.detail().map(d -> Redaction.bound(Redaction.redact(d), 200))));
+                    if (failure.kind() == ModelProvider.ProviderFailure.Kind.AUTH) {
+                        // Missing or rejected credentials are not a failed turn but a parked one:
+                        // the human sets the credential and resumes, and the run continues from
+                        // exactly here. The gate is durable so 'approvals list' can show it.
+                        String hint = failure.detail()
+                                .map(d -> Redaction.bound(Redaction.redact(d), 120))
+                                .orElse("credentials required");
+                        ApprovalStore.Gate gate = gates.raiseAuth(
+                                run, scope, provider.id(), hint,
+                                "provider '" + provider.id() + "': " + hint);
+                        events.append(new JclawEvent.GateRaised(
+                                clock.instant(), run, GateKind.AUTH, gate.id().value()));
+                        log.debug("run {}: auth gate {} raised ({})", run.value(), gate.id().value(), hint);
+                        return new Observation.AuthRequired(LoopGateRef.of(gate.id()));
+                    }
                     return new Observation.ModelFailed(
                             toFailureKind(failure.kind()),
                             failure.retryable(),

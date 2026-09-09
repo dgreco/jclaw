@@ -48,7 +48,8 @@ class LocalProviderWiringTest {
                 "",
                 List.of(),
                 List.of(),
-                List.of());
+                List.of(),
+                "sanitize");
     }
 
     @Test

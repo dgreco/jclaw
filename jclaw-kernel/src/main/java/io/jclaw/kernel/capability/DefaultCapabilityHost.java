@@ -17,6 +17,7 @@ import io.jclaw.contracts.turn.TurnRef.LoopGateRef;
 import io.jclaw.contracts.turn.TurnRef.LoopResultRef;
 import io.jclaw.contracts.turn.TurnScope;
 import io.jclaw.domain.redact.Redaction;
+import io.jclaw.domain.safety.InjectionHeuristics;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -234,7 +235,40 @@ public final class DefaultCapabilityHost implements CapabilityHost {
         boolean truncated = redacted.length() > context.maxOutputBytes();
         String bounded = truncated ? Redaction.bound(redacted, context.maxOutputBytes()) : redacted;
 
+        // The stored payload is the audit record: what the tool actually returned, redacted. What
+        // the model sees may differ below.
         LoopResultRef ref = results.store(invocation.run(), invocation, bounded, truncated);
+
+        // Injection heuristics run on the bounded, redacted text, after storage and before the
+        // model-facing summary is chosen. The gate above already decided whether the effect may
+        // happen; this decides how its output is framed, or whether it is withheld.
+        String modelFacing = bounded;
+        if (policy.injection() != InjectionPolicy.OFF) {
+            InjectionHeuristics.Assessment assessment = InjectionHeuristics.scan(bounded);
+            if (!assessment.clean()) {
+                InjectionHeuristics.Severity worst = assessment.highest().orElseThrow();
+                boolean block = policy.injection() == InjectionPolicy.BLOCK
+                        && worst == InjectionHeuristics.Severity.HIGH;
+                String action = block ? "blocked"
+                        : policy.injection() == InjectionPolicy.WARN ? "warned" : "sanitized";
+                events.append(new JclawEvent.InjectionDetected(
+                        clock.instant(), invocation.run(), descriptor.id(), worst.name(),
+                        assessment.findings().size(), action));
+                log.debug("capability {}: injection heuristics matched {} rule(s), worst {} -> {}",
+                        descriptor.id().value(), assessment.findings().size(), worst, action);
+                if (block) {
+                    emit(invocation, descriptor, "blocked", elapsed);
+                    return CapabilityOutcome.Denied.of("injection_suspected",
+                            "the tool output contained instruction-like text ("
+                                    + String.join(", ", assessment.rules()) + ") and was withheld");
+                }
+                if (policy.injection() != InjectionPolicy.WARN) {
+                    modelFacing = InjectionHeuristics.wrapUntrusted(
+                            InjectionHeuristics.neutraliseDelimiters(bounded), assessment);
+                }
+            }
+        }
+
         emit(invocation, descriptor, "ok", elapsed);
         log.debug("capability {}: ok in {} ms ({} chars{}), result ref {}",
                 descriptor.id().value(), elapsed, bounded.length(),
@@ -244,7 +278,7 @@ public final class DefaultCapabilityHost implements CapabilityHost {
             log.trace("capability {}: output: {}", descriptor.id().value(),
                     Redaction.bound(bounded, 2000).replace("\n", "\\n"));
         }
-        return new CapabilityOutcome.Ok(ref, bounded, truncated);
+        return new CapabilityOutcome.Ok(ref, modelFacing, truncated);
     }
 
     private CapabilityOutcome fail(

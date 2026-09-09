@@ -77,6 +77,12 @@ public final class EventCodec {
                 out.put("outcome", e.outcome());
                 out.put("latencyMillis", e.latencyMillis());
             }
+            case JclawEvent.InjectionDetected e -> {
+                out.put("capability", e.capability().value());
+                out.put("severity", e.severity());
+                out.put("findings", e.findings());
+                out.put("action", e.action());
+            }
             case JclawEvent.GateRaised e -> {
                 out.put("gate", e.gate().name());
                 out.put("gateId", e.gateId());
@@ -129,6 +135,10 @@ public final class EventCodec {
                         at, run, CapabilityId.of(str(record, "capability")),
                         EffectClass.valueOf(str(record, "effect")), str(record, "fingerprint"),
                         str(record, "outcome"), num(record, "latencyMillis"));
+
+                case "injection.detected" -> new JclawEvent.InjectionDetected(
+                        at, run, CapabilityId.of(str(record, "capability")), str(record, "severity"),
+                        (int) num(record, "findings"), str(record, "action"));
 
                 case "gate.raised" -> new JclawEvent.GateRaised(
                         at, run, GateKind.valueOf(str(record, "gate")), str(record, "gateId"));

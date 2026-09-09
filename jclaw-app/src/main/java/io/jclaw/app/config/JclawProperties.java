@@ -37,6 +37,9 @@ import java.util.List;
  * @param egressAllowlist      when non-empty, tools may only reach these hosts (exact or
  *                             {@code *.suffix}); private-network and metadata denials still apply
  * @param egressDenylist       hosts tools may never reach, on top of the built-in metadata hosts
+ * @param injectionPolicy      what the kernel does with tool output that looks like a prompt
+ *                             injection: {@code off}, {@code warn}, {@code sanitize} (default), or
+ *                             {@code block}
  */
 @ConfigurationProperties(prefix = "jclaw")
 public record JclawProperties(
@@ -110,7 +113,9 @@ public record JclawProperties(
 
         @DefaultValue("") List<String> egressAllowlist,
 
-        @DefaultValue("") List<String> egressDenylist) {
+        @DefaultValue("") List<String> egressDenylist,
+
+        @DefaultValue("sanitize") String injectionPolicy) {
 
     /**
      * Properties with every default applied, for programmatic construction.
@@ -143,7 +148,8 @@ public record JclawProperties(
                 "",
                 List.of(),
                 List.of(),
-                List.of());
+                List.of(),
+                "sanitize");
     }
 
     /**

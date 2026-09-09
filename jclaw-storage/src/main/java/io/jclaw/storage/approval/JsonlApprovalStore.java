@@ -3,6 +3,7 @@ package io.jclaw.storage.approval;
 import io.jclaw.contracts.capability.ApprovalStore;
 import io.jclaw.contracts.capability.CapabilityId;
 import io.jclaw.contracts.capability.CapabilityInvocation;
+import io.jclaw.contracts.loop.GateKind;
 import io.jclaw.contracts.turn.GateId;
 import io.jclaw.contracts.turn.ThreadId;
 import io.jclaw.contracts.turn.TurnRunId;
@@ -53,6 +54,7 @@ public final class JsonlApprovalStore implements ApprovalStore {
 
         Gate gate = new Gate(
                 GateId.fresh(),
+                GateKind.APPROVAL,
                 run,
                 scope,
                 invocation.capability(),
@@ -60,11 +62,40 @@ public final class JsonlApprovalStore implements ApprovalStore {
                 prompt,
                 clock.instant(),
                 Optional.empty());
+        append(gate);
+        return gate;
+    }
 
+    @Override
+    public Gate raiseAuth(TurnRunId run, TurnScope scope, String providerId, String credentialHint, String prompt) {
+        Objects.requireNonNull(run, "run");
+        Objects.requireNonNull(scope, "scope");
+        Objects.requireNonNull(providerId, "providerId");
+        Objects.requireNonNull(credentialHint, "credentialHint");
+        Objects.requireNonNull(prompt, "prompt");
+
+        Gate gate = new Gate(
+                GateId.fresh(),
+                GateKind.AUTH,
+                run,
+                scope,
+                CapabilityId.of("model." + providerId.toLowerCase(java.util.Locale.ROOT)
+                        .replaceAll("[^a-z0-9_]", "_")),
+                credentialHint,
+                prompt,
+                clock.instant(),
+                Optional.empty());
+        append(gate);
+        return gate;
+    }
+
+    private void append(Gate gate) {
+        TurnScope scope = gate.scope();
         Map<String, Object> record = new LinkedHashMap<>();
         record.put("kind", KIND_RAISED);
+        record.put("gateKind", gate.kind().name());
         record.put("id", gate.id().value());
-        record.put("run", run.value());
+        record.put("run", gate.run().value());
         record.put("tenant", scope.tenant());
         record.put("agent", scope.agent());
         record.put("project", scope.project());
@@ -74,7 +105,6 @@ public final class JsonlApprovalStore implements ApprovalStore {
         record.put("prompt", gate.prompt());
         record.put("raisedAt", gate.raisedAt().toString());
         file.append(record);
-        return gate;
     }
 
     @Override
@@ -154,6 +184,8 @@ public final class JsonlApprovalStore implements ApprovalStore {
     private static Gate toGate(Map<String, Object> record, String id) {
         return new Gate(
                 new GateId(id),
+                // Rows written before auth gates existed carry no kind and are approvals.
+                record.get("gateKind") instanceof String kind ? GateKind.valueOf(kind) : GateKind.APPROVAL,
                 new TurnRunId(String.valueOf(record.get("run"))),
                 new TurnScope(
                         String.valueOf(record.get("tenant")),
@@ -169,7 +201,7 @@ public final class JsonlApprovalStore implements ApprovalStore {
 
     private static Gate withDecision(Gate gate, boolean approved) {
         return new Gate(
-                gate.id(), gate.run(), gate.scope(), gate.capability(), gate.fingerprint(),
+                gate.id(), gate.kind(), gate.run(), gate.scope(), gate.capability(), gate.fingerprint(),
                 gate.prompt(), gate.raisedAt(), Optional.of(approved));
     }
 

@@ -89,7 +89,14 @@ public class RunCommand implements Callable<Integer> {
                     }
                     yield 0;
                 }
-                case BLOCKED_APPROVAL, BLOCKED_AUTH, WAITING_PROCESS -> {
+                case BLOCKED_AUTH -> {
+                    System.err.println("jclaw: run parked awaiting credentials"
+                            + result.gatePrompt().map(gate -> " (gate " + gate + ")").orElse(""));
+                    System.err.println("See 'jclaw approvals list' for what is missing, set it, then: "
+                            + "jclaw resume " + result.run().value());
+                    yield EXIT_BLOCKED;
+                }
+                case BLOCKED_APPROVAL, WAITING_PROCESS -> {
                     System.err.println("jclaw: run parked awaiting approval"
                             + result.gatePrompt().map(gate -> " (gate " + gate + ")").orElse(""));
                     System.err.println("Re-run with --approval-mode trusted, or approve the gate.");

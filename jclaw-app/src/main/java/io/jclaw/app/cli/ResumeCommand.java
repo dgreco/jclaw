@@ -19,7 +19,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @Component
 @Command(
         name = "resume",
-        description = "Resume a run that parked on an approval gate.",
+        description = "Resume a parked run, or execute a queued one.",
         mixinStandardHelpOptions = true)
 public class ResumeCommand implements Callable<Integer> {
 
@@ -52,7 +52,13 @@ public class ResumeCommand implements Callable<Integer> {
                 result.reply().ifPresent(System.out::println);
                 yield 0;
             }
-            case BLOCKED_APPROVAL, BLOCKED_AUTH, WAITING_PROCESS -> {
+            case BLOCKED_AUTH -> {
+                System.err.println("jclaw: run still needs credentials"
+                        + result.gatePrompt().map(g -> " (gate " + g + ")").orElse("")
+                        + "; see 'jclaw approvals list'");
+                yield EXIT_BLOCKED;
+            }
+            case BLOCKED_APPROVAL, WAITING_PROCESS -> {
                 System.err.println("jclaw: run parked again"
                         + result.gatePrompt().map(g -> " (gate " + g + ")").orElse(""));
                 yield EXIT_BLOCKED;

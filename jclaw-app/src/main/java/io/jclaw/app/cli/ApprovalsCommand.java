@@ -65,14 +65,21 @@ public class ApprovalsCommand implements Runnable {
                 return 0;
             }
             for (ApprovalStore.Gate gate : pending) {
-                System.out.printf("%s  %s  %s%n",
-                        gate.id().value(), gate.raisedAt(), gate.capability().value());
+                System.out.printf("%s  %s  %s  [%s]%n",
+                        gate.id().value(), gate.raisedAt(), gate.capability().value(),
+                        gate.kind().name().toLowerCase(java.util.Locale.ROOT));
                 System.out.println("    run:    " + gate.run().value());
                 System.out.println("    scope:  " + gate.scope().lockKey());
-                System.out.println("    call:   " + gate.prompt());
+                if (gate.isAuth()) {
+                    System.out.println("    needs:  " + gate.prompt());
+                    System.out.println("    then:   jclaw resume " + gate.run().value());
+                } else {
+                    System.out.println("    call:   " + gate.prompt());
+                }
                 System.out.println();
             }
-            System.out.println(pending.size() + " pending. Approve with: jclaw approvals approve <gate-id>");
+            System.out.println(pending.size() + " pending. Approve with: jclaw approvals approve <gate-id>; "
+                    + "an auth gate is cleared by setting the credential and resuming.");
             return 0;
         }
     }

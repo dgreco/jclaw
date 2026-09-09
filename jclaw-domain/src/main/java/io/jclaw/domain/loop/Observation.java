@@ -5,6 +5,7 @@ import io.jclaw.contracts.loop.CheckpointKind;
 import io.jclaw.contracts.loop.FailureKind;
 import io.jclaw.contracts.model.ModelExchange.ModelResponse;
 import io.jclaw.contracts.turn.TurnRef.LoopCheckpointStateRef;
+import io.jclaw.contracts.turn.TurnRef.LoopGateRef;
 import io.jclaw.contracts.turn.TurnRef.LoopMessageRef;
 
 import java.util.List;
@@ -59,6 +60,19 @@ public sealed interface Observation {
         }
     }
 
+    /**
+     * The model provider refused for want of credentials, and the interpreter raised an auth gate.
+     *
+     * <p>Distinct from {@link ModelFailed} because the right response is different: not a retry
+     * and not a failure, but parking the run on the gate so it can continue once a human has
+     * supplied what was missing. Resuming re-attempts the model call.
+     */
+    record AuthRequired(LoopGateRef gateRef) implements Observation {
+        public AuthRequired {
+            Objects.requireNonNull(gateRef, "gateRef");
+        }
+    }
+
     /** One capability finished. */
     record CallOutcome(String callId, CapabilityOutcome outcome) {
         public CallOutcome {
@@ -105,6 +119,7 @@ public sealed interface Observation {
             case Resumed ignored -> "resumed";
             case ModelReplied ignored -> "model.replied";
             case ModelFailed ignored -> "model.failed";
+            case AuthRequired ignored -> "auth.required";
             case CapabilitiesCompleted ignored -> "capabilities.completed";
             case ReplyPersisted ignored -> "reply.persisted";
             case Checkpointed ignored -> "checkpointed";
