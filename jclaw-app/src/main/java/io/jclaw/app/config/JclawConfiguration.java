@@ -44,6 +44,8 @@ import io.jclaw.storage.skill.FilesystemSkillCatalog;
 import io.jclaw.storage.result.JsonlCapabilityResultStore;
 import io.jclaw.storage.routine.JsonlRoutineStore;
 import io.jclaw.storage.run.JsonlRunStore;
+import io.jclaw.storage.extension.FilesystemExtensionRegistry;
+import io.jclaw.contracts.extension.ExtensionRegistry;
 import io.jclaw.storage.rows.RowStore;
 import io.jclaw.storage.sql.SqlSchema;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
@@ -203,8 +205,24 @@ public class JclawConfiguration {
     /** Connects to configured MCP servers. A no-op when none are configured. */
     @Bean
     public McpRegistry mcpRegistry(
-            McpServerStore mcpServerStore, WorkspaceGuard workspaceGuard, JclawProperties properties) {
-        return new McpRegistry(mcpServerStore, workspaceGuard.root(), mcpSandboxSpec(properties));
+            McpServerStore mcpServerStore, WorkspaceGuard workspaceGuard, JclawProperties properties,
+            ExtensionRegistry extensionRegistry) {
+        return new McpRegistry(mcpServerStore, workspaceGuard.root(), mcpSandboxSpec(properties), extensionRegistry);
+    }
+
+    /**
+     * Installed extension packages. Exposed as the concrete type too so the {@code sign}
+     * subcommand can compute a package digest the same way an install does.
+     */
+    @Bean
+    public FilesystemExtensionRegistry extensionRegistry(
+            JclawProperties properties, StorageBackend backend, FilesystemSkillCatalog skillCatalog, Clock clock) {
+        return new FilesystemExtensionRegistry(
+                properties.extensionsPath(),
+                backend.open("extensions", properties.extensionsJsonlPath()),
+                properties.trustedPublishers(),
+                java.util.Optional.of(skillCatalog.root()),
+                clock);
     }
 
     /** Scheduled routines. Nothing fires them on its own — see RoutineRunner. */

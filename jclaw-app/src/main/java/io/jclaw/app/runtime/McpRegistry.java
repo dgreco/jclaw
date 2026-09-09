@@ -1,6 +1,8 @@
 package io.jclaw.app.runtime;
 
 import io.jclaw.contracts.capability.CapabilityHandler;
+import io.jclaw.contracts.capability.EffectClass;
+import io.jclaw.contracts.capability.TrustClass;
 import io.jclaw.contracts.mcp.McpServerStore;
 import io.jclaw.tools.mcp.McpCapabilityHandler;
 import io.jclaw.tools.mcp.McpClient;
@@ -36,6 +38,17 @@ public class McpRegistry {
     /** @param sandbox when present, every server process runs inside this container contract */
     public McpRegistry(McpServerStore servers, Path workspaceRoot,
             java.util.Optional<io.jclaw.domain.sandbox.SandboxSpec> sandbox) {
+        this(servers, workspaceRoot, sandbox, null);
+    }
+
+    /**
+     * @param extensions installed extensions; every enabled MCP extension is started beside the
+     *                   servers from {@code mcp add}, and its tools carry the trust and effect the
+     *                   installation earned
+     */
+    public McpRegistry(McpServerStore servers, Path workspaceRoot,
+            java.util.Optional<io.jclaw.domain.sandbox.SandboxSpec> sandbox,
+            io.jclaw.contracts.extension.ExtensionRegistry extensions) {
         Objects.requireNonNull(servers, "servers");
         Objects.requireNonNull(workspaceRoot, "workspaceRoot");
         Objects.requireNonNull(sandbox, "sandbox");
@@ -46,13 +59,26 @@ public class McpRegistry {
             }
             McpClient.start(server.name(), server.command(), server.env(), workspaceRoot, sandbox)
                     .fold(
-                            client -> register(server, client),
+                            client -> register(server, client, TrustClass.COMMUNITY, EffectClass.NETWORK),
                             reason -> warn(server, reason));
+        }
+        if (extensions != null) {
+            for (var installed : extensions.list()) {
+                if (!installed.enabled() || installed.manifest().kind() != io.jclaw.contracts.extension.ExtensionRegistry.Kind.MCP) {
+                    continue;
+                }
+                McpServerStore.McpServer server = new McpServerStore.McpServer(
+                        installed.name(), installed.manifest().command(), installed.env(), true);
+                McpClient.start(server.name(), server.command(), server.env(), workspaceRoot, sandbox)
+                        .fold(
+                                client -> register(server, client, installed.trust(), installed.effectiveEffect()),
+                                reason -> warn(server, reason));
+            }
         }
     }
 
-    private boolean register(McpServerStore.McpServer server, McpClient client) {
-        return McpCapabilityHandler.handlersFor(client).fold(
+    private boolean register(McpServerStore.McpServer server, McpClient client, TrustClass trust, EffectClass effect) {
+        return McpCapabilityHandler.handlersFor(client, trust, effect).fold(
                 discovered -> {
                     clients.add(client);
                     handlers.addAll(discovered);

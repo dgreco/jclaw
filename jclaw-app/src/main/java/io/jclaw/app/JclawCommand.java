@@ -2,6 +2,7 @@ package io.jclaw.app;
 
 import io.jclaw.app.cli.ApprovalsCommand;
 import io.jclaw.app.cli.DoctorCommand;
+import io.jclaw.app.cli.ExtensionsCommand;
 import io.jclaw.app.cli.McpCommand;
 import io.jclaw.app.cli.MemoryCommand;
 import io.jclaw.app.cli.ModelsCommand;
@@ -93,6 +94,7 @@ import picocli.CommandLine.Command;
                 MemoryCommand.class,
                 RoutinesCommand.class,
                 SkillsCommand.class,
+                ExtensionsCommand.class,
                 McpCommand.class,
                 ModelsCommand.class,
                 OnboardCommand.class,

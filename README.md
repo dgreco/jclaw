@@ -61,7 +61,7 @@ jclaw reimplements the **architecture** of IronClaw — the seven-layer ladder, 
 
 Everything is durable JSONL under `~/.jclaw`: a run can park in one process, be approved in a second, and resume in a third. There is no database, and no server unless you start one (`jclaw serve`).
 
-**Status.** Milestones M0–M7 plus subagents (synchronous or asynchronous), MCP, streaming on every provider, lease-based crash recovery, a per-thread run lock, context compaction with model summaries, vector memory, configurable denials and egress lists, per-tool rate limits, injection heuristics, auth and process gates with expiry, a scheduler with `submit` and `worker`, an HTTP surface with run projections, event streams, and per-user tenants, attachments, store retention, an encrypted secret vault with host-side credential injection, a container sandbox for the shell lane, and a SQL storage backend (embedded H2 or PostgreSQL) with schema migrations. 261 tests pass across the modules, including 14 machine-checked architecture rules (ArchUnit). Both the uber jar and the native image are verified end to end, including subprocess spawning for MCP servers and shell tools. [PARITY.md](PARITY.md) lists what IronClaw still has that jclaw does not.
+**Status.** Milestones M0–M7 plus subagents (synchronous or asynchronous), MCP, streaming on every provider, lease-based crash recovery, a per-thread run lock, context compaction with model summaries, vector memory, configurable denials and egress lists, per-tool rate limits, injection heuristics, auth and process gates with expiry, a scheduler with `submit` and `worker`, an HTTP surface with run projections, event streams, and per-user tenants, attachments, store retention, an encrypted secret vault with host-side credential injection, a container sandbox for the shell lane, a SQL storage backend (embedded H2 or PostgreSQL) with schema migrations, and signed extension packages. 268 tests pass across the modules, including 14 machine-checked architecture rules (ArchUnit). Both the uber jar and the native image are verified end to end, including subprocess spawning for MCP servers and shell tools. [PARITY.md](PARITY.md) lists what IronClaw still has that jclaw does not.
 
 ---
 
@@ -236,6 +236,7 @@ jclaw:
 | `mcp-backend` | `host` | `host` runs MCP server processes directly; `docker` runs each one inside the sandbox contract (see [MCP servers](#mcp-servers-mcp)). |
 | `mcp-sandbox-image` / `mcp-sandbox-network` | *(blank)* | Overrides for MCP servers under `mcp-backend: docker`; blank inherits `sandbox-image` / `sandbox-network`. Servers usually need a runtime image (`node:22-alpine`) and, when their tool exists to reach an API, `bridge`. |
 | `storage` | `jsonl` | Where durable rows live: `jsonl` files under the state directory, or `sql` (every store in one database; see [The state directory](#the-state-directory)). Skills and thread locks stay on the filesystem either way. |
+| `trusted-publishers` | *(none)* | Extension publishers whose signatures make an install `VERIFIED`, as a map of publisher name to base64 Ed25519 public key (`jclaw.trusted-publishers.acme=<key>`, printed by `extensions keygen`). |
 | `datasource-url` / `datasource-username` | *(blank)* / `sa` | For `storage: sql`. Blank URL means an embedded H2 file under the state directory; a `jdbc:postgresql://…` URL is the hosted option. The password comes only from `JCLAW_DATASOURCE_PASSWORD`. |
 
 Logging is controlled through standard Spring properties (`--logging.level.io.jclaw=TRACE`) or the `--debug` / `--trace` shortcuts described under [Tracing a turn](#tracing-a-turn).
@@ -297,6 +298,8 @@ Everything durable is append-only JSONL under `state-dir` (default `~/.jclaw`), 
 ├── routines.jsonl      scheduled routines
 ├── mcp.jsonl           registered MCP servers
 ├── secrets.jsonl       vault entries: names, bindings, AES-256-GCM ciphertext
+├── extensions.jsonl    installed extensions: manifests, trust, digests
+├── extensions/<name>/  installed extension packages
 ├── vault.key           the vault key (owner-only), unless JCLAW_VAULT_KEY is set
 ├── locks/<hash>.lock   per-thread run locks (OS file locks; empty files)
 ├── repl-history        REPL line history
@@ -500,7 +503,7 @@ when-to-use: the user asks for release notes or a changelog entry
 1. Run `git log --oneline <last-tag>..HEAD` ...
 ```
 
-Frontmatter is flat `key: value` lines (`name`, `description`, `when-to-use`); the directory name is the skill id. Installing is `cp -r`, removing is `rm -r` — there is deliberately no install command. Only the one-line summaries go into the system prompt; the model calls `builtin.skill_read` to load full instructions when a task calls for them (progressive disclosure). Bodies are capped at 64 KiB.
+Frontmatter is flat `key: value` lines (`name`, `description`, `when-to-use`); the directory name is the skill id. Installing is `cp -r`, removing is `rm -r`; a skill that comes as a signed package goes through `extensions install` instead (below). Only the one-line summaries go into the system prompt; the model calls `builtin.skill_read` to load full instructions when a task calls for them (progressive disclosure). Bodies are capped at 64 KiB.
 
 ```bash
 jclaw skills list
@@ -538,6 +541,27 @@ jclaw worker --once            # one poll, then exit — handy for testing
 `run-due` fires everything currently due and exits non-zero if any fired routine failed, so cron surfaces it. A routine that missed several slots (machine asleep) fires **once**, not once per missed slot; the firing is recorded before the turn starts so a crash cannot re-fire in a loop. `--dry-run` shows what would fire. Each `worker` tick also sweeps expired leases before claiming work.
 
 Routines run unattended, so pair them with `--jclaw.approval-mode=read-only` (writes are denied, never parked) or accept that a gated call will park the routine's run until someone approves it.
+
+### Extensions: `extensions`
+
+An extension is a directory with a manifest, `jclaw-extension.json`, and either a `SKILL.md` or an MCP server to launch:
+
+```json
+{"name": "github-tools", "version": "1.2.0", "kind": "mcp", "description": "GitHub over MCP",
+ "command": ["npx", "-y", "@acme/github-mcp"], "env": ["GITHUB_TOKEN"],
+ "hosts": ["api.github.com"], "effect": "read_local", "publisher": "acme"}
+```
+
+```bash
+jclaw extensions install ./github-tools --env GITHUB_TOKEN=ghp_…   # values for the names the manifest requires
+jclaw extensions list                                              # name, version, kind, trust, enabled
+jclaw extensions disable github-tools ; jclaw extensions enable github-tools
+jclaw extensions remove github-tools
+```
+
+The manifest declares the kind, the command, the environment *names* the server needs (values are given at install and stored with the installation, never in the package), the hosts it says it reaches, the effect class its tools claim, and optionally a publisher. A skill package is copied into the skills directory while enabled; an MCP package's server is started beside the `mcp add` servers, under `mcp-backend` like any other.
+
+**Trust is decided at install, once, by signature.** A publisher generates a key pair with `jclaw extensions keygen --out keys` and signs a package with `jclaw extensions sign ./pkg --key keys/publisher.key`, which writes `jclaw-extension.sig`: an Ed25519 signature over a digest of every file in the package. An operator who lists the publisher's public key under `trusted-publishers` gets a **`VERIFIED`** install, and a verified manifest's declared effect class is believed: a read-only MCP tool that declares `read_local` can run unattended in `trusted` mode. An unsigned package installs as **`COMMUNITY`**: its tools are `NETWORK` whatever the manifest claims, and every call gates. A package whose signature does not verify, or whose publisher is not trusted, is refused outright, since a package claiming a publisher it cannot prove is worse than one claiming none. Editing a signed package breaks its signature. Packages are directories; there is no registry to fetch from, no versioned upgrade, and no profile bundling.
 
 ### MCP servers: `mcp`
 
@@ -638,6 +662,7 @@ Default level is INFO and prints only the reply. The domain never logs; the inte
 - **Untrusted tool output is framed.** Instruction-shaped text in a tool result is audited and, by default, fenced and defused before the model sees it; `block` withholds it. The stored payload is never altered.
 - **Untrusted processes can be contained.** `shell-backend: docker` runs every command, and `mcp-backend: docker` every MCP server, in a throwaway container with no network unless configured, the workspace as its only mount, and resource limits. `doctor` says which backends are active.
 - **Least-privilege lanes.** Tool handlers receive a context with exactly four methods (resolve path, check egress, display path, output budget). There is no method to obtain a secret; the dependency law bars tools, providers, and the loop from the vault port. Shell and MCP children get a scrubbed environment.
+- **Extensions earn trust by signature.** A package signed by a publisher in `trusted-publishers` installs as `VERIFIED` and its declared effect class is honoured; anything else is `COMMUNITY`, `NETWORK`, and gated. A signature that fails refuses the install.
 - **Secrets are leased, not held.** A `{{secret:NAME}}` reference is substituted by the kernel into one call's arguments, only for the bound capability and hosts, and masked out of that call's output. Nothing durable ever contains the value.
 - **Structural redaction.** Events have no field for a prompt, argument, or host path. Tool output, provider errors, approval prompts, and trace logs all pass through the same redactor; truncation happens after redaction.
 - **Untrusted exits.** The runtime re-resolves every reference a run returns before recording completion.

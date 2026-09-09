@@ -1,8 +1,8 @@
 # jclaw vs IronClaw — Parity
 
-An honest enumeration of what [IronClaw](https://github.com/nearai/ironclaw) (internally "Reborn") has that jclaw does not, and of what jclaw now has. jclaw is roughly 20k lines of Java (plus 6.5k of tests) against IronClaw's ~1.4M lines of Rust across ~63 crates. The **architecture** is equivalent — layer ladder, turn/run lifecycle, untrusted `LoopExit`, single `CapabilityHost` authority boundary, checkpoint-kind–driven recovery — and, after the September 2026 parity work, most of the runtime *mechanisms* are present in some form. What remains missing is breadth: channel adapters, the extension ecosystem, and observability plumbing. This file is the list, organised by IronClaw's own crate families so a gap can be traced to the crate that fills it upstream.
+An honest enumeration of what [IronClaw](https://github.com/nearai/ironclaw) (internally "Reborn") has that jclaw does not, and of what jclaw now has. jclaw is roughly 20k lines of Java (plus 6.5k of tests) against IronClaw's ~1.4M lines of Rust across ~63 crates. The **architecture** is equivalent — layer ladder, turn/run lifecycle, untrusted `LoopExit`, single `CapabilityHost` authority boundary, checkpoint-kind–driven recovery — and, after the September 2026 parity work, most of the runtime *mechanisms* are present in some form. What remains missing is breadth: channel adapters, a remote extension registry, and observability plumbing. This file is the list, organised by IronClaw's own crate families so a gap can be traced to the crate that fills it upstream.
 
-Sources: IronClaw's `README.md`, `crates/Architecture.md`, and the `crates/` listing as of September 2026; jclaw's code on this checkout (261 tests, 0 failures). Where the upstream doc names a concept and jclaw has an equivalent under a different name, the mapping is given. Where the gap is uncertain it is marked *(unverified)*.
+Sources: IronClaw's `README.md`, `crates/Architecture.md`, and the `crates/` listing as of September 2026; jclaw's code on this checkout (268 tests, 0 failures). Where the upstream doc names a concept and jclaw has an equivalent under a different name, the mapping is given. Where the gap is uncertain it is marked *(unverified)*.
 
 Legend: ✅ at parity · 🟡 partial · ❌ missing · ➕ jclaw-only
 
@@ -207,11 +207,11 @@ At parity on the trust model and on the gate mechanics, and on tenant isolation;
 
 | Capability | IronClaw | jclaw |
 |---|---|---|
-| Extension manifests declaring capabilities, permissions, endpoints | ✅ `extension_contracts`, `extension_manifests` | ❌ |
-| Extension registry, host, manager (install / enable / update) | ✅ | ❌ — `mcp add` is the only "install" |
-| Installable packages (channels, tools) under `extensions/packages/` | ✅ 14 packages | ❌ |
-| Signature verification for `VERIFIED` extensions | ✅ | ❌ — `TrustClass.VERIFIED` exists; nothing can produce it |
-| Skills as installable packages | ✅ | 🟡 skills are directories you `cp -r`; no `skills install`, no registry, no versioning |
+| Extension manifests declaring capabilities, permissions, endpoints | ✅ `extension_contracts`, `extension_manifests` | ✅ `jclaw-extension.json`: kind, command, required environment names, declared hosts, claimed effect class, publisher (`ExtensionRegistry.Manifest`, parsed and validated by the pure `ManifestParser`) |
+| Extension registry, host, manager (install / enable / update) | ✅ | 🟡 `FilesystemExtensionRegistry` with `jclaw extensions install/list/remove/enable/disable`; packages are local directories, so no fetch from a remote registry and no versioned upgrade |
+| Installable packages (channels, tools) under `extensions/packages/` | ✅ 14 packages | 🟡 two kinds: skill packages (exposed to the catalog while enabled) and MCP packages (started beside `mcp add` servers, under the MCP sandbox); no channel packages, no WASM tools |
+| Signature verification for `VERIFIED` extensions | ✅ | ✅ Ed25519 over a `PackageDigest` of every file; `extensions keygen` / `extensions sign` on the publisher side, `jclaw.trusted-publishers` on the operator side. A trusted signature makes the install `VERIFIED` and its declared effect class is honoured for its tools; an untrusted or failing signature refuses the install; unsigned is `COMMUNITY` with `NETWORK` tools |
+| Skills as installable packages | ✅ | ✅ a skill package installs, enables, disables, and removes through the registry; plain directories still work |
 | Profiles (`profiles/`) selecting bundled configurations | ✅ | ❌ |
 
 ---
@@ -274,7 +274,7 @@ The twelve items of the original list and the six that followed are closed (sect
 3. ~~**A secrets vault with credential injection**~~ — closed: an encrypted vault and host-side substitution of `{{secret:NAME}}` under capability + host bindings. Still open under this heading: staged handoff into subprocess environments, leak scanning of outbound model requests, and per-tenant vaults.
 4. ~~**SQL persistence**~~ — closed: one `RowStore` port, a JDBC backend with versioned migrations, H2 or PostgreSQL. Still open under this heading: materialised projections (folds run on demand over indexed reads), per-concept tables, and a connection pool.
 5. ~~**Sandboxing beyond the shell lane**~~ — closed for the code that is actually untrusted: MCP servers now run in the container contract (`mcp-backend: docker`) beside shell commands, with network by configuration and environment by name. Still open under this heading: a WASM lane with capability-based host imports and resource limiting, a sandbox orchestrator with per-job tokens and LLM proxying, and per-host egress for a server process rather than all-or-nothing.
-6. **Extension ecosystem** (§12) — manifests, a registry, signed `VERIFIED` extensions, installable skill packages. jclaw compiles its built-ins in and has MCP as its only external route.
+6. ~~**Extension ecosystem**~~ — closed at the package level: manifests, digests, signatures, trust decided at install, skill and MCP packages. Still open under this heading: a remote registry with versioned upgrades, profiles, channel packages, and a WASM tool kind.
 7. **Loop hooks and loop families** (§5) — pre/post model and tool hooks, and more than one machine, are what plugins and alternative agent strategies would need.
 8. **Observability substrate** (§13) — OpenTelemetry traces and metrics; today the event log and SLF4J are the whole story.
 9. **Triggers beyond cron** (§7) — event, webhook, and heartbeat triggers; the ingress could route webhooks to routines with little new machinery.

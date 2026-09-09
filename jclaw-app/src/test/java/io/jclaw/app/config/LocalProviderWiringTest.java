@@ -73,7 +73,8 @@ class LocalProviderWiringTest {
                 "",
                 "jsonl",
                 "",
-                "sa");
+                "sa",
+                java.util.Map.of());
     }
 
     @Test

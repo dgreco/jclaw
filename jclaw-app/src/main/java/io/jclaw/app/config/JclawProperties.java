@@ -90,6 +90,9 @@ import java.util.Map;
  *                             for a hosted deployment
  * @param datasourceUsername   database user; the password comes only from
  *                             {@code JCLAW_DATASOURCE_PASSWORD}
+ * @param trustedPublishers    extension publishers whose signatures make an install
+ *                             {@code VERIFIED}: publisher name to base64 Ed25519 public key, as
+ *                             printed by {@code jclaw extensions keygen}
  */
 @ConfigurationProperties(prefix = "jclaw")
 public record JclawProperties(
@@ -213,13 +216,16 @@ public record JclawProperties(
 
         @DefaultValue("") String datasourceUrl,
 
-        @DefaultValue("sa") String datasourceUsername) {
+        @DefaultValue("sa") String datasourceUsername,
+
+        Map<String, String> trustedPublishers) {
 
     public JclawProperties {
         // Constructor binding leaves an absent map null; an absent map means no limits.
         toolEgress = toolEgress == null ? Map.of() : Map.copyOf(toolEgress);
         toolRateLimits = toolRateLimits == null ? Map.of() : Map.copyOf(toolRateLimits);
         serveUsers = serveUsers == null ? Map.of() : Map.copyOf(serveUsers);
+        trustedPublishers = trustedPublishers == null ? Map.of() : Map.copyOf(trustedPublishers);
     }
 
     /**
@@ -278,7 +284,8 @@ public record JclawProperties(
                 "",
                 "jsonl",
                 "",
-                "sa");
+                "sa",
+                Map.of());
     }
 
     /** The JDBC URL {@code storage: sql} uses: the configured one, else an embedded H2 file. */
@@ -389,6 +396,14 @@ public record JclawProperties(
 
     public Path vaultKeyPath() {
         return stateDir.resolve("vault.key");
+    }
+
+    public Path extensionsPath() {
+        return stateDir.resolve("extensions");
+    }
+
+    public Path extensionsJsonlPath() {
+        return stateDir.resolve("extensions.jsonl");
     }
 
     public Path locksPath() {

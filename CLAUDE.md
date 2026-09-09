@@ -20,7 +20,7 @@ jclaw is a Java/Spring Boot reimplementation of the **architecture** of
 untrusted-`LoopExit` trust model, and the `CapabilityHost` authority boundary are faithful; the
 feature surface is a fraction of IronClaw's. See **Not built yet** for the honest list.
 
-261 tests pass across 9 modules, including 14 machine-checked architecture rules.
+268 tests pass across 9 modules, including 14 machine-checked architecture rules.
 
 ## Commands
 
@@ -57,6 +57,7 @@ The `native` profile lives in `jclaw-app/pom.xml`. The Boot parent contributes o
 | `routines add\|list\|remove\|pause\|resume\|run-due` | scheduled agent work |
 | `worker [--concurrency N]` | long-lived: fires routines, sweeps leases, executes queued runs under a cap |
 | `skills list\|show` | installed skills |
+| `extensions install\|list\|remove\|enable\|disable\|keygen\|sign` | signed extension packages (skills, MCP servers); a trusted publisher's signature makes an install `VERIFIED` |
 | `models [--probe]` | provider status; `--probe` proves one actually responds |
 | `onboard` | writes `~/.jclaw/jclaw.yaml` |
 | `mcp add\|list\|remove\|toggle\|test` | external MCP tool servers (stdio transport) |
@@ -426,8 +427,10 @@ architecture and most runtime mechanisms are equivalent, the breadth is not. PAR
   lanes (file, http, memory) are host code behind the guards and run in-process by design. There
   is no WASM lane with capability-based host imports, no orchestrator, no per-job tokens, no LLM
   proxying, and a sandboxed MCP server's network is all-or-nothing, not host-mediated per host.
-- **Extension ecosystem** — no manifests, registry, signed `VERIFIED` extensions, or installable
-  skill packages; built-ins are compiled in and MCP is the only external route.
+- **An extension registry to fetch from** — packages have manifests, digests, Ed25519
+  signatures, and `VERIFIED`/`COMMUNITY` trust decided at install, but they are local
+  directories: no remote registry, no versioned upgrades, no profiles, and the only extension
+  kinds are skills and MCP servers (no WASM tools, no channel packages).
 - **Loop hooks and loop families** — one machine, no pre/post model or tool hooks.
 - **Observability substrate** — SLF4J and the event log only; no OpenTelemetry, no metrics.
 - **Triggers beyond cron** — no event, webhook, or heartbeat triggers; the ingress does not route

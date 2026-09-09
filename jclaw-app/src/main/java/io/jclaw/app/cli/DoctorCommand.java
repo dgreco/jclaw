@@ -35,6 +35,7 @@ public class DoctorCommand implements Callable<Integer> {
     private final CapabilityPolicy policy;
     private final io.jclaw.contracts.secret.SecretVault vault;
     private final io.jclaw.app.config.StorageBackend backend;
+    private final io.jclaw.contracts.extension.ExtensionRegistry extensions;
 
     /**
      * Deliberately does <b>not</b> inject {@link io.jclaw.contracts.model.ModelProvider}.
@@ -50,13 +51,15 @@ public class DoctorCommand implements Callable<Integer> {
             EgressGuard egress,
             CapabilityPolicy policy,
             io.jclaw.contracts.secret.SecretVault vault,
-            io.jclaw.app.config.StorageBackend backend) {
+            io.jclaw.app.config.StorageBackend backend,
+            io.jclaw.contracts.extension.ExtensionRegistry extensions) {
         this.properties = properties;
         this.workspace = workspace;
         this.egress = egress;
         this.policy = policy;
         this.vault = vault;
         this.backend = backend;
+        this.extensions = extensions;
     }
 
     @Override
@@ -100,6 +103,9 @@ public class DoctorCommand implements Callable<Integer> {
                 ? "docker (" + properties.sandboxImage() + ", network " + properties.sandboxNetwork()
                         + ", " + properties.sandboxMemory() + ", " + properties.sandboxCpus() + " cpu)"
                 : "host (no sandbox)"));
+        System.out.println("  extensions           " + extensions.list().size() + " installed ("
+                + extensions.list().stream().filter(e -> e.trust() == io.jclaw.contracts.capability.TrustClass.VERIFIED).count()
+                + " verified), " + properties.trustedPublishers().size() + " trusted publisher(s)");
         System.out.println("  mcp backend          " + io.jclaw.app.config.JclawConfiguration.mcpSandboxSpec(properties)
                 .map(spec -> "docker (" + spec.image() + ", network " + spec.network() + ")")
                 .orElse("host (servers unsandboxed)"));

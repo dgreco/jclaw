@@ -79,7 +79,8 @@ class PolicyWiringTest {
                 "",
                 "jsonl",
                 "",
-                "sa");
+                "sa",
+                java.util.Map.of());
     }
 
     @Test

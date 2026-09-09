@@ -40,14 +40,24 @@ public final class McpCapabilityHandler implements CapabilityHandler {
     private final CapabilityDescriptor descriptor;
 
     public McpCapabilityHandler(McpClient client, McpClient.McpTool tool) {
+        this(client, tool, TrustClass.COMMUNITY, EffectClass.NETWORK);
+    }
+
+    /**
+     * @param trust  the installation's trust: {@code VERIFIED} for a package signed by a trusted
+     *               publisher, else {@code COMMUNITY}
+     * @param effect the effect class the tools carry; a verified manifest's declaration, else
+     *               {@code NETWORK}. The caller decides that, never the server
+     */
+    public McpCapabilityHandler(McpClient client, McpClient.McpTool tool, TrustClass trust, EffectClass effect) {
         this.client = Objects.requireNonNull(client, "client");
         this.toolName = Objects.requireNonNull(tool, "tool").name();
         this.descriptor = new CapabilityDescriptor(
                 CapabilityId.of(idFor(client.serverName(), tool.name())),
                 describe(client.serverName(), tool),
                 tool.inputSchema(),
-                EffectClass.NETWORK,
-                TrustClass.COMMUNITY);
+                Objects.requireNonNull(effect, "effect"),
+                Objects.requireNonNull(trust, "trust"));
     }
 
     /** Namespaced id, sanitized to the {@code lower_snake} segments {@link CapabilityId} allows. */
@@ -89,8 +99,14 @@ public final class McpCapabilityHandler implements CapabilityHandler {
 
     /** Registers every tool a connected server offers. */
     public static Result<List<CapabilityHandler>, String> handlersFor(McpClient client) {
+        return handlersFor(client, TrustClass.COMMUNITY, EffectClass.NETWORK);
+    }
+
+    /** Registers every tool a connected server offers, at the given trust and effect. */
+    public static Result<List<CapabilityHandler>, String> handlersFor(
+            McpClient client, TrustClass trust, EffectClass effect) {
         return client.listTools().map(tools -> tools.stream()
-                .map(tool -> (CapabilityHandler) new McpCapabilityHandler(client, tool))
+                .map(tool -> (CapabilityHandler) new McpCapabilityHandler(client, tool, trust, effect))
                 .toList());
     }
 }
