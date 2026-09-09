@@ -39,7 +39,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
         mixinStandardHelpOptions = true,
         footer = {
                 "",
-                "Routes: POST /threads/{thread}/turns, GET /runs/{run}, GET /runs/{run}/events (SSE),",
+                "Routes: GET / (browser UI), POST /v1/chat/completions (OpenAI-compatible), GET /v1/models,",
+                "        POST /threads/{thread}/turns, GET /runs/{run}, GET /runs/{run}/events (SSE),",
                 "        GET /threads/{thread}/messages, GET /approvals, POST /approvals/{gate}, GET /health",
                 "Set jclaw.serve-token (or JCLAW_SERVE_TOKEN) to require 'Authorization: Bearer <token>'."
         })
@@ -94,7 +95,8 @@ public class ServeCommand implements Callable<Integer> {
         Runtime.getRuntime().addShutdownHook(shutdown);
 
         JclawHttpServer server = new JclawHttpServer(
-                runtime, runs, events, threads, approvals, clock, Optional.ofNullable(properties.serveToken()));
+                runtime, runs, events, threads, approvals, clock, Optional.ofNullable(properties.serveToken()),
+                properties.model());
         server.start(host, port);
         System.out.println("jclaw serving on http://" + host + ":" + server.port()
                 + (properties.serveToken() == null || properties.serveToken().isBlank()

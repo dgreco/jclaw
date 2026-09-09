@@ -44,8 +44,8 @@ IronClaw is a multi-surface runtime. jclaw has the CLI, the REPL, and a minimal 
 |---|---|---|
 | CLI (`run`, `repl`, `onboard`, `status`, `models`) | ✅ | ✅ plus `submit`, `serve`, `retain`, `approvals`, `resume`, `memory`, `routines`, `worker`, `skills`, `mcp`, `recover`, `tools`, `doctor` |
 | HTTP ingress / webhooks (`ironclaw_host_ingress`) | ✅ | 🟡 `jclaw serve`: `POST /threads/{t}/turns` enqueues (202 + run id), `GET /runs/{r}` serves the projection and reply, `GET /runs/{r}/events` streams the run's events as SSE, `GET /threads/{t}/messages`, `GET/POST /approvals`, `GET /health`; loopback by default, bearer token optional. No webhook routing to routines, no TLS |
-| Web UI (`ironclaw_webui`, SSE + WebSocket browser gateway, login token) | ✅ | ❌ — the HTTP surface serves JSON and SSE a UI could consume; there is no UI |
-| OpenAI-compatible HTTP API (`ironclaw_openai_compat`) — use the agent from any OpenAI client | ✅ | ❌ |
+| Web UI (`ironclaw_webui`, SSE + WebSocket browser gateway, login token) | ✅ | 🟡 `GET /` on `serve` is a single-page UI over the JSON and SSE routes: threads, transcript, posting turns, following a run's events, approving and denying gates; bearer token kept in session storage. No accounts, no WebSocket, no styling beyond legibility |
+| OpenAI-compatible HTTP API (`ironclaw_openai_compat`) — use the agent from any OpenAI client | ✅ | ✅ `POST /v1/chat/completions` (buffered and `stream: true`) and `GET /v1/models` on `serve`; a stateless client's prior turns are replayed into a fresh thread, `X-Jclaw-Thread` names a persistent one; images arrive as data-URL parts; client `system` messages are ignored in favour of the operator's prompt; a parked run is reported in the completion text with `X-Jclaw-Gate` |
 | Slack and Telegram channel adapters (WASM channel packages implementing `ChannelAdapter`) | ✅ | ❌ |
 | Operator / admin surface (`ironclaw_operator`) | ✅ | 🟡 `status`, `status --run`, `doctor`, `recover`, `retain`, `tools`, `approvals` |
 | Assistant product with conversation management (`ironclaw_assistant`, `ironclaw_conversations`) | ✅ | ❌ — jclaw has threads, not conversations with source/reply-target bindings |
@@ -269,7 +269,7 @@ Listed so the comparison is not read as one-directional:
 
 The twelve items of the original list and the six that followed are closed (sections above mark each ✅ or 🟡 with the caveat). What remains is breadth rather than mechanism. Ranked by what a deployment beyond one operator's machine would hit first:
 
-1. **A real product surface** (§2) — the HTTP ingress and SSE stream are the substrate; a browser UI, an OpenAI-compatible endpoint, or a Slack/Telegram adapter would be the first thing a second person could use. Reply-target bindings come with it.
+1. ~~**A real product surface**~~ — closed: the browser UI and the OpenAI-compatible endpoint sit on `serve`. Still open under this heading: Slack/Telegram channel adapters and reply-target bindings.
 2. **Identity and multi-tenancy** (§4, §10) — `TurnScope` has tenant and agent fields that are always `local`; the scheduler caps, the memory scope, and the thread lock all assume one operator. A per-user identity is the prerequisite for everything hosted.
 3. **A secrets vault with credential injection** (§9, §10) — tools cannot see secrets, which is right, but they also cannot use one; an authenticated `http_fetch` needs leased credential handoff at the host boundary.
 4. **SQL persistence** (§11) — JSONL with retention is fine on one machine; a hosted deployment needs Postgres, migrations, and materialised projections instead of on-demand folds.

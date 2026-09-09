@@ -49,7 +49,7 @@ The `native` profile lives in `jclaw-app/pom.xml`. The Boot parent contributes o
 |---|---|
 | `run [--stream] [--attach f]…` | one-shot turn; exits 0 ok, 1 failed, 2 parked on a gate |
 | `submit` | queue a turn durably and return its run id; a `worker` or `serve` executes it. `--attach` like `run` |
-| `serve [--host --port --concurrency]` | HTTP ingress + worker loop: enqueue, run projections, SSE event streams, approvals; bearer token via `jclaw.serve-token` |
+| `serve [--host --port --concurrency]` | HTTP ingress + worker loop: browser UI at `/`, OpenAI-compatible `/v1/chat/completions`, enqueue, run projections, SSE event streams, approvals; bearer token via `jclaw.serve-token` |
 | `repl` | interactive session with readline editing (and still pipes) |
 | `approvals list [--all]\|approve\|deny` | resolve gates (approval, auth, process); approving resumes by default; expired gates are hidden and refuse decisions |
 | `resume <run-id>` | continue a parked run |
@@ -400,9 +400,8 @@ Honest gaps against IronClaw's surface. jclaw is ~20k lines against IronClaw's ~
 architecture and most runtime mechanisms are equivalent, the breadth is not. PARITY.md section
 16 ranks these.
 
-- **A real product surface** — `serve` exposes JSON and SSE over the runtime; there is no browser
-  UI, no OpenAI-compatible endpoint, and no Slack/Telegram channel adapter on top of it. Reply
-  targets are stdout or the HTTP read-back.
+- **Channel adapters** — `serve` has a browser UI and an OpenAI-compatible endpoint; there is no
+  Slack or Telegram adapter and no reply-target binding beyond stdout and HTTP read-back.
 - **Identity and multi-tenancy** — `TurnScope` carries tenant and agent fields that are always
   `local`; scheduler caps, memory scoping, and the thread lock assume one operator. `serve` has
   one static bearer token, not users.

@@ -88,7 +88,7 @@ class ServeIntegrationTest {
 
     private void ensureStarted() throws IOException {
         if (server == null) {
-            server = new JclawHttpServer(runtime, runs, events, threads, approvals, clock, Optional.of(TOKEN));
+            server = new JclawHttpServer(runtime, runs, events, threads, approvals, clock, Optional.of(TOKEN), "mock-model");
             server.start("127.0.0.1", 0);
             base = "http://127.0.0.1:" + server.port();
         }

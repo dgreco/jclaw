@@ -3,6 +3,7 @@ package io.jclaw.app.http;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import io.jclaw.app.runtime.JclawRuntime;
+import io.jclaw.contracts.model.ModelProvider;
 import io.jclaw.contracts.Result;
 import io.jclaw.contracts.capability.ApprovalStore;
 import io.jclaw.contracts.event.EventLog;
@@ -45,9 +46,16 @@ import java.util.regex.Pattern;
  * stream is the same log followed as server-sent events. Nothing here reaches into the
  * interpreter or a store's internals: every route is a call the CLI could make too.
  *
+ * <p>Two more surfaces sit on the same routes. {@code GET /} serves a small browser UI
+ * ({@link WebUi}) that uses nothing but them. {@code POST /v1/chat/completions} speaks the OpenAI
+ * chat-completions shape, buffered or streamed, so any OpenAI SDK or tool can drive the agent;
+ * unlike the enqueue route it executes in the request, because that is what such clients expect,
+ * and it still goes through the same lock, lease, and kernel as a CLI turn.
+ *
  * <p>Bound to loopback unless told otherwise, and when a token is configured every request must
- * carry it as a bearer. Built on the JDK's own HTTP server: one dependency fewer, and it works in
- * the native image.
+ * carry it, as a bearer header or, for browsers' {@code EventSource}, an {@code access_token}
+ * query parameter. Built on the JDK's own HTTP server: one dependency fewer, and it works in the
+ * native image.
  */
 public final class JclawHttpServer {
 
@@ -69,12 +77,13 @@ public final class JclawHttpServer {
     private final JsonlApprovalStore approvals;
     private final Clock clock;
     private final Optional<String> token;
+    private final String model;
     private final JsonMapper mapper = JsonMapper.builder().build();
     private HttpServer server;
 
     public JclawHttpServer(
             JclawRuntime runtime, RunStore runs, EventLog events, ThreadService threads,
-            JsonlApprovalStore approvals, Clock clock, Optional<String> token) {
+            JsonlApprovalStore approvals, Clock clock, Optional<String> token, String model) {
         this.runtime = Objects.requireNonNull(runtime, "runtime");
         this.runs = Objects.requireNonNull(runs, "runs");
         this.events = Objects.requireNonNull(events, "events");
@@ -82,6 +91,7 @@ public final class JclawHttpServer {
         this.approvals = Objects.requireNonNull(approvals, "approvals");
         this.clock = Objects.requireNonNull(clock, "clock");
         this.token = Objects.requireNonNull(token, "token").filter(t -> !t.isBlank());
+        this.model = Objects.requireNonNull(model, "model");
     }
 
     /** Starts listening. Port 0 picks a free port; {@link #port()} reports it. */
@@ -121,6 +131,13 @@ public final class JclawHttpServer {
 
             if (method.equals("GET") && path.equals("/health")) {
                 send(exchange, 200, Map.of("status", "ok", "at", clock.instant().toString()));
+            } else if (method.equals("GET") && (path.equals("/") || path.equals("/ui"))) {
+                sendHtml(exchange, WebUi.INDEX);
+            } else if (method.equals("GET") && path.equals("/v1/models")) {
+                send(exchange, 200, Map.of("object", "list", "data", List.of(Map.of(
+                        "id", model, "object", "model", "owned_by", "jclaw"))));
+            } else if (method.equals("POST") && path.equals("/v1/chat/completions")) {
+                chatCompletions(exchange);
             } else if (method.equals("POST") && (m = THREAD_TURNS.matcher(path)).matches()) {
                 submitTurn(exchange, new ThreadId(m.group(1)));
             } else if (method.equals("GET") && (m = THREAD_MESSAGES.matcher(path)).matches()) {
@@ -151,7 +168,139 @@ public final class JclawHttpServer {
             return true;
         }
         String header = exchange.getRequestHeaders().getFirst("Authorization");
-        return header != null && header.equals("Bearer " + token.get());
+        if (header != null && header.equals("Bearer " + token.get())) {
+            return true;
+        }
+        // EventSource cannot set headers; the browser UI passes the token as a query parameter.
+        String query = exchange.getRequestURI().getRawQuery();
+        if (query != null) {
+            for (String pair : query.split("&")) {
+                int eq = pair.indexOf('=');
+                if (eq > 0 && pair.substring(0, eq).equals("access_token")) {
+                    String value = java.net.URLDecoder.decode(pair.substring(eq + 1), StandardCharsets.UTF_8);
+                    return value.equals(token.get());
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * {@code POST /v1/chat/completions}: the OpenAI shape over a jclaw turn.
+     *
+     * <p>Executes in the request, unlike the enqueue route, because OpenAI clients wait for the
+     * completion. A stateless client's prior turns are replayed into a fresh thread first so the
+     * agent sees the conversation it sent; a client naming {@code X-Jclaw-Thread} relies on
+     * jclaw's own transcript instead. A parked run is reported as a completion whose content
+     * says what it is waiting for, with the run and gate ids in response headers, since the
+     * OpenAI shape has no notion of a gate.
+     */
+    private void chatCompletions(HttpExchange exchange) throws IOException {
+        OpenAiCompat.Parsed parsed = OpenAiCompat.parse(readJson(exchange));
+        String named = exchange.getRequestHeaders().getFirst("X-Jclaw-Thread");
+        ThreadId thread;
+        if (named != null && !named.isBlank()) {
+            thread = new ThreadId(named.trim());
+        } else {
+            thread = new ThreadId("oai-" + java.util.UUID.randomUUID().toString().substring(0, 8));
+            for (ChatMessage prior : parsed.priorTurns()) {
+                if (prior.role() == ChatMessage.Role.USER) {
+                    threads.acceptInbound(thread, prior);
+                } else {
+                    threads.appendAssistant(thread, prior, false);
+                }
+            }
+        }
+        long created = clock.instant().getEpochSecond();
+        String requestedModel = parsed.model().orElse(model);
+
+        if (!parsed.stream()) {
+            JclawRuntime.TurnResult result = runtime.submit(
+                    thread, parsed.inbound(), new java.util.concurrent.atomic.AtomicBoolean(false), Optional.empty());
+            respondCompletion(exchange, result, thread, created, requestedModel);
+            return;
+        }
+
+        exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
+        exchange.getResponseHeaders().add("Cache-Control", "no-cache");
+        exchange.getResponseHeaders().add("X-Jclaw-Thread", thread.value());
+        exchange.sendResponseHeaders(200, 0);
+        try (OutputStream out = exchange.getResponseBody()) {
+            String id = "chatcmpl-" + thread.value();
+            java.util.function.Consumer<ModelProvider.StreamEvent> sink = event -> {
+                if (event instanceof ModelProvider.StreamEvent.TextDelta delta) {
+                    try {
+                        writeSse(out, mapper.writeValueAsString(
+                                OpenAiCompat.chunk(id, created, requestedModel, delta.text(), null)));
+                    } catch (IOException clientGone) {
+                        throw new java.io.UncheckedIOException(clientGone);
+                    }
+                }
+            };
+            JclawRuntime.TurnResult result;
+            try {
+                result = runtime.submit(thread, parsed.inbound(),
+                        new java.util.concurrent.atomic.AtomicBoolean(false), Optional.of(sink));
+            } catch (java.io.UncheckedIOException clientGone) {
+                return;
+            }
+            String finish = result.isSuccess() ? "stop" : "stop";
+            if (!result.isSuccess()) {
+                writeSse(out, mapper.writeValueAsString(OpenAiCompat.chunk(
+                        id, created, requestedModel, describeOutcome(result), null)));
+            }
+            writeSse(out, mapper.writeValueAsString(OpenAiCompat.chunk(id, created, requestedModel, null, finish)));
+            out.write("data: [DONE]\n\n".getBytes(StandardCharsets.UTF_8));
+            out.flush();
+        }
+    }
+
+    private void respondCompletion(
+            HttpExchange exchange, JclawRuntime.TurnResult result, ThreadId thread,
+            long created, String requestedModel) throws IOException {
+        exchange.getResponseHeaders().add("X-Jclaw-Thread", thread.value());
+        exchange.getResponseHeaders().add("X-Jclaw-Run", result.run().value());
+        exchange.getResponseHeaders().add("X-Jclaw-Status", result.status().name());
+        result.gatePrompt().ifPresent(gate -> exchange.getResponseHeaders().add("X-Jclaw-Gate", gate));
+        if (result.status() == TurnStatus.FAILED || result.status() == TurnStatus.CANCELLED) {
+            send(exchange, 502, OpenAiCompat.error(describeOutcome(result), "jclaw_run_failed"));
+            return;
+        }
+        RunProjection.RunView view = RunProjection.fold(result.run(),
+                events.readRun(result.run()).stream().map(EventLog.Entry::event).toList());
+        String content = result.reply().orElseGet(() -> describeOutcome(result));
+        send(exchange, 200, OpenAiCompat.completion(
+                "chatcmpl-" + result.run().value(), created, requestedModel, content, "stop",
+                view.usage().inputTokens(), view.usage().outputTokens()));
+    }
+
+    /** What to tell an OpenAI client about a run that did not simply reply. */
+    private static String describeOutcome(JclawRuntime.TurnResult result) {
+        return switch (result.status()) {
+            case BLOCKED_APPROVAL -> "[jclaw] The run is parked awaiting approval"
+                    + result.gatePrompt().map(g -> " (gate " + g + ")").orElse("")
+                    + ". Approve it and resume run " + result.run().value() + ".";
+            case BLOCKED_AUTH -> "[jclaw] The run is parked awaiting provider credentials"
+                    + result.gatePrompt().map(g -> " (gate " + g + ")").orElse("") + ".";
+            case WAITING_PROCESS -> "[jclaw] The run is waiting on a child run; a worker resumes it.";
+            default -> "[jclaw] The run " + result.status().name().toLowerCase(java.util.Locale.ROOT)
+                    + result.failure().map(f -> " (" + f.category() + ")").orElse("")
+                    + result.failureDetail().map(d -> ": " + d).orElse("") + ".";
+        };
+    }
+
+    private static void writeSse(OutputStream out, String json) throws IOException {
+        out.write(("data: " + json + "\n\n").getBytes(StandardCharsets.UTF_8));
+        out.flush();
+    }
+
+    private void sendHtml(HttpExchange exchange, String html) throws IOException {
+        byte[] bytes = html.getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().add("Content-Type", "text/html; charset=utf-8");
+        exchange.sendResponseHeaders(200, bytes.length);
+        try (OutputStream out = exchange.getResponseBody()) {
+            out.write(bytes);
+        }
     }
 
     // --- routes ---
