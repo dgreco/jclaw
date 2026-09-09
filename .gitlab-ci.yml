@@ -55,6 +55,25 @@ byte-verify:
 build-test:
   stage: build
   image: maven:3.9.11-eclipse-temurin-21
+  # Docker-in-Docker, so PostgresStorageIntegrationTest can start a real PostgreSQL instead of
+  # skipping. Everything under jclaw.storage=sql was written against embedded H2 and the
+  # migrations only claim to be portable; this is what checks the claim on every push.
+  #
+  # Safe to add rather than risky: the test is @Testcontainers(disabledWithoutDocker = true), so
+  # if dind is unavailable or unhealthy it skips exactly as it did before and this job still
+  # passes. The worst case is the status quo.
+  services:
+    - name: docker:27-dind
+      alias: docker
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+    # Plain TCP on 2375. dind defaults to TLS on 2376 and generates its own certificates, which
+    # the job container would then have to trust; on a private runner the daemon is reachable
+    # only from this job's network, so the certificate dance buys nothing.
+    DOCKER_TLS_CERTDIR: ""
+    # Ryuk reaps leftover containers after a run. The dind daemon is thrown away with the job,
+    # so there is nothing to reap, and Ryuk needs a socket mount it does not have here.
+    TESTCONTAINERS_RYUK_DISABLED: "true"
   <<: *maven-cache
   script:
     - java -version && mvn -version
