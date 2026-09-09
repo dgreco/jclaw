@@ -316,14 +316,16 @@ public class JclawConfiguration {
 
     /**
      * The OpenID Connect provider, when one is configured. Absent otherwise, which is what turns
-     * the login routes into a 404 rather than an endpoint that fails confusingly.
+     * the login routes into a 404 rather than an endpoint that fails confusingly. The absence is
+     * carried by {@link io.jclaw.app.identity.LoginProvider} rather than an {@code Optional}
+     * because a bean method may not return one; that class explains why.
      */
     @Bean
-    public java.util.Optional<io.jclaw.app.identity.OidcLogin> oidcLogin(JclawProperties properties, Clock clock) {
+    public io.jclaw.app.identity.LoginProvider oidcLogin(JclawProperties properties, Clock clock) {
         return properties.oidcConfigured()
-                ? java.util.Optional.of(new io.jclaw.app.identity.OidcLogin(
+                ? io.jclaw.app.identity.LoginProvider.of(new io.jclaw.app.identity.OidcLogin(
                         properties.oidcIssuer(), properties.oidcClientId(), clock))
-                : java.util.Optional.empty();
+                : io.jclaw.app.identity.LoginProvider.none();
     }
 
     /** The messaging channels jclaw can be talked to from. Empty unless configured. */

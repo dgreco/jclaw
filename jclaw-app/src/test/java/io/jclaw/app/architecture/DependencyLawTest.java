@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 import static com.tngtech.archunit.library.Architectures.layeredArchitecture;
+import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.methods;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 
 /**
@@ -232,6 +233,28 @@ class DependencyLawTest {
                     .resideInAPackage("io.jclaw.kernel.capability..")
                     .because("a lane that can see policy is a lane that can be tempted to "
                             + "re-implement it; authorization happens above, once")
+                    .check(classes);
+        }
+    }
+
+    @Nested
+    @DisplayName("the wiring survives ahead-of-time compilation")
+    class AotInvariants {
+
+        @Test
+        @DisplayName("no bean method returns an Optional")
+        void beansAreNotOptional() {
+            // On the JVM a bean method returning Optional works, so nothing here fails. Under AOT
+            // — how the native image is built — the bean comes from a generated instance supplier,
+            // and Spring wraps the returned object in a BeanWrapperImpl whose constructor unwraps
+            // an Optional before asserting the target is non-null. An empty one therefore takes
+            // the entire context down at startup, on every command; a present one is silently
+            // unwrapped and registered under the wrong type. This cost a working binary once
+            // (see LoginProvider), and the whole test suite was green while it did.
+            methods().that().areAnnotatedWith(org.springframework.context.annotation.Bean.class)
+                    .should().notHaveRawReturnType(java.util.Optional.class)
+                    .because("a bean of type Optional cannot be instantiated by the AOT supplier "
+                            + "path, so the failure appears only in the native image")
                     .check(classes);
         }
     }

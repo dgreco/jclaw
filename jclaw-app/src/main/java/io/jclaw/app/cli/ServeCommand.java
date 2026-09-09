@@ -64,7 +64,7 @@ public class ServeCommand implements Callable<Integer> {
     private final io.jclaw.contracts.routine.RoutineStore routineStore;
     private final io.jclaw.app.channel.ChannelService channelService;
     private final io.jclaw.contracts.identity.SessionStore sessionStore;
-    private final java.util.Optional<io.jclaw.app.identity.OidcLogin> oidcLogin;
+    private final io.jclaw.app.identity.LoginProvider oidcLogin;
     private final io.jclaw.contracts.secret.SecretVault vault;
     private final Clock clock;
 
@@ -88,7 +88,7 @@ public class ServeCommand implements Callable<Integer> {
             io.jclaw.contracts.routine.RoutineStore routineStore,
             io.jclaw.app.channel.ChannelService channelService,
             io.jclaw.contracts.identity.SessionStore sessionStore,
-            java.util.Optional<io.jclaw.app.identity.OidcLogin> oidcLogin,
+            io.jclaw.app.identity.LoginProvider oidcLogin,
             io.jclaw.contracts.secret.SecretVault vault, Clock clock) {
         this.channelService = channelService;
         this.sessionStore = sessionStore;
@@ -146,7 +146,7 @@ public class ServeCommand implements Callable<Integer> {
         JclawHttpServer server = new JclawHttpServer(
                 runtime, runs, events, threads, approvals, clock, Optional.ofNullable(properties.serveToken()),
                 properties.serveUsers(), properties.model(), telemetry, routineStore);
-        server.withIdentity(sessionStore, properties.roles(), oidcLogin.orElse(null),
+        server.withIdentity(sessionStore, properties.roles(), oidcLogin.orNull(),
                 () -> leaseOidcSecret(), properties.oidcRedirectUri());
         server.withChannels(channelService);
         server.start(host, port);
