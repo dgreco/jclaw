@@ -55,28 +55,25 @@ byte-verify:
 build-test:
   stage: build
   image: maven:3.9.11-eclipse-temurin-21
-  # Docker-in-Docker, so PostgresStorageIntegrationTest can start a real PostgreSQL instead of
-  # skipping. Everything under jclaw.storage=sql was written against embedded H2 and the
-  # migrations only claim to be portable; this is what checks the claim on every push.
+  # The runner attaches its own dind service, so this job does not declare one: an explicit
+  # `services: docker:dind` is rejected with "alias is already in use by another service", and
+  # overriding DOCKER_HOST to the plain-TCP port while the runner's DOCKER_TLS_VERIFY is still
+  # set produced a null SSL context and no Docker at all. Inheriting the runner's own consistent
+  # set is the only configuration that can be right, since it is the one the daemon was started
+  # with.
   #
-  # Safe to add rather than risky: the test is @Testcontainers(disabledWithoutDocker = true), so
-  # if dind is unavailable or unhealthy it skips exactly as it did before and this job still
-  # passes. The worst case is the status quo.
-  services:
-    - name: docker:27-dind
-      alias: docker
+  # PostgresStorageIntegrationTest is @Testcontainers(disabledWithoutDocker = true): if none of
+  # this reaches a daemon it skips, and the job still passes. The line below reports what the
+  # job can actually see, so the next failure is evidence rather than a guess.
   variables:
-    DOCKER_HOST: tcp://docker:2375
-    # Plain TCP on 2375. dind defaults to TLS on 2376 and generates its own certificates, which
-    # the job container would then have to trust; on a private runner the daemon is reachable
-    # only from this job's network, so the certificate dance buys nothing.
-    DOCKER_TLS_CERTDIR: ""
-    # Ryuk reaps leftover containers after a run. The dind daemon is thrown away with the job,
-    # so there is nothing to reap, and Ryuk needs a socket mount it does not have here.
+    # The dind daemon is discarded with the job, so there is nothing for Ryuk to reap, and it
+    # wants a socket mount this job does not have.
     TESTCONTAINERS_RYUK_DISABLED: "true"
   <<: *maven-cache
   script:
     - java -version && mvn -version
+    - 'echo "docker env:"; env | grep -i "^DOCKER" || echo "  (none set)"'
+    - 'ls -la /var/run/docker.sock 2>/dev/null || echo "  no /var/run/docker.sock"'
     - mvn $MAVEN_CLI_OPTS verify
   after_script:
     # One-line summary in the job log. Counts <testcase> elements in the XML reports: the
