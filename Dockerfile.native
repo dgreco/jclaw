@@ -1,0 +1,61 @@
+# jclaw as a GraalVM native image, for Linux.
+#
+# The binary the `native` Maven profile produces on a developer's machine is for that machine;
+# a container needs one built for the container's platform, so the build happens here. It is
+# slow — several minutes and a few GB of RAM — which is the whole reason Dockerfile builds the
+# jar instead and this is the deliberate, separate path.
+#
+# What it buys is what the native image always buys: ~78 ms of startup against ~1.2 s, and no
+# JVM in the runtime image.
+FROM ghcr.io/graalvm/native-image-community:25 AS build
+
+# The image's ENTRYPOINT is native-image itself; RUN needs a shell.
+SHELL ["/bin/bash", "-c"]
+WORKDIR /src
+
+# Maven is not in the GraalVM image. The wrapper would be, if this project had one, so fetch a
+# pinned Maven rather than whatever `microdnf` happens to offer.
+ARG MAVEN_VERSION=3.9.9
+RUN curl -fsSL "https://archive.apache.org/dist/maven/maven-3/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz" \
+      -o /tmp/maven.tar.gz \
+ && tar -xzf /tmp/maven.tar.gz -C /opt \
+ && ln -s "/opt/apache-maven-${MAVEN_VERSION}/bin/mvn" /usr/local/bin/mvn \
+ && rm /tmp/maven.tar.gz
+
+# Poms first: resolution is the slow half and only needs redoing when a pom changes.
+COPY pom.xml .
+COPY jclaw-contracts/pom.xml jclaw-contracts/
+COPY jclaw-domain/pom.xml jclaw-domain/
+COPY jclaw-kernel/pom.xml jclaw-kernel/
+COPY jclaw-loop/pom.xml jclaw-loop/
+COPY jclaw-providers/pom.xml jclaw-providers/
+COPY jclaw-tools/pom.xml jclaw-tools/
+COPY jclaw-storage/pom.xml jclaw-storage/
+COPY jclaw-app/pom.xml jclaw-app/
+RUN mvn -B -q dependency:go-offline -DskipTests || true
+
+COPY . .
+# install first: the native profile builds one module, and it needs the others in the local
+# repository rather than in the reactor.
+RUN mvn -B -q install -DskipTests \
+ && mvn -B -Pnative -pl jclaw-app package -DskipTests
+
+# Debian slim rather than distroless, and the reason is jclaw's own shell lane: `builtin.shell`
+# runs `/bin/sh -c`, so an image without a shell would ship an agent with one of its tools
+# permanently broken. glibc rather than Alpine because the image is not statically linked.
+FROM debian:12-slim
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates \
+ && rm -rf /var/lib/apt/lists/* \
+ && useradd --create-home --shell /bin/bash jclaw \
+ && mkdir -p /state /workspace \
+ && chown -R jclaw:jclaw /state /workspace
+
+COPY --from=build /src/jclaw-app/target/jclaw /usr/local/bin/jclaw
+USER jclaw
+WORKDIR /workspace
+
+ENV JCLAW_STATE_DIR=/state \
+    JCLAW_WORKSPACE=/workspace
+ENTRYPOINT ["/usr/local/bin/jclaw"]
+CMD ["--help"]

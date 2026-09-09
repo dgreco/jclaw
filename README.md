@@ -363,7 +363,17 @@ docker compose exec postgres psql -U jclaw -d jclaw -c '\dt'   # the twelve tabl
 docker compose --profile serve up                              # the HTTP surface on :8080
 ```
 
-The CLI container and the `serve` container are two processes on one database, which is exactly the topology the thread lock and the shared cap exist for. The image is the uber jar on a JRE base rather than the native binary: cross-building a native image inside Docker is slow enough to discourage anyone from trying the stack at all, and it is the same code either way.
+The CLI container and the `serve` container are two processes on one database, which is exactly the topology the thread lock and the shared cap exist for. That image is the uber jar on a JRE base, because a native image has to be compiled for the container's platform and that takes minutes — the default should be the one you can try immediately.
+
+**The native image on PostgreSQL** is `docker-compose.native.yml`, which brings its own PostgreSQL so nothing has to be combined:
+
+```bash
+docker compose -f docker-compose.native.yml build                    # minutes, once
+docker compose -f docker-compose.native.yml run --rm jclaw run "hello"
+docker compose -f docker-compose.native.yml --profile serve up       # HTTP on :8081
+```
+
+Measured in the same container shape, the binary starts in **61 ms** against the jar's **1.48 s**. Two choices in `Dockerfile.native` are worth knowing. The runtime base is `debian:12-slim`, not distroless: `builtin.shell` runs `/bin/sh -c`, so an image without a shell would ship an agent with one of its own tools permanently broken. And it is glibc rather than Alpine because the image is not statically linked.
 
 **Two hosts.** `storage=sql` is also what makes a second worker safe, and the reason is one table. With JSONL the thread lock is an OS file lock: atomic at the kernel, and it vanishes the instant its process dies, but invisible to another machine and unreliable on a shared filesystem. With SQL it is a row in `jclaw_thread_locks`, so two hosts contend for a thread through the database — acquisition is a primary-key insert, which the database decides. The scheduler also counts what the *deployment* has running rather than what its own process does, so `--concurrency 2` means two runs and not two per host, and a run is claimed at the moment it is selected so `RunStore.claim` arbitrates two hosts ticking milliseconds apart.
 

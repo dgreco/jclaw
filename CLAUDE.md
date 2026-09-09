@@ -43,8 +43,16 @@ under Testcontainers.
 
 ```bash
 mvn test -Dtest=PostgresStorageIntegrationTest -pl jclaw-app   # needs a Docker daemon
-docker compose run --rm jclaw run "hello"                      # the same thing by hand
+docker compose run --rm jclaw run "hello"                      # the same thing by hand (jar)
+docker compose -f docker-compose.native.yml run --rm jclaw run "hello"   # the native image
 ```
+
+**The native image talks to PostgreSQL.** That had never been checked: the binary was verified
+against embedded H2 only, and the PostgreSQL driver has no captured native-image metadata of its
+own. It turns out not to need any — Boot's AOT processing registers the driver Spring resolves
+from the configured URL — and `docker-compose.native.yml` is what proves it, applying all four
+migrations to a real server and materialising a projection. Startup measured in the same
+container shape: 61 ms native against 1.48 s for the jar.
 
 The test is `@Testcontainers(disabledWithoutDocker = true)`: without a daemon it skips rather
 than fails, so a developer with Docker stopped does not see a red suite for an environment
@@ -426,6 +434,11 @@ the Anthropic SDK, and tool lanes may not read the process environment.
   Plain-h11 uvicorn tolerates it, which is why a naive fixture (and the strict one here, which
   reads by Content-Length) passes either way; `doesNotAttemptH2cUpgrade` asserts the headers are
   absent and was verified to fail when the version pin is removed.
+- **A container for the native image needs a shell.** `builtin.shell` runs `/bin/sh -c`, so a
+  distroless runtime base would ship an agent with one of its own tools permanently broken.
+  `Dockerfile.native` uses `debian:12-slim` for that reason, and glibc rather than Alpine because
+  the image is not statically linked. It also has to build the binary *inside* Docker: the one
+  the `native` profile produces on a developer's machine is for that machine.
 - **JLine needs a native-access grant, declared twice.** It loads a native library to put a TTY
   into raw mode, which JDK 24+ restricts. The jar gets it from `Enable-Native-Access: ALL-UNNAMED`
   in its manifest (`maven-jar-plugin`); the native image has no manifest, so the same grant is a

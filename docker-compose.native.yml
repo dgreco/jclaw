@@ -1,0 +1,87 @@
+# jclaw as a GraalVM native image, against PostgreSQL.
+#
+# Self-contained: it brings its own PostgreSQL, so nothing needs combining with
+# docker-compose.yml. The trade against that file is build time for start time — the native
+# image takes several minutes and a few GB of RAM to compile, and then starts in about 78 ms
+# instead of about 1.2 s.
+#
+#   docker compose -f docker-compose.native.yml build          # slow, once
+#   docker compose -f docker-compose.native.yml run --rm jclaw doctor
+#   docker compose -f docker-compose.native.yml run --rm jclaw run "hello"
+#   docker compose -f docker-compose.native.yml --profile serve up
+#
+# Looking at what it wrote:
+#
+#   docker compose -f docker-compose.native.yml exec postgres psql -U jclaw -d jclaw -c '\dt'
+
+name: jclaw-native
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: jclaw
+      POSTGRES_USER: jclaw
+      # Local-only credential. jclaw takes JCLAW_DATASOURCE_PASSWORD from the environment and
+      # never from a file it can read.
+      POSTGRES_PASSWORD: jclaw-local-password
+    ports:
+      - "55432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      # jclaw applies its migrations at startup, so it must not start before the server accepts
+      # connections; otherwise the first run fails on what is only a race.
+      test: ["CMD-SHELL", "pg_isready -U jclaw -d jclaw"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  jclaw:
+    build:
+      context: .
+      dockerfile: Dockerfile.native
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment: &jclaw-env
+      JCLAW_STORAGE: sql
+      JCLAW_DATASOURCE_URL: jdbc:postgresql://postgres:5432/jclaw
+      JCLAW_DATASOURCE_USERNAME: jclaw
+      JCLAW_DATASOURCE_PASSWORD: jclaw-local-password
+      # The mock provider needs no key, so the stack runs with nothing configured.
+      JCLAW_PROVIDER: ${JCLAW_PROVIDER:-mock}
+      JCLAW_MOCK_SCRIPT: ${JCLAW_MOCK_SCRIPT:-text:hello from the native image on postgres}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      JCLAW_APPROVAL_MODE: ${JCLAW_APPROVAL_MODE:-interactive}
+    volumes:
+      - ./docker/workspace:/workspace
+      - jclaw-state:/state
+    # `run`, not `up`: the CLI is one-shot, and a service that exits immediately reads as a
+    # crash in `docker compose up`.
+    profiles: ["cli"]
+
+  serve:
+    build:
+      context: .
+      dockerfile: Dockerfile.native
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["serve", "--host", "0.0.0.0", "--port", "8080"]
+    ports:
+      - "8081:8080"
+    environment:
+      <<: *jclaw-env
+      # Loopback-only is the default and would refuse every request from the host, so the bind
+      # address is explicit in the command above and a token is required.
+      JCLAW_SERVE_TOKEN: ${JCLAW_SERVE_TOKEN:-local-operator-token}
+    volumes:
+      - ./docker/workspace:/workspace
+      - jclaw-state:/state
+    profiles: ["serve"]
+
+volumes:
+  postgres-data:
+  jclaw-state:
