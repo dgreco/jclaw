@@ -4,11 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Status
 
-A working agent harness covering milestones **M0–M7**, plus subagents, MCP, streaming, and
-lease-based crash recovery. `jclaw run "..."` completes a real turn end to end; runs park on
-approval gates and resume across process boundaries; memory, skills, and scheduled routines work.
-Ships as an uber jar and a GraalVM native image, both verified — including subprocess spawning for
-MCP servers and subagent child runs.
+A working agent harness covering milestones **M0–M7**, plus subagents (sync or async), MCP,
+streaming on every provider, lease-based crash recovery, a per-thread run lock, context
+compaction with model summaries, vector memory, configurable denials, egress lists and per-tool
+rate limits, injection heuristics, auth and process gates with expiry, a scheduler behind
+`submit`/`worker`, an HTTP surface (`serve`) with run projections and SSE, attachments, store
+retention, and a container sandbox for the shell lane. `jclaw run "..."` completes a real turn end
+to end; runs park on gates and resume across process boundaries; memory, skills, and scheduled
+routines work. Ships as an uber jar and a GraalVM native image, both verified — including
+subprocess spawning for MCP servers and subagent child runs.
 
 jclaw is a Java/Spring Boot reimplementation of the **architecture** of
 [IronClaw](https://github.com/nearai/ironclaw) (a ~1.4M-line Rust agent harness, internally
@@ -16,7 +20,7 @@ jclaw is a Java/Spring Boot reimplementation of the **architecture** of
 untrusted-`LoopExit` trust model, and the `CapabilityHost` authority boundary are faithful; the
 feature surface is a fraction of IronClaw's. See **Not built yet** for the honest list.
 
-217 tests pass across 9 modules, including 13 machine-checked architecture rules.
+240 tests pass across 9 modules, including 13 machine-checked architecture rules.
 
 ## Commands
 
@@ -43,10 +47,11 @@ The `native` profile lives in `jclaw-app/pom.xml`. The Boot parent contributes o
 
 | Command | Purpose |
 |---|---|
-| `run` | one-shot turn; exits 0 ok, 1 failed, 2 parked on a gate |
-| `submit` | queue a turn durably and return its run id; a `worker` executes it |
+| `run [--stream] [--attach f]…` | one-shot turn; exits 0 ok, 1 failed, 2 parked on a gate |
+| `submit` | queue a turn durably and return its run id; a `worker` or `serve` executes it. `--attach` like `run` |
+| `serve [--host --port --concurrency]` | HTTP ingress + worker loop: enqueue, run projections, SSE event streams, approvals; bearer token via `jclaw.serve-token` |
 | `repl` | interactive session with readline editing (and still pipes) |
-| `approvals list\|approve\|deny` | resolve gates; approving resumes by default |
+| `approvals list [--all]\|approve\|deny` | resolve gates (approval, auth, process); approving resumes by default; expired gates are hidden and refuse decisions |
 | `resume <run-id>` | continue a parked run |
 | `memory write\|search\|list\|forget\|reindex` | durable memories, BM25 + recency + vector (when an embedding provider is configured) |
 | `routines add\|list\|remove\|pause\|resume\|run-due` | scheduled agent work |
@@ -56,8 +61,9 @@ The `native` profile lives in `jclaw-app/pom.xml`. The Boot parent contributes o
 | `onboard` | writes `~/.jclaw/jclaw.yaml` |
 | `mcp add\|list\|remove\|toggle\|test` | external MCP tool servers (stdio transport) |
 | `recover` | reconcile runs whose worker died |
+| `retain [--dry-run]` | drop old rows of finished runs from results, events, checkpoints |
 | `tools` | capability surface with effect/trust/unattended |
-| `status` | recent activity from the event log |
+| `status [--run id]` | recent activity from the event log, or one run's projection |
 | `doctor` | config + security posture; non-zero on real problems |
 
 `run --stream` prints model output as it arrives, over the Anthropic SDK's event stream or the
@@ -180,19 +186,27 @@ the whole approval flow — is exercised without a network.
 Hexagonal, with a pure functional core, mapping onto IronClaw's seven-layer ladder:
 
 ```
-contracts   →  (jackson-annotations)     ports, turn vocabulary, refs, LoopExit, Result
+contracts   →  (jackson-annotations)     ports, turn vocabulary, refs, LoopExit, Result,
+                                         ThreadLock, EmbeddingProvider, content blocks (incl. Image)
 domain      →  contracts                 PURE: TurnMachine, Budget, Redaction, RrfFusion,
-                                         MemoryRanking, CronSpec, RoutineSchedule, PromptAssembly,
-                                         LeaseRecovery
-kernel      →  contracts, domain         CapabilityHost, CapabilityPolicy, Workspace/Egress guards
+                                         MemoryRanking, VectorRanking, ContextCompaction,
+                                         ContextSummary, InjectionHeuristics, RunScheduling,
+                                         RateLimit, Retention, RunProjection, SandboxSpec,
+                                         CronSpec, RoutineSchedule, PromptAssembly, LeaseRecovery
+kernel      →  contracts, domain         CapabilityHost, CapabilityPolicy, ToolScopedContext,
+                                         Workspace/Egress guards
 loop        →  contracts, domain, kernel EffectInterpreter — the ONLY place an effect happens
-providers   →  contracts                 mock, Anthropic (official SDK), OpenAI-compatible
-                                         (OpenAI / OpenRouter / Ollama), failover
-tools       →  contracts, domain, kernel file, shell, http, memory, skill, trigger, subagent,
-                                         MCP client + capabilities
+providers   →  contracts                 mock, Anthropic (official SDK), OpenAI-compatible chat
+                                         and embeddings (OpenAI / OpenRouter / Ollama / local),
+                                         failover
+tools       →  contracts, domain, kernel file, shell (host or docker), http, memory, skill,
+                                         trigger, subagent, MCP client + capabilities
 storage     →  contracts, domain, kernel JSONL stores: events, transcript, approvals, checkpoints,
-                                         runs, memory, routines; filesystem skill catalog
-app         →  all of the above          Spring wiring, picocli CLI, JclawRuntime, RoutineRunner
+                                         runs, results, memory, routines, mcp; file thread locks;
+                                         filesystem skill catalog
+app         →  all of the above          Spring wiring, picocli CLI, JclawRuntime, TurnRunScheduler,
+                                         RoutineRunner, RecoveryService, RetentionService,
+                                         Attachments, JclawHttpServer
 ```
 
 ### The five ideas worth preserving
@@ -294,6 +308,26 @@ the Anthropic SDK, and tool lanes may not read the process environment.
   asked afresh. `Gate.isExpiredAt` is true only for undecided gates; grants never lapse.
 - **Tests must pin what `~/.jclaw/jclaw.yaml` could change.** The app imports the user config
   file in tests too, so a test that depends on the approval mode or provider sets it explicitly.
+- **Retention drops only what nothing depends on.** `Retention.expendable` is true only for a
+  row older than the store's age whose run is terminal; an unknown run counts as unfinished.
+  `RetentionService` rewrites results, events, and checkpoints atomically and never the
+  transcript. The rewrite has a millisecond window against a concurrent append from another
+  process; it is an audit row at most, never run state.
+- **A process gate is a lane saying "not yet".** `HandlerError.Waiting` makes the kernel raise
+  (or reuse) a `PROCESS` gate keyed by the invocation; the run parks `WAITING_PROCESS`; the
+  scheduler requeues a parent when a child on a `~sub` thread finishes; the re-dispatched call
+  reports the outcome. Only subagents use it today, and only with `jclaw.subagents-async`.
+- **Attachments are part of the message.** `ContentBlock.Image` is written to the transcript with
+  the text around it, weighs a fixed ~1600 tokens in the context estimate, and travels as a native
+  block (Anthropic) or a data-URL part (OpenAI-compatible). `Attachments` refuses what it cannot
+  extract rather than sending bytes the model cannot read.
+- **The HTTP surface never executes in the request.** `JclawHttpServer` enqueues and reads;
+  `TurnRunScheduler` executes. Projections are folded from the event log on demand
+  (`RunProjection`), and the SSE stream is the same log followed by polling. One bearer token,
+  loopback by default.
+- **The sandbox is a contract, selected by configuration.** `SandboxSpec.argv` is the whole
+  `docker run` vector; `ShellTool` runs it under the same timeout, environment scrub, and output
+  bound as the host backend. Only the shell lane is sandboxed.
 - **The context policy is a view, not a truth.** `ContextCompaction` derives what the model sees
   from the full history under `LoopPolicy.context()`; the loop state and transcript keep
   everything. It is applied at admission (bounding the checkpoint) and by `TurnMachine` before
@@ -307,8 +341,6 @@ the Anthropic SDK, and tool lanes may not read the process environment.
 
 ## Notes for future sessions
 
-- **The dependency law is documented but not enforced.** `package-info.java` claims ArchUnit
-  enforces it in `jclaw-app`; ArchUnit is in no pom. Outstanding work.
 - **Jackson 3, not 2.** Boot 4 moved databind to `tools.jackson.core`. Do not add
   `com.fasterxml.jackson.core:jackson-databind` — it resolves to the 2.x line and will not match
   the mapper Boot auto-configures. `jackson-annotations` correctly stays on the old groupId.
@@ -325,7 +357,9 @@ the Anthropic SDK, and tool lanes may not read the process environment.
     -agentlib:native-image-agent=config-output-dir=jclaw-app/src/main/resources/META-INF/native-image/io.jclaw/anthropic-sdk \
     -jar jclaw-app/target/jclaw-app-0.1.0-SNAPSHOT.jar run capture --jclaw.provider=anthropic
   ```
-  A dummy key suffices — serialization happens before the auth failure.
+  A dummy key suffices — serialization happens before the auth failure. The capture predates
+  image attachments: to send images through the Anthropic adapter from the native binary,
+  recapture with `run --attach some.png` so the image block types are registered.
 - **Test fakes must be at least as strict as the real API.** The original OpenRouter fixture
   accepted any function name and so passed while every real request was rejected. It now validates
   names the way OpenAI does, and that check was verified to fail when the encoding is removed.
@@ -362,32 +396,32 @@ the Anthropic SDK, and tool lanes may not read the process environment.
 
 ## Not built yet
 
-Honest gaps against IronClaw's surface. jclaw is ~15k lines against IronClaw's ~1.4M; the
-architecture is equivalent, the feature surface is not.
+Honest gaps against IronClaw's surface. jclaw is ~20k lines against IronClaw's ~1.4M; the
+architecture and most runtime mechanisms are equivalent, the breadth is not. PARITY.md section
+16 ranks these.
 
-- **WASM and script runtime lanes** — IronClaw sandboxes extensions in WASM (`ironclaw_wasm`) and
-  containers (`ironclaw_sandbox`). jclaw has first-party built-ins and MCP, both running in-process
-  or as ordinary child processes. There is no sandbox.
-- **MCP transports** — stdio only. HTTP/SSE MCP servers are not supported, and there is no OAuth
-  flow for authenticated servers.
-- **Retention** — every JSONL store is append-only and unbounded: results, events, transcripts.
-  A sweep in `recover` is the natural home for it.
-- **Embedding providers beyond the OpenAI-compatible shape** — Voyage, Cohere, and the like need
-  their own adapter behind `EmbeddingProvider`; today one adapter covers OpenAI, OpenRouter,
-  Ollama, LM Studio, vLLM.
-- **Multi-user caps** — `TurnRunScheduler` bounds concurrency globally and per thread; IronClaw
-  also caps per user and per inbound type. jclaw is single-user, so those collapse into the global
-  cap until a second product surface exists.
-- **Injection review queue** — findings are audited and the output framed or withheld; there is
-  no operator queue to review flagged results, and inbound content is not scanned.
-- **Persistence** — `spring-jdbc` and H2 are dependencies but unused; no SQL layer, no migrations,
-  no Postgres profile. Everything is JSONL, which is fine at CLI scale and would not be at
-  hosted scale.
-- **Products beyond the CLI** — IronClaw has a WebUI, Slack, and Telegram channel adapters over the
-  same runtime. jclaw has one product surface.
-- **`repl` does not resolve gates inline.** It reports the blocked status and prints the exact
-  `jclaw approvals approve <gate>` command, but resolving still requires another shell.
-- **Egress for MCP servers** — `jclaw.tool-egress` scopes jclaw's own `http_fetch`; an MCP
-  server process opens its own sockets and nothing here mediates them.
-- **OpenRouter routing preferences are not exposed.** Provider ordering, fallbacks, and
-  transforms are OpenRouter-specific body fields the adapter does not send.
+- **A real product surface** — `serve` exposes JSON and SSE over the runtime; there is no browser
+  UI, no OpenAI-compatible endpoint, and no Slack/Telegram channel adapter on top of it. Reply
+  targets are stdout or the HTTP read-back.
+- **Identity and multi-tenancy** — `TurnScope` carries tenant and agent fields that are always
+  `local`; scheduler caps, memory scoping, and the thread lock assume one operator. `serve` has
+  one static bearer token, not users.
+- **A secrets vault** — tools cannot see secrets (right) but also cannot use one: no leased
+  credential handoff, so an authenticated `http_fetch` is impossible.
+- **SQL persistence** — `spring-jdbc` and H2 are dependencies but unused; no SQL layer, no
+  migrations, no Postgres profile. JSONL with retention is fine at CLI scale, not hosted scale.
+- **Sandboxing beyond the shell lane** — `shell-backend=docker` contains `builtin.shell` only;
+  file, http, memory, and MCP lanes run in-process, and an MCP server's sockets are unmediated.
+  No WASM lane, no orchestrator, no per-job tokens, no LLM proxying.
+- **Extension ecosystem** — no manifests, registry, signed `VERIFIED` extensions, or installable
+  skill packages; built-ins are compiled in and MCP is the only external route.
+- **Loop hooks and loop families** — one machine, no pre/post model or tool hooks.
+- **Observability substrate** — SLF4J and the event log only; no OpenTelemetry, no metrics.
+- **Triggers beyond cron** — no event, webhook, or heartbeat triggers; the ingress does not route
+  webhooks to routines.
+- **MCP breadth** — stdio only; no HTTP/SSE transports, no OAuth, no resources or prompts, eager
+  server lifecycle.
+- **Smaller items** — `repl` does not resolve gates inline; OpenRouter routing preferences are not
+  sent; embedding providers beyond the OpenAI-compatible shape (Voyage, Cohere) need their own
+  adapter; PDFs and other documents are refused as attachments; inbound content is not scanned
+  for injection and there is no review queue; retention has no archival step.

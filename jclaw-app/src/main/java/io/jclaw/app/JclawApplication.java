@@ -35,19 +35,31 @@ public class JclawApplication implements CommandLineRunner, ExitCodeGenerator {
     }
 
     public static void main(String[] args) {
+        // Set when the JVM is already exiting (Ctrl-C on a long-running command). A second
+        // System.exit from inside a shutdown is at best a hang and at worst a stack trace after
+        // "stopped."; returning lets the shutdown that is already under way finish.
+        java.util.concurrent.atomic.AtomicBoolean shuttingDown = new java.util.concurrent.atomic.AtomicBoolean(false);
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> shuttingDown.set(true), "jclaw-shutdown-flag"));
         try {
-            System.exit(SpringApplication.exit(
+            org.springframework.context.ConfigurableApplicationContext context =
                     new SpringApplicationBuilder(JclawApplication.class)
                             .web(WebApplicationType.NONE)
                             .bannerMode(org.springframework.boot.Banner.Mode.OFF)
                             .logStartupInfo(false)
-                            .run(expandVerbosityFlags(args))));
+                            .run(expandVerbosityFlags(args));
+            if (shuttingDown.get()) {
+                return;
+            }
+            System.exit(SpringApplication.exit(context));
         } catch (SpringApplication.AbandonedRunException e) {
             // Not a failure. Spring throws this to abort the run during AOT processing, once the
             // context has been built for native-image generation. Swallowing it as a config error
             // makes `mvn -Pnative` fail with a misleading message.
             throw e;
         } catch (RuntimeException e) {
+            if (shuttingDown.get()) {
+                return; // the interrupt already ended the process; nothing to report
+            }
             // Startup failures are almost always misconfiguration — a bad approval mode, an
             // unreadable workspace. A CLI should say which, in one line. A 40-frame Spring trace
             // buries the one sentence that matters and can print host paths along the way.

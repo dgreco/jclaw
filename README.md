@@ -2,7 +2,7 @@
 
 **A hexagonal agent OS harness in Java 21 / Spring Boot 4.1 — an architectural clone of [IronClaw](https://github.com/nearai/ironclaw).**
 
-jclaw runs an LLM agent loop the way an operating system runs a process: every effect the model asks for passes through one authority gate, every run is durable and resumable across process boundaries, and the decision logic is a pure function you can test without a network. It ships as a single uber jar or a GraalVM native binary and talks to Anthropic, OpenAI, OpenRouter, Ollama, or any local OpenAI-compatible server.
+jclaw runs an LLM agent loop the way an operating system runs a process: every effect the model asks for passes through one authority gate, every run is durable and resumable across process boundaries, and the decision logic is a pure function you can test without a network. It ships as a single uber jar or a GraalVM native binary, talks to Anthropic, OpenAI, OpenRouter, Ollama, or any local OpenAI-compatible server, and can be driven from a terminal, a queue, or a small HTTP surface.
 
 ```
 $ jclaw run "list the Java files under jclaw-domain and tell me which one is the state machine"
@@ -27,6 +27,8 @@ jclaw-domain/src/main/java/io/jclaw/domain/loop/TurnMachine.java ...
   - [One-shot turns: `run`](#one-shot-turns-run)
   - [Interactive sessions: `repl`](#interactive-sessions-repl)
   - [Approval gates: `approvals` and `resume`](#approval-gates-approvals-and-resume)
+  - [Queued turns: `submit` and `worker`](#queued-turns-submit-and-worker)
+  - [The HTTP surface: `serve`](#the-http-surface-serve)
   - [Tools the agent can use](#tools-the-agent-can-use)
   - [Durable memory: `memory`](#durable-memory-memory)
   - [Skills: `skills`](#skills-skills)
@@ -35,6 +37,7 @@ jclaw-domain/src/main/java/io/jclaw/domain/loop/TurnMachine.java ...
   - [Subagents](#subagents)
   - [Streaming](#streaming)
   - [Crash recovery: `recover`](#crash-recovery-recover)
+  - [Retention: `retain`](#retention-retain)
   - [Inspecting the system: `status`, `tools`, `models`, `doctor`](#inspecting-the-system-status-tools-models-doctor)
   - [Tracing a turn](#tracing-a-turn)
   - [Exit codes](#exit-codes)
@@ -56,9 +59,9 @@ jclaw reimplements the **architecture** of IronClaw — the seven-layer ladder, 
 | **Resume re-authorizes.** | A parked run asks the approval store again on resume; denying a gate produces a denial the model sees, not an effect. |
 | **Recovery fails closed.** | A crashed worker's run is replayed only from a checkpoint proven side-effect-free, and only after a grace period. |
 
-Everything is durable JSONL under `~/.jclaw`: a run can park in one process, be approved in a second, and resume in a third. There is no server and no database.
+Everything is durable JSONL under `~/.jclaw`: a run can park in one process, be approved in a second, and resume in a third. There is no database, and no server unless you start one (`jclaw serve`).
 
-**Status.** Milestones M0–M7 plus subagents, MCP, streaming, and lease-based crash recovery are complete. 217 tests pass across the modules, including 13 machine-checked architecture rules (ArchUnit). Both the uber jar and the native image are verified end to end, including subprocess spawning for MCP servers and shell tools.
+**Status.** Milestones M0–M7 plus subagents (synchronous or asynchronous), MCP, streaming on every provider, lease-based crash recovery, a per-thread run lock, context compaction with model summaries, vector memory, configurable denials and egress lists, per-tool rate limits, injection heuristics, auth and process gates with expiry, a scheduler with `submit` and `worker`, an HTTP surface with run projections and event streams, attachments, store retention, and a container sandbox for the shell lane. 240 tests pass across the modules, including 13 machine-checked architecture rules (ArchUnit). Both the uber jar and the native image are verified end to end, including subprocess spawning for MCP servers and shell tools. [PARITY.md](PARITY.md) lists what IronClaw still has that jclaw does not.
 
 ---
 
@@ -150,7 +153,7 @@ mvn test -Dtest='ApprovalResumeIntegrationTest#resumeWithoutDecisionParksAgain' 
 ./scripts/byte-verify.sh install && ./scripts/byte-verify.sh validate   # manifest drift check
 ```
 
-Test totals by module (verified on this checkout): contracts 8 · domain 106 · kernel 14 · providers 23 · storage 11 · app 55 = **217, 0 failures**. `DependencyLawTest` in `jclaw-app` machine-checks the layer ladder with ArchUnit; the rules were confirmed to fire by planting deliberate violations.
+Test totals by module (verified on this checkout): contracts 8 · domain 116 · kernel 14 · providers 25 · storage 12 · app 65 = **240, 0 failures**. `DependencyLawTest` in `jclaw-app` machine-checks the layer ladder with ArchUnit; the rules were confirmed to fire by planting deliberate violations.
 
 ### Continuous integration
 
@@ -224,6 +227,11 @@ jclaw:
 | `tool-rate-limits` | *(empty)* | Per-capability caps as `N/window` (`5/1m`, `100/1h`, `2/30s`), keyed the same way. A sliding window per process; a call past the cap is denied `rate_limited` without bothering a human. |
 | `injection-policy` | `sanitize` | What the kernel does with tool output that looks like a prompt injection: `off`, `warn` (audit event only), `sanitize` (fence it, defuse chat-template tokens, tell the model it is data), `block` (withhold HIGH-severity findings from the model). The stored payload is never altered. |
 | `embedding-model` | *(provider default)* | `text-embedding-3-small` (openai), `openai/text-embedding-3-small` (openrouter), `nomic-embed-text` (ollama); **required for `local`**. Vectors carry their model id, so switching models means `jclaw memory reindex`. |
+| `subagents-async` | `false` | `true` queues a subagent for a worker and parks the parent `WAITING_PROCESS` until the child finishes; needs `worker` or `serve` running. `false` runs the child inside the parent's tool call. |
+| `retention-results` / `retention-events` / `retention-checkpoints` | `14d` / `30d` / `7d` | Maximum age of a **finished** run's rows in each store before `retain` (or the worker's hourly sweep) drops them. `0` keeps forever. The transcript is never swept. |
+| `serve-token` | *(blank)* | Bearer token `serve` requires on every request (`JCLAW_SERVE_TOKEN` works too). Blank means no authentication: keep it on loopback. |
+| `shell-backend` | `host` | `host` runs `builtin.shell` as a child process; `docker` runs each command in a container (see [Tools](#tools-the-agent-can-use)). |
+| `sandbox-docker` / `sandbox-image` / `sandbox-network` / `sandbox-memory` / `sandbox-cpus` / `sandbox-pids-limit` | `docker` / `alpine:3.20` / `none` / `512m` / `1` / `256` | The container contract for `shell-backend: docker`: binary, image, network (`none` unless you say otherwise), memory, CPU, and pid limits. |
 
 Logging is controlled through standard Spring properties (`--logging.level.io.jclaw=TRACE`) or the `--debug` / `--trace` shortcuts described under [Tracing a turn](#tracing-a-turn).
 
@@ -232,7 +240,7 @@ Logging is controlled through standard Spring properties (`--logging.level.io.jc
 | `provider` | Credential (env var) | Notes |
 |---|---|---|
 | `mock` | none | Default. Replies with a fixed message, or follows `mock-script`. |
-| `anthropic` | `ANTHROPIC_API_KEY` (or `ANTHROPIC_AUTH_TOKEN`) | Official Anthropic Java SDK; adaptive thinking enabled; native tool-call shape; the only provider with true streaming. |
+| `anthropic` | `ANTHROPIC_API_KEY` (or `ANTHROPIC_AUTH_TOKEN`) | Official Anthropic Java SDK; adaptive thinking enabled; native tool-call shape; SDK event streaming; image attachments as native image blocks. |
 | `openai` | `OPENAI_API_KEY` | Chat Completions API. |
 | `openrouter` | `OPENROUTER_API_KEY` | OpenAI-compatible gateway; model ids must be `org/model` (e.g. `anthropic/claude-sonnet-4.6`). Claude via OpenRouter goes through the OpenAI shim — no adaptive thinking; prefer `anthropic` for Claude. |
 | `ollama` | none | Local daemon on loopback. |
@@ -266,13 +274,17 @@ Everything durable is append-only JSONL under `state-dir` (default `~/.jclaw`), 
 ├── transcript.jsonl    every user and assistant message, per thread
 ├── runs.jsonl          run records, resolved profile, status, lease
 ├── checkpoints.jsonl   loop state snapshots (what makes resume and recovery possible)
-├── approvals.jsonl     gates raised and decided
-├── memory.jsonl        durable memories, project-scoped
+├── approvals.jsonl     gates raised and decided (approval, auth, and process gates, with expiry)
+├── results.jsonl       full capability payloads behind result refs (redacted, bounded)
+├── memory.jsonl        durable memories, project-scoped, with embeddings when configured
 ├── routines.jsonl      scheduled routines
 ├── mcp.jsonl           registered MCP servers
+├── locks/<hash>.lock   per-thread run locks (OS file locks; empty files)
 ├── repl-history        REPL line history
 └── skills/<id>/SKILL.md
 ```
+
+`results.jsonl`, `events.jsonl`, and `checkpoints.jsonl` grow with every run; `jclaw retain` (and the worker, hourly) drops rows of finished runs older than the `retention-*` settings. The transcript is never swept.
 
 Because state is a directory, you can run several isolated agents by giving each its own `--jclaw.state-dir`. Delete the directory to start clean.
 
@@ -296,8 +308,9 @@ jclaw run --jclaw.approval-mode=read-only "count the TODOs"  # never blocks; wri
 | `<prompt…>` | One or more words, joined with spaces. |
 | `-t, --thread <id>` | Conversation thread to continue (default `default`). The thread's history is sent, compacted to the [context window](#context-window). |
 | `--stream` | Stream model prose to the terminal as it is generated. Tool calls are not streamed. |
+| `--attach <file>` | Attach a file to the turn; repeatable. Images (png, jpg, gif, webp, ≤ 5 MB) become image blocks the model sees; UTF-8 text files (≤ 256 KiB) are quoted under their name. Anything else is refused with a reason rather than sent as bytes the model cannot read. Attachments are stored in the transcript with the message. |
 
-The reply is printed on stdout. Exit codes: **0** completed, **1** failed or cancelled, **2** parked on an approval gate (the gate id is printed so you can approve it). Ctrl-C stops the run at the next safe point — between effects, never mid-tool.
+The reply is printed on stdout. Exit codes: **0** completed, **1** failed or cancelled, **2** parked (an approval gate, an auth gate, or a child run the parent is waiting on; the gate id is printed). Ctrl-C stops the run at the next safe point — between effects, never mid-tool.
 
 The system prompt the model sees is: your configured `system-prompt`, then a workspace section naming the directory (never its absolute path), then one-line summaries of installed skills. It is frozen when the run is admitted, so a resume replays exactly what the run started with.
 
@@ -374,7 +387,27 @@ jclaw worker --concurrency 4                                # executes queued ru
 jclaw worker --once                                         # one pass, then exit
 ```
 
-Scheduling is a pure function over the queue: oldest first, at most `--concurrency` in flight, and never two runs on one thread at a time (the second waits a pass). A queued run is seeded with the conversation as of its own submission, so several turns queued on one thread answer in order, each seeing the replies to the ones before it. Runs requeued by `recover` are picked up the same way, so with a worker running a crashed turn resumes without a human typing `resume`. This is the shape any non-CLI surface needs, which is why it exists before one does.
+Scheduling is a pure function over the queue: oldest first, at most `--concurrency` in flight, and never two runs on one thread at a time (the second waits a pass). A queued run is seeded with the conversation as of its own submission, so several turns queued on one thread answer in order, each seeing the replies to the ones before it. Runs requeued by `recover` are picked up the same way, so with a worker running a crashed turn resumes without a human typing `resume`; so are parents waiting on an asynchronous subagent. `submit --attach` works like `run --attach`.
+
+### The HTTP surface: `serve`
+
+`serve` is `worker` with an ingress: the JDK's HTTP server in front of the same runtime, scheduler, routine firing, lease sweep, and hourly retention.
+
+```bash
+export JCLAW_SERVE_TOKEN=$(openssl rand -hex 16)      # optional but wise; blank = no auth
+jclaw serve --port 8080 --concurrency 4                # binds 127.0.0.1 unless --host says otherwise
+```
+
+| Route | Does |
+|---|---|
+| `POST /threads/{thread}/turns` `{"text": "…", "attachments": [{"mediaType": "image/png", "data": "<base64>"}]}` | Enqueues a turn and returns `202 {"run": "run_…"}` at once; nothing executes in the request thread. |
+| `GET /runs/{run}` | The run's projection folded from its events (status, timings, model calls and tokens, capability calls, injection findings, the open gate, failure) plus `reply` once completed. |
+| `GET /runs/{run}/events` | Server-sent events following that run's audit log, replaying what exists and pushing new entries until the run is terminal; each `data:` is the same redacted record the JSONL file holds. |
+| `GET /threads/{thread}/messages` | The transcript. |
+| `GET /approvals`, `POST /approvals/{gate}` `{"approved": true}` | Pending gates; decide one and requeue its run for the scheduler. |
+| `GET /health` | Liveness. |
+
+Every route requires `Authorization: Bearer <token>` when `serve-token` is set, health included. There is no TLS: put a reverse proxy in front if it leaves the machine. What this surface is *not*: a UI, an OpenAI-compatible endpoint, or a channel adapter; those would sit on top of it (see PARITY.md).
 
 ### Tools the agent can use
 
@@ -390,11 +423,11 @@ Scheduling is a pure function over the queue: oldest first, at most `--concurren
 | `builtin.skill_list` / `builtin.skill_read` | PURE | List skills; load one's full instructions. |
 | `builtin.trigger_list` / `_create` / `_pause` / `_resume` / `_remove` | READ_LOCAL / PROCESS / WRITE_LOCAL / PROCESS / WRITE_LOCAL | Let the agent schedule its own routines. |
 | `builtin.http_fetch` | NETWORK | HTTP GET, ≤ 128 KiB, 20 s, ≤ 5 redirects each re-checked by the egress guard. Private, loopback, link-local, and cloud-metadata addresses are refused (unless `allow-private-networks`). |
-| `builtin.shell` | PROCESS | `/bin/sh -c` in the workspace root; scrubbed environment (no API keys reach the child); 30 s default timeout (max 300); 64 KiB output cap; process tree killed on timeout. |
-| `builtin.spawn_subagent` | PROCESS | Delegate a task to a child run (see [Subagents](#subagents)). |
+| `builtin.shell` | PROCESS | `/bin/sh -c` in the workspace root; scrubbed environment (no API keys reach the child); 30 s default timeout (max 300); 64 KiB output cap; process tree killed on timeout. With `shell-backend: docker`, each command runs in a `docker run --rm` container instead: no network, the workspace as the only mount at `/workspace`, memory/CPU/pid limits, read-only root. |
+| `builtin.spawn_subagent` | PROCESS | Delegate a task to a child run, inline or queued (see [Subagents](#subagents)). |
 | `mcp.<server>.<tool>` | NETWORK, COMMUNITY trust | Tools advertised by registered MCP servers. **Always gated.** |
 
-Every path a tool receives is resolved against the workspace with symlinks followed and containment checked on the real path; anything outside is `path_outside_workspace`. Tool output is redacted (known credential values, then key-shaped patterns) and bounded to 64 KiB *before* it is stored or shown to the model.
+Every path a tool receives is resolved against the workspace with symlinks followed and containment checked on the real path; anything outside is `path_outside_workspace`. Tool output is redacted (known credential values, then key-shaped patterns) and bounded to 64 KiB *before* it is stored or shown to the model, then scanned for prompt-injection patterns (`injection-policy`). Per-capability egress allowlists (`tool-egress`) and rate limits (`tool-rate-limits`) apply on top; a call past its cap is denied `rate_limited` without raising a gate.
 
 ### Durable memory: `memory`
 
@@ -490,6 +523,8 @@ The command is stored as argv (never re-parsed through a shell). Enabled servers
 
 The model can call `builtin.spawn_subagent` with a `prompt` (and optional `description`) to delegate a task. The child is an ordinary run on the **same** machinery — same turn machine, same interpreter, same capability host and approval policy — on a fresh thread derived from the parent's (`<parent>~sub1-…`), so it inherits none of the parent's conversation and only its conclusion travels back. Nesting depth is derived from the thread id rather than passed by the model, and is capped at 3. Spawning is `PROCESS`-class, so it is gated in `interactive`.
 
+By default the child runs inside the parent's tool call. With `subagents-async: true` the child is **queued** instead: the parent parks `WAITING_PROCESS` on a process gate that names the child run, a `worker` or `serve` executes the child under the concurrency cap, and when it finishes the scheduler requeues the parent, which re-dispatches the same call and receives the child's conclusion as the tool result. Several children of one parent therefore run in parallel. Without a worker the parent would wait indefinitely, which is why the synchronous mode is the default.
+
 ### Streaming
 
 `run --stream`, `repl --stream`, and `/stream on` print model prose as it arrives. Streaming is presentation only: the machine receives the same complete response either way, so a streamed run and a buffered one produce identical decisions and transcripts. True incremental output is implemented for the Anthropic provider (SDK event stream) and for every OpenAI-compatible provider (server-sent events: OpenAI, OpenRouter, Ollama, `local`). Tool-call arguments arrive as JSON fragments, so they are assembled and delivered whole in the final response rather than streamed. The `failover` chain streams through the first provider that accepts the model and will not fail over once prose has been shown, since a second provider would start a second answer on top of the first.
@@ -510,10 +545,20 @@ jclaw resume <run-id>          # for anything REQUEUED
 
 A run is requeued only when its latest checkpoint is provably replay-safe (taken before a model call or before a gate — nothing had escaped the process) **and** a full extra lease TTL has passed since expiry (a merely slow worker would have renewed). Everything else becomes a terminal `lease_expired` failure for you to resubmit deliberately. Unknown checkpoint kinds fail closed.
 
+### Retention: `retain`
+
+```bash
+jclaw retain --dry-run     # per store: kept, dropped, and whether anything would be rewritten
+jclaw retain               # drop old rows of finished runs from results, events, and checkpoints
+```
+
+A row is dropped only when it is older than the store's `retention-*` age **and** its run is terminal; a parked, queued, running, or unknown run keeps every row however old. The rewrite is atomic (temp file plus rename). The transcript is never swept: it is the conversation. `worker` and `serve` sweep once an hour.
+
 ### Inspecting the system: `status`, `tools`, `models`, `doctor`
 
 ```bash
 jclaw status               # last 20 events from the audit log (-n to change)
+jclaw status --run run_…   # one run's projection: status, timings, calls, tokens, gates, findings
 jclaw tools [--verbose]    # capability surface: effect, trust, unattended?, schemas
 jclaw models [--probe]     # providers and credentials; --probe sends a tiny real request
 jclaw doctor               # configuration, security posture, and checks; exit 1 on a real problem
@@ -538,7 +583,7 @@ Default level is INFO and prints only the reply. The domain never logs; the inte
 |---|---|
 | 0 | Success (or nothing to do). |
 | 1 | Turn failed or cancelled; not-found / conflict for `memory forget`, `skills show`, `routines *`, `mcp *`; a fired routine failed (`run-due`); probe failed (`models`); a `[fail]` check (`doctor`); config file exists (`onboard` without `--force`); unhandled error. |
-| 2 | `run` / `resume` / `approvals`: the run parked on a gate. Also picocli usage errors and Spring startup failures (misconfiguration), which happen before any command runs. |
+| 2 | `run` / `resume` / `approvals`: the run parked (approval gate, auth gate, or waiting on a child run). Also picocli usage errors and Spring startup failures (misconfiguration), which happen before any command runs. |
 
 `onboard --print` shows the config that would be written without writing it.
 
@@ -548,7 +593,9 @@ Default level is INFO and prints only the reply. The domain never logs; the inte
 
 - **Workspace confinement.** Every path goes through `WorkspaceGuard`: normalized, symlinks resolved (for new files, the nearest existing ancestor is resolved), and containment checked on the real path — never by string prefix.
 - **Egress guard.** `http_fetch` refuses non-http(s) schemes, URLs with embedded credentials, cloud-metadata hostnames, and any hostname resolving to *any* private, loopback, link-local, CGNAT, or ULA address (all resolved addresses must be public, defeating DNS-based bypasses). Redirects are re-checked per hop.
-- **One authority gate.** `DefaultCapabilityHost` orders checks so a denied call never reaches side-effecting code: existence → policy denial → approval → dispatch → redact/bound/store. Per-invocation fingerprints, sticky denials, third-party trust ceilings that policy cannot raise.
+- **One authority gate.** `DefaultCapabilityHost` orders checks so a denied call never reaches side-effecting code: existence → policy denial → rate limit → approval → dispatch → redact/bound/store → injection scan. Per-invocation fingerprints, sticky denials, third-party trust ceilings that policy cannot raise, per-tool egress lists that can only narrow.
+- **Untrusted tool output is framed.** Instruction-shaped text in a tool result is audited and, by default, fenced and defused before the model sees it; `block` withholds it. The stored payload is never altered.
+- **The shell can be contained.** `shell-backend: docker` runs every command in a throwaway container with no network, the workspace as its only mount, and resource limits. `doctor` says which backend is active.
 - **Least-privilege lanes.** Tool handlers receive a context with exactly four methods (resolve path, check egress, display path, output budget). There is no method to obtain a secret. Shell and MCP children get a scrubbed environment.
 - **Structural redaction.** Events have no field for a prompt, argument, or host path. Tool output, provider errors, approval prompts, and trace logs all pass through the same redactor; truncation happens after redaction.
 - **Untrusted exits.** The runtime re-resolves every reference a run returns before recording completion.
@@ -570,7 +617,7 @@ jclaw/
 ├── jclaw-providers/        mock, Anthropic SDK, OpenAI-compatible, failover
 ├── jclaw-tools/            built-in capability handlers and the MCP client
 ├── jclaw-storage/          JSONL stores, hand-written codecs, filesystem skill catalog
-├── jclaw-app/              Spring wiring, picocli CLI, JclawRuntime, native profile
+├── jclaw-app/              Spring wiring, picocli CLI, JclawRuntime, scheduler, HTTP surface, native profile
 ├── scripts/byte-verify.sh  source-integrity guard
 ├── ARCH.md                 C4 architecture and the full turn lifecycle
 └── PARITY.md               what IronClaw has that jclaw does not
