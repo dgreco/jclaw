@@ -66,14 +66,19 @@ build-test:
   # this reaches a daemon it skips, and the job still passes. The line below reports what the
   # job can actually see, so the next failure is evidence rather than a guess.
   variables:
+    # The runner sets DOCKER_TLS_VERIFY=1 and DOCKER_TLS_CERTDIR=/certs but no DOCKER_HOST, and
+    # mounts no socket — the standard dind-over-TLS shape, where the job supplies the address and
+    # the client certificates the daemon generated into the shared /certs volume. 2376 is the TLS
+    # port; 2375 is the plain one the daemon is not listening on.
+    DOCKER_HOST: tcp://docker:2376
+    DOCKER_CERT_PATH: /certs/client
     # The dind daemon is discarded with the job, so there is nothing for Ryuk to reap, and it
     # wants a socket mount this job does not have.
     TESTCONTAINERS_RYUK_DISABLED: "true"
   <<: *maven-cache
   script:
     - java -version && mvn -version
-    - 'echo "docker env:"; env | grep -i "^DOCKER" || echo "  (none set)"'
-    - 'ls -la /var/run/docker.sock 2>/dev/null || echo "  no /var/run/docker.sock"'
+    - 'ls /certs/client 2>/dev/null || echo "no /certs/client — dind certificates are elsewhere"'
     - mvn $MAVEN_CLI_OPTS verify
   after_script:
     # One-line summary in the job log. Counts <testcase> elements in the XML reports: the
