@@ -28,9 +28,17 @@ import java.util.stream.Collectors;
  * record holds. A matching event enqueues the routine's turn, with a one-line summary of the
  * event appended to the prompt, for a worker to run; nothing executes on the writer's thread.
  *
- * <p>Two rules keep triggers from chasing their own tails: only {@code run.finished} and
- * {@code gate.raised} may drive a trigger, and an event from a run on any routine's thread never
- * fires one, so a routine's own run finishing cannot re-trigger it or a sibling.
+ * <p>Two rules keep triggers from chasing their own tails. Only {@code run.finished},
+ * {@code gate.raised}, and {@code turn.submitted} may drive a trigger; and an event from a run on
+ * any routine's thread never fires one, so a routine's own run finishing cannot re-trigger it or
+ * a sibling. The second rule is what makes the first safe to extend: {@code turn.submitted} is
+ * emitted by every enqueue, including the dispatcher's own, and without the thread check a single
+ * inbound message would start a loop rather than a routine.
+ *
+ * <p>{@code turn.submitted} is the inbound-message trigger. A turn arriving from a person, an
+ * HTTP client, or a channel adapter fires whatever subscribes to it — "when anything lands on the
+ * ops thread, run triage" — with {@code thread}, {@code tenant}, and {@code project} available as
+ * filters.
  */
 @Service
 public class EventTriggerDispatcher {
@@ -67,8 +75,11 @@ public class EventTriggerDispatcher {
         }
         Set<String> routineThreads = all.stream().map(r -> r.thread().value()).collect(Collectors.toSet());
         Optional<RunStore.RunRecord> record = runs.find(event.run());
-        if (record.isPresent() && routineThreads.contains(record.get().scope().thread().value())) {
-            return; // a routine's own run: never a trigger
+        // Fail closed on an unknown run. Every event this dispatcher handles is written after
+        // its run was recorded, so an absent record means something unexpected — and treating it
+        // as "not a routine" is exactly the direction that lets a chain form.
+        if (record.isEmpty() || routineThreads.contains(record.get().scope().thread().value())) {
+            return; // a routine's own run, or a run we cannot place: never a trigger
         }
         Map<String, String> attributes = attributes(event, record);
         for (RoutineStore.Routine routine : all) {
@@ -104,6 +115,14 @@ public class EventTriggerDispatcher {
             case JclawEvent.GateRaised e -> {
                 out.put("kind", e.gate().name());
                 out.put("gate", e.gateId());
+            }
+            case JclawEvent.TurnSubmitted e -> {
+                out.put("tenant", e.scope().tenant());
+                out.put("project", e.scope().project());
+                out.put("agent", e.scope().agent());
+                // The scope on the event, not the run record: the same value, and it is the one
+                // the event itself carries, so a filter reads what the audit log says.
+                out.put("thread", e.scope().thread().value());
             }
             default -> { }
         }

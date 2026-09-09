@@ -37,6 +37,7 @@ public class WorkerCommand implements Callable<Integer> {
     private static final Duration MIN_INTERVAL = Duration.ofSeconds(5);
 
     private final RoutineRunner runner;
+    private final io.jclaw.app.runtime.WatchTriggerScanner watches;
     private final RecoveryService recovery;
     private final TurnRunScheduler scheduler;
     private final RetentionService retention;
@@ -53,8 +54,10 @@ public class WorkerCommand implements Callable<Integer> {
     @Option(names = "--once", description = "Poll a single time and exit. Useful for testing.")
     private boolean once;
 
-    public WorkerCommand(RoutineRunner runner, RecoveryService recovery, TurnRunScheduler scheduler,
+    public WorkerCommand(RoutineRunner runner, io.jclaw.app.runtime.WatchTriggerScanner watches,
+            RecoveryService recovery, TurnRunScheduler scheduler,
                          RetentionService retention) {
+        this.watches = watches;
         this.runner = runner;
         this.recovery = recovery;
         this.scheduler = scheduler;
@@ -89,6 +92,12 @@ public class WorkerCommand implements Callable<Integer> {
                 List<RoutineRunner.Fired> fired = runner.runDue(stop);
                 for (RoutineRunner.Fired entry : fired) {
                     System.out.printf("%s -> %s%n", entry.routine().name(), entry.result().status());
+                }
+
+                // Watch routines: the same tick, since a file change is another kind of "due".
+                for (var watched : watches.scan()) {
+                    System.out.printf("%s -> queued %s (watch %s)%n",
+                            watched.routine().name(), watched.run().value(), watched.glob());
                 }
 
                 // Queued work: submitted turns and runs requeued by recovery. Started here under

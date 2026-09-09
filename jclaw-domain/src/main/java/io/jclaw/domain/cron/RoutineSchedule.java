@@ -72,9 +72,10 @@ public final class RoutineSchedule {
                         .nextFireAfter(ZonedDateTime.ofInstant(routine.anchor(), zone));
                 case Trigger.Heartbeat heartbeat ->
                         Optional.of(ZonedDateTime.ofInstant(routine.anchor().plus(heartbeat.interval()), zone));
-                // A webhook or an event decides when these fire; the clock never does.
+                // A webhook, an event, or a file change decides when these fire; not the clock.
                 case Trigger.Webhook ignored -> Optional.empty();
                 case Trigger.OnEvent ignored -> Optional.empty();
+                case Trigger.Watch ignored -> Optional.empty();
                 case null -> Optional.empty();
             };
         } catch (RuntimeException e) {

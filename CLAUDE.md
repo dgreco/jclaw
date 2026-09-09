@@ -21,7 +21,7 @@ jclaw is a Java/Spring Boot reimplementation of the **architecture** of
 untrusted-`LoopExit` trust model, and the `CapabilityHost` authority boundary are faithful; the
 feature surface is a fraction of IronClaw's. See **Not built yet** for the honest list.
 
-380 tests pass across 9 modules, including 15 machine-checked architecture rules.
+391 tests pass across 9 modules, including 15 machine-checked architecture rules.
 
 ## Commands
 
@@ -479,10 +479,12 @@ architecture and most runtime mechanisms are equivalent, the breadth is not. PAR
   reflective dependency the native image would have to be taught. What that costs is the SDK's
   auto-instrumentation and its exporters' batching and retry; the OTLP/JSON export here is
   best-effort and unbatched.
-- **Triggers beyond the four forms** — a routine fires on cron, an interval, a webhook
-  (`POST /hooks/{name}`, bearer secret, SHA-256 stored), or an audit event (`run.finished`,
-  `gate.raised`). There is no filesystem watch, no inbound-message trigger, no fan-out to several
-  routines from one webhook, and event triggers see only what the audit log records.
+- **Trigger breadth** — a routine fires on cron, an interval, a webhook (`POST /hooks/{name}`,
+  bearer secret, SHA-256 stored, optionally fanning out to a `topic`), a filesystem watch
+  (polled on the worker tick, fingerprint in `watches.jsonl`), or an audit event
+  (`run.finished`, `gate.raised`, `turn.submitted` — the last being the inbound-message
+  trigger). Event triggers still see only what the audit log records, a watch's latency is one
+  tick rather than an OS notification, and there is no trigger on an external queue or a git ref.
 - **MCP auth beyond a bearer token** — servers reach over stdio or streamable HTTP, expose
   tools, resources, and prompts, and start on first use from a cached surface. An HTTP server
   authenticates with a vault-held bearer token bound to `mcp.connect` and its host; there is no

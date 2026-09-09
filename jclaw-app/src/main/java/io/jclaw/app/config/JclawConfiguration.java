@@ -380,6 +380,33 @@ public class JclawConfiguration {
         return registry;
     }
 
+    /**
+     * Where {@code watch} routines record what they last saw.
+     *
+     * <p>Durable rather than in-memory because {@code worker --once} is a fresh process every
+     * tick: an in-memory baseline would make the first look the only look, and a watch would
+     * never fire under cron at all.
+     */
+    @Bean
+    public RowStore watchStateFile(JclawProperties properties, StorageBackend backend) {
+        return backend.open("watches", properties.watchStatePath());
+    }
+
+    /**
+     * Fires {@code watch} routines when the files they match change.
+     *
+     * <p>Wired here rather than component-scanned because it takes a {@link RowStore}, of which
+     * there are several; naming the one it wants is clearer than a qualifier.
+     */
+    @Bean
+    public io.jclaw.app.runtime.WatchTriggerScanner watchTriggerScanner(
+            io.jclaw.contracts.routine.RoutineStore routineStore,
+            io.jclaw.app.runtime.JclawRuntime jclawRuntime,
+            WorkspaceGuard workspaceGuard, RowStore watchStateFile, Clock clock) {
+        return new io.jclaw.app.runtime.WatchTriggerScanner(
+                routineStore, jclawRuntime, workspaceGuard, watchStateFile, clock);
+    }
+
     /** The messaging channels jclaw can be talked to from. Empty unless configured. */
     @Bean
     public java.util.List<io.jclaw.contracts.channel.ChannelAdapter> channelAdapters(Clock clock) {

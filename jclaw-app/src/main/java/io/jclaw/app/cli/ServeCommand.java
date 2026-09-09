@@ -58,6 +58,7 @@ public class ServeCommand implements Callable<Integer> {
     private final JsonlApprovalStore approvals;
     private final TurnRunScheduler scheduler;
     private final RoutineRunner routines;
+    private final io.jclaw.app.runtime.WatchTriggerScanner watches;
     private final RecoveryService recovery;
     private final RetentionService retention;
     private final io.jclaw.app.observability.Telemetry telemetry;
@@ -84,7 +85,8 @@ public class ServeCommand implements Callable<Integer> {
     public ServeCommand(
             JclawProperties properties, JclawRuntime runtime, RunStore runs, EventLog events,
             ThreadService threads, JsonlApprovalStore approvals, TurnRunScheduler scheduler,
-            RoutineRunner routines, RecoveryService recovery, RetentionService retention,
+            RoutineRunner routines, io.jclaw.app.runtime.WatchTriggerScanner watches,
+            RecoveryService recovery, RetentionService retention,
             io.jclaw.app.observability.Telemetry telemetry,
             io.jclaw.contracts.routine.RoutineStore routineStore,
             io.jclaw.app.channel.ChannelService channelService,
@@ -107,6 +109,7 @@ public class ServeCommand implements Callable<Integer> {
         this.approvals = approvals;
         this.scheduler = scheduler;
         this.routines = routines;
+        this.watches = watches;
         this.recovery = recovery;
         this.retention = retention;
         this.clock = clock;
@@ -174,6 +177,9 @@ public class ServeCommand implements Callable<Integer> {
                     recovery.sweep(false);
                     routines.runDue(stop).forEach(fired ->
                             System.out.printf("routine %s -> %s%n", fired.routine().name(), fired.result().status()));
+                    watches.scan().forEach(watched -> System.out.printf(
+                            "routine %s -> queued %s (watch %s)%n",
+                            watched.routine().name(), watched.run().value(), watched.glob()));
                     lastSweep = now;
                 }
                 if (lastRetention == 0 || now - lastRetention > RETENTION_EVERY.toNanos()) {

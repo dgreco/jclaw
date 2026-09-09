@@ -599,6 +599,11 @@ public record JclawProperties(
     }
 
     /** Scheduled routines. */
+    /** Where a watch routine's last-seen tree fingerprint is kept, so a watch survives a restart. */
+    public Path watchStatePath() {
+        return stateDir.resolve("watches.jsonl");
+    }
+
     public Path routinesPath() {
         return stateDir.resolve("routines.jsonl");
     }

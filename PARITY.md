@@ -2,7 +2,7 @@
 
 An honest enumeration of what [IronClaw](https://github.com/nearai/ironclaw) (internally "Reborn") has that jclaw does not, and of what jclaw now has. jclaw is roughly 20k lines of Java (plus 6.5k of tests) against IronClaw's ~1.4M lines of Rust across ~63 crates. The **architecture** is equivalent — layer ladder, turn/run lifecycle, untrusted `LoopExit`, single `CapabilityHost` authority boundary, checkpoint-kind–driven recovery — and, after the September 2026 parity work, most of the runtime *mechanisms* are present in some form. What remains missing is breadth, not mechanism: the long tail catalogued in section 16. This file is the list, organised by IronClaw's own crate families so a gap can be traced to the crate that fills it upstream.
 
-Sources: IronClaw's `README.md`, `crates/Architecture.md`, and the `crates/` listing as of September 2026; jclaw's code on this checkout (380 tests, 0 failures). Where the upstream doc names a concept and jclaw has an equivalent under a different name, the mapping is given. Where the gap is uncertain it is marked *(unverified)*.
+Sources: IronClaw's `README.md`, `crates/Architecture.md`, and the `crates/` listing as of September 2026; jclaw's code on this checkout (391 tests, 0 failures). Where the upstream doc names a concept and jclaw has an equivalent under a different name, the mapping is given. Where the gap is uncertain it is marked *(unverified)*.
 
 Legend: ✅ at parity · 🟡 partial · ❌ missing · ➕ jclaw-only
 
@@ -139,8 +139,9 @@ At parity on the trust model and on the gate mechanics, and on tenant isolation;
 | Capability | IronClaw | jclaw |
 |---|---|---|
 | Cron routines | ✅ | ✅ (five-field Vixie cron, zones, pause/resume, `run-due`, `worker`, `serve`) |
-| Event triggers | ✅ | ✅ `--on run.finished\|gate.raised --when k=v`; `EventTriggerDispatcher` listens on the event log and enqueues the routine's turn with the event's attributes appended. Only those two types may drive a trigger, and an event from any routine's own thread fires nothing, so triggers cannot chase each other |
-| Webhook triggers | ✅ | ✅ `--webhook` mints a bearer secret (only its SHA-256 is stored) and `POST /hooks/{name}` on `serve` fires it, authenticated by that secret rather than the operator's token, with the body bounded to 16 KiB and appended to the prompt |
+| Event triggers | ✅ | ✅ `--on run.finished\|gate.raised\|turn.submitted --when k=v`; `EventTriggerDispatcher` listens on the event log and enqueues the routine's turn with the event's attributes appended. Only those three types may drive a trigger, and an event from any routine's own thread (or a run it cannot place) fires nothing, so triggers cannot chase each other. `turn.submitted` is the inbound-message trigger: a turn from the CLI, HTTP, or a channel adapter |
+| Webhook triggers | ✅ | ✅ `--webhook` mints a bearer secret (only its SHA-256 is stored) and `POST /hooks/{name}` on `serve` fires it, authenticated by that secret rather than the operator's token, with the body bounded to 16 KiB and appended to the prompt. `--topic` fans one authenticated delivery out to every routine declaring the same topic; the topic is operator configuration, never something a caller supplies |
+| Filesystem watch triggers | ✅ *(unverified)* | ✅ `--watch "src/**/*.java"`, polled on the worker's tick. The state is a fingerprint over matching paths *and* modification times, so a deletion or rename counts; it is stored in `watches.jsonl` so a `worker --once` deployment works, and the first look is a baseline that never fires. Latency is one tick rather than an OS notification |
 | Heartbeat / proactive triggers | ✅ | ✅ `--every 30m` (or an ISO duration): due once the interval has passed since the last firing, so it drifts with execution instead of snapping to a wall-clock grid |
 | Agent creates its own triggers | ✅ | ✅ (`builtin.trigger_*`), time-driven only: a model may set a cron or an interval, never a webhook or an event trigger |
 | Embedded scheduler | ✅ | 🟡 `worker` and `serve` embed the poll loop; system cron remains an option |
@@ -322,8 +323,13 @@ Ranked, again, by what a deployment beyond one operator's machine would hit firs
    Still open: server-initiated *notifications* (`tools/list_changed`), which need a transport
    that reads outside a request; and host-mediated per-host egress for a stdio server, which
    needs a proxy rather than the container's all-or-nothing network.
-10. **Triggers with more sources** (§7) — cron, intervals, webhooks, and two audit-event types.
-    No filesystem watches, no inbound-message triggers, no fan-out from one webhook.
+10. ~~**Triggers with more sources**~~ — closed: filesystem watches (`--watch`, polled on the
+    worker tick with a durable fingerprint over paths and times, so a deletion counts and a
+    `worker --once` deployment works), inbound-message triggers (`--on turn.submitted`, safe
+    because the dispatcher ignores events from routine threads), and webhook fan-out
+    (`--topic`, where declaring the topic is the subscription and only the operator can write
+    one). Still open: no trigger on an external queue or a git ref, and a watch's latency is one
+    tick rather than an OS notification.
 
 Two things that are structurally different rather than merely narrower, and are unlikely to
 change: jclaw is single-host (the thread lock is an OS file lock, the scheduler runs in one

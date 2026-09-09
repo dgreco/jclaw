@@ -40,6 +40,7 @@ import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Webhook and event triggers enqueue a routine's turn; a routine's own run never re-triggers. */
@@ -149,5 +150,69 @@ class TriggerIntegrationTest {
         long reactorRuns = runs.byStatus(TurnStatus.QUEUED, 10).stream()
                 .filter(r -> r.scope().thread().value().equals("reactor")).count();
         assertEquals(0, reactorRuns, "the reactor's own run finishing did not fire it again");
+    }
+
+    @Test
+    @DisplayName("one authenticated POST fans out to every routine sharing the topic")
+    void webhookFanOut() throws Exception {
+        var scope = runtime.scopeFor(new ThreadId("routines"));
+        routines.create(scope, "primary", "webhook sha256:" + Trigger.hashSecret("topicsecret")
+                + " topic=deploys", "UTC", "Handle the deploy.", new ThreadId("fan-primary"));
+        // A different secret, the same topic: declaring the topic is the subscription, and it is
+        // written by the operator in the routine, not by the caller in the request.
+        routines.create(scope, "listener", "webhook sha256:" + Trigger.hashSecret("someone-elses")
+                + " topic=deploys", "UTC", "Note the deploy.", new ThreadId("fan-listener"));
+        routines.create(scope, "unrelated", "webhook sha256:" + Trigger.hashSecret("third")
+                + " topic=releases", "UTC", "Not this one.", new ThreadId("fan-unrelated"));
+        routines.create(scope, "topicless", "webhook sha256:" + Trigger.hashSecret("fourth"),
+                "UTC", "Nor this one.", new ThreadId("fan-topicless"));
+
+        server = new JclawHttpServer(runtime, runs, events, threads, approvals, clock, Optional.of("op-token"),
+                Map.of(), "mock-model", telemetry, routines);
+        server.start("127.0.0.1", 0);
+        String base = "http://127.0.0.1:" + server.port();
+
+        HttpResponse<String> accepted = post(base, "/hooks/primary", "topicsecret", "{\"v\":\"9\"}");
+        assertEquals(202, accepted.statusCode(), accepted.body());
+        assertTrue(accepted.body().contains("\"topic\":\"deploys\""), accepted.body());
+        assertTrue(accepted.body().contains("listener"), accepted.body());
+
+        List<String> threadsQueued = runs.byStatus(TurnStatus.QUEUED, 20).stream()
+                .map(r -> r.scope().thread().value()).toList();
+        assertTrue(threadsQueued.contains("fan-primary"), threadsQueued.toString());
+        assertTrue(threadsQueued.contains("fan-listener"),
+                "the subscriber ran without presenting its own secret: " + threadsQueued);
+        assertFalse(threadsQueued.contains("fan-unrelated"), "a different topic is not a subscription");
+        assertFalse(threadsQueued.contains("fan-topicless"),
+                "a blank topic subscribes to nothing, so two of them are not a fan-out group");
+
+        String listened = threads.history(new ThreadId("fan-listener"), 10).get(0).message().displayText();
+        assertTrue(listened.contains("Note the deploy.") && listened.contains("topic deploys")
+                && listened.contains("\"v\":\"9\""), listened);
+
+        // The subscriber's own endpoint still needs its own secret: fan-out adds a way in for the
+        // operator, not for a caller.
+        assertEquals(401, post(base, "/hooks/listener", "topicsecret", "{}").statusCode());
+    }
+
+    @Test
+    @DisplayName("an inbound turn on a watched thread fires a routine, and the routine's own does not")
+    void inboundMessageTrigger() {
+        var scope = runtime.scopeFor(new ThreadId("routines"));
+        routines.create(scope, "triage", "on turn.submitted thread=inbox", "UTC",
+                "Something arrived; triage it.", new ThreadId("triager"));
+
+        runtime.enqueue(new ThreadId("inbox"), io.jclaw.contracts.model.ChatMessage.user("a message"));
+
+        List<String> queued = runs.byStatus(TurnStatus.QUEUED, 20).stream()
+                .map(r -> r.scope().thread().value()).toList();
+        assertTrue(queued.contains("triager"),
+                "a turn arriving from anywhere is the inbound-message trigger: " + queued);
+
+        // The routine's own enqueue also emitted turn.submitted. If that could trigger, this
+        // would be a loop rather than a routine.
+        long triagerRuns = runs.byStatus(TurnStatus.QUEUED, 50).stream()
+                .filter(r -> r.scope().thread().value().equals("triager")).count();
+        assertEquals(1, triagerRuns, "a routine's own turn must not fire it again");
     }
 }

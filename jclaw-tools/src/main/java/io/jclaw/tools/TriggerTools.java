@@ -78,9 +78,11 @@ public final class TriggerTools {
             if (name.isBlank() || prompt.isBlank() || (cron.isBlank() == every.isBlank())) {
                 return Result.err(HandlerError.failed("name_prompt_and_one_of_cron_or_every_required"));
             }
-            // The agent may create time-driven triggers only. Webhooks and event triggers are
-            // the operator's: one grants an outside caller a way in, the other reacts to other
-            // runs, and neither should be something a model can set up for itself.
+            // The agent may create time-driven triggers only. Webhooks, watches, and event
+            // triggers are the operator's: one grants an outside caller a way in, the others
+            // react to the world outside the turn, and none should be something a model can set
+            // up for itself. `timeDriven()` is the whole check, so a trigger kind added later is
+            // excluded by default rather than by someone remembering to exclude it.
             String expression = cron.isBlank() ? "every " + every : cron;
             Trigger trigger = Trigger.parse(expression).toOptional().orElse(null);
             if (trigger == null || !trigger.timeDriven()) {

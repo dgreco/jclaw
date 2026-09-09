@@ -70,7 +70,19 @@ public class RoutinesCommand implements Runnable {
         @Option(names = "--webhook", description = "Fire on POST /hooks/<name> with a bearer secret, printed once.")
         private boolean webhook;
 
-        @Option(names = "--on", description = "Fire on an audit event: run.finished or gate.raised.")
+        @Option(names = "--topic",
+                description = "With --webhook: a name several routines may share. One authenticated "
+                        + "POST to any of them fires every routine declaring the same topic.")
+        private String topic;
+
+        @Option(names = "--watch",
+                description = "Fire when a file matching this glob changes under the workspace, "
+                        + "e.g. 'src/**/*.java'. Checked on the worker's tick.")
+        private String watch;
+
+        @Option(names = "--on",
+                description = "Fire on an audit event: run.finished, gate.raised, or turn.submitted "
+                        + "(a message arriving on a thread, from anywhere).")
         private String on;
 
         @Option(names = "--when", description = "With --on: attribute filters, e.g. status=FAILED. Repeatable.")
@@ -94,9 +106,14 @@ public class RoutinesCommand implements Runnable {
         public Integer call() {
             // Validate the trigger before storing it: a routine that can never fire is a routine
             // whose absence nobody notices until they go looking for its output.
-            int forms = (cron != null ? 1 : 0) + (every != null ? 1 : 0) + (webhook ? 1 : 0) + (on != null ? 1 : 0);
+            int forms = (cron != null ? 1 : 0) + (every != null ? 1 : 0) + (webhook ? 1 : 0)
+                    + (on != null ? 1 : 0) + (watch != null ? 1 : 0);
             if (forms != 1) {
-                System.err.println("jclaw: give exactly one of --cron, --every, --webhook, --on");
+                System.err.println("jclaw: give exactly one of --cron, --every, --webhook, --watch, --on");
+                return 1;
+            }
+            if (topic != null && !webhook) {
+                System.err.println("jclaw: --topic applies to --webhook routines only");
                 return 1;
             }
             String secret = null;
@@ -109,7 +126,10 @@ public class RoutinesCommand implements Runnable {
                 byte[] bytes = new byte[24];
                 new java.security.SecureRandom().nextBytes(bytes);
                 secret = java.util.HexFormat.of().formatHex(bytes);
-                expression = "webhook sha256:" + Trigger.hashSecret(secret);
+                expression = "webhook sha256:" + Trigger.hashSecret(secret)
+                        + (topic == null || topic.isBlank() ? "" : " topic=" + topic.trim());
+            } else if (watch != null) {
+                expression = "watch " + watch;
             } else {
                 expression = "on " + on + java.util.Arrays.stream(when).map(w -> " " + w).reduce("", String::concat);
             }
@@ -142,7 +162,9 @@ public class RoutinesCommand implements Runnable {
             String form = switch (parsed.orElseThrow()) {
                 case Trigger.Cron ignored -> "cron: " + expression;
                 case Trigger.Heartbeat heartbeat -> "heartbeat: every " + heartbeat.interval();
-                case Trigger.Webhook ignored -> "webhook";
+                case Trigger.Webhook hook -> "webhook"
+                        + (hook.topic().isEmpty() ? "" : ", topic " + hook.topic());
+                case Trigger.Watch w -> "watch: " + w.glob();
                 case Trigger.OnEvent event -> "event: " + expression.substring("on ".length());
             };
             System.out.println("Created " + routine.id().value() + " (" + form + ")");
@@ -187,7 +209,9 @@ public class RoutinesCommand implements Runnable {
                         routine.id().value(),
                         routine.name(),
                         Trigger.parse(routine.trigger()).toOptional()
-                                .map(t -> t instanceof Trigger.Webhook ? "webhook" : routine.trigger())
+                                .map(t -> t instanceof Trigger.Webhook hook
+                                        ? "webhook" + (hook.topic().isEmpty() ? "" : " topic=" + hook.topic())
+                                        : routine.trigger())
                                 .orElse(routine.trigger()),
                         routine.enabled() ? (due ? "DUE" : "scheduled") : "paused");
                 System.out.println("    prompt: " + routine.prompt());

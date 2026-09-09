@@ -150,6 +150,17 @@ native-image:
     - $JC run "family" --jclaw.loop-families.strict.base=reflective --jclaw.loop-families.strict.review-instruction=REVIEW-IT --jclaw.loop-family=strict '--jclaw.mock-script[0]=text:draft' '--jclaw.mock-script[1]=text:REVIEWED' | grep -q REVIEWED
     - "! $JC run x --jclaw.loop-family=nope"
     - "! $JC run x --jclaw.loop-families.canonical.base=reflective --jclaw.loop-families.canonical.review-instruction=x"
+    # Triggers: a watch, a webhook topic, and the inbound-message event type all bind and
+    # round-trip through the store. A watch also proves the durable fingerprint works across
+    # processes, which is the whole reason it is not held in memory.
+    - mkdir -p $SMOKE/src && echo 'class One {}' > $SMOKE/src/One.java
+    - $JC routines add --name ci-watch --watch 'src/**/*.java' -- look at it
+    - $JC routines add --name ci-hook --webhook --topic deploys -- handle it
+    - $JC routines add --name ci-inbox --on turn.submitted --when thread=inbox -- triage it
+    - $JC routines list | grep -q 'topic=deploys'
+    - $JC worker --once                       # baseline; the first look never fires
+    - echo 'class Two {}' > $SMOKE/src/Two.java
+    - $JC worker --once | grep -q 'watch src'
     # MCP: a remote server configured with OAuth 2.1 client credentials round-trips through the
     # store. Nothing is contacted — the point is that the record binds and replays under AOT.
     - $JC mcp add --name ci-oauth --url https://mcp.example.com/mcp --oauth-client-id jclaw --oauth-client-secret ci-oauth-secret

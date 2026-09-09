@@ -613,8 +613,41 @@ public final class JclawHttpServer {
                 + payload + "\n```";
         routines.get().recordFiring(routine.get().id(), clock.instant());
         TurnRunId run = runtime.enqueue(routine.get().thread(), ChatMessage.user(prompt));
-        send(exchange, 202, Map.of("run", run.value(), "thread", routine.get().thread().value(),
-                "status", "QUEUED"));
+
+        // Fan-out: every other enabled routine declaring the same webhook topic. They are fired
+        // without presenting their own secret, and that is sound rather than lax — declaring the
+        // topic *is* the subscription, and it is written by the operator in the routine, not by
+        // the caller in the request. A caller cannot name a topic or add a routine to one.
+        List<Map<String, String>> alsoFired = new ArrayList<>();
+        if (!trigger.topic().isEmpty()) {
+            for (RoutineStore.Routine other : routines.get().list(runtime.scopeFor(new ThreadId("routines")))) {
+                if (other.id().equals(routine.get().id()) || !other.enabled()) {
+                    continue;
+                }
+                if (!(Trigger.parse(other.trigger()).toOptional().orElse(null)
+                        instanceof Trigger.Webhook subscriber) || !subscriber.sharesTopicWith(trigger)) {
+                    continue;
+                }
+                routines.get().recordFiring(other.id(), clock.instant());
+                TurnRunId fanned = runtime.enqueue(other.thread(),
+                        ChatMessage.user(other.prompt() + "\n\nWebhook payload (topic "
+                                + trigger.topic() + ")"
+                                + (truncated ? ", truncated to " + MAX_WEBHOOK_BODY + " bytes" : "")
+                                + ":\n```\n" + payload + "\n```"));
+                alsoFired.add(Map.of("routine", other.name(), "run", fanned.value(),
+                        "thread", other.thread().value()));
+            }
+        }
+
+        Map<String, Object> answer = new LinkedHashMap<>();
+        answer.put("run", run.value());
+        answer.put("thread", routine.get().thread().value());
+        answer.put("status", "QUEUED");
+        if (!alsoFired.isEmpty()) {
+            answer.put("topic", trigger.topic());
+            answer.put("alsoFired", alsoFired);
+        }
+        send(exchange, 202, answer);
     }
 
     /**
