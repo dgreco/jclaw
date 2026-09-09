@@ -127,6 +127,11 @@ public class JclawRuntime {
         this.clock = Objects.requireNonNull(clock, "clock");
     }
 
+    /** How long a claim lasts before another worker may take the run. */
+    public Duration leaseTtl() {
+        return LEASE_TTL;
+    }
+
     /** Refuses an enqueue for a tenant that has spent its budget. Callers map it to a refusal. */
     public static final class TenantOverBudget extends IllegalStateException {
         public TenantOverBudget(String tenant) {

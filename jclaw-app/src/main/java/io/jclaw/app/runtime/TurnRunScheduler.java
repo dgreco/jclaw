@@ -8,6 +8,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -81,25 +82,67 @@ public class TurnRunScheduler {
         Objects.requireNonNull(cancelled, "cancelled");
         reapFinished();
 
-        Map<String, Integer> byTenant = new java.util.HashMap<>();
-        inFlight.values().forEach(entry -> byTenant.merge(entry.tenant(), 1, Integer::sum));
+        // Capacity is what the *deployment* is running, not what this process is running. With a
+        // shared store two workers each counted their own map and each started up to the cap, so
+        // the operator's "concurrency 2" quietly became 2 per host. Counting RUNNING rows makes
+        // the cap mean what it says, and makes a thread another host is working on visibly busy
+        // rather than something to attempt and have the lock refuse.
+        Running running = running();
         List<RunStore.RunRecord> queued = runs.byStatus(TurnStatus.QUEUED, Integer.MAX_VALUE);
         List<RunStore.RunRecord> chosen = RunScheduling.select(
-                queued, Set.copyOf(inFlight.keySet()), inFlight.size(), byTenant,
+                queued, running.threads(), running.total(), running.byTenant(),
                 new RunScheduling.Caps(maxConcurrent, maxPerTenant));
 
         List<TurnRunId> started = new ArrayList<>();
         for (RunStore.RunRecord record : chosen) {
             String key = record.scope().lockKey();
             TurnRunId run = record.run();
-            log.debug("scheduler: starting run {} on thread {} ({} in flight)",
-                    run.value(), record.scope().thread().value(), inFlight.size());
+
+            // Claim before submitting, not after. `tick` hands a run to an executor and returns,
+            // so the store would show nothing until that thread got to it — and two hosts ticking
+            // milliseconds apart would both see an empty store and both start. Claiming here
+            // makes `RunStore.claim` the arbiter, the same atomic primitive the lease already is,
+            // and a false answer means another host won the race for this run.
+            if (!runs.claim(run, runtime.workerId(), Instant.now().plus(runtime.leaseTtl()))) {
+                log.debug("scheduler: run {} was claimed by another worker; leaving it", run.value());
+                continue;
+            }
+            log.debug("scheduler: starting run {} on thread {} ({} running across the deployment)",
+                    run.value(), record.scope().thread().value(), running.total());
             Future<JclawRuntime.TurnResult> future =
                     executor.submit(() -> runtime.resume(run, cancelled));
             inFlight.put(key, new InFlight(run, record.scope().tenant(), future));
             started.add(run);
         }
         return List.copyOf(started);
+    }
+
+    /** What the whole deployment has executing: threads, total, and per tenant. */
+    private record Running(Set<String> threads, int total, Map<String, Integer> byTenant) { }
+
+    /**
+     * The deployment's in-flight picture, from the store unioned with this process's own.
+     *
+     * <p>Both halves are needed and neither is redundant. The store is the only place another
+     * host is visible. This process's own map covers the window between submitting a run to the
+     * executor and that run marking itself {@code RUNNING} — without it a burst of ticks would
+     * start past the cap before the first row appeared. The union is keyed by run id, so a run in
+     * both is counted once.
+     */
+    private Running running() {
+        Map<TurnRunId, String> threadByRun = new java.util.LinkedHashMap<>();
+        Map<TurnRunId, String> tenantByRun = new java.util.LinkedHashMap<>();
+        for (RunStore.RunRecord record : runs.byStatus(TurnStatus.RUNNING, Integer.MAX_VALUE)) {
+            threadByRun.put(record.run(), record.scope().lockKey());
+            tenantByRun.put(record.run(), record.scope().tenant());
+        }
+        inFlight.forEach((key, entry) -> {
+            threadByRun.put(entry.run(), key);
+            tenantByRun.put(entry.run(), entry.tenant());
+        });
+        Map<String, Integer> byTenant = new java.util.HashMap<>();
+        tenantByRun.values().forEach(tenant -> byTenant.merge(tenant, 1, Integer::sum));
+        return new Running(Set.copyOf(threadByRun.values()), threadByRun.size(), byTenant);
     }
 
     /** Runs that have finished since the last call, with their results. */

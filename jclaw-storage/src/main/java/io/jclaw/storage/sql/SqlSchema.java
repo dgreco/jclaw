@@ -117,7 +117,14 @@ public final class SqlSchema {
                             + " updated_at TIMESTAMP NOT NULL,"
                             + " body TEXT NOT NULL)",
                     "CREATE INDEX jclaw_run_projection_thread ON jclaw_run_projection (thread)",
-                    "CREATE INDEX jclaw_run_projection_status ON jclaw_run_projection (status)")));
+                    "CREATE INDEX jclaw_run_projection_status ON jclaw_run_projection (status)")),
+            new Migration(4, "thread locks", List.of(
+                    "CREATE TABLE jclaw_thread_locks ("
+                            + " scope VARCHAR(400) PRIMARY KEY,"
+                            + " owner VARCHAR(200) NOT NULL,"
+                            + " acquired_at TIMESTAMP NOT NULL,"
+                            + " expires_at TIMESTAMP NOT NULL)",
+                    "CREATE INDEX jclaw_thread_locks_expiry ON jclaw_thread_locks (expires_at)")));
 
     private SqlSchema() {
     }

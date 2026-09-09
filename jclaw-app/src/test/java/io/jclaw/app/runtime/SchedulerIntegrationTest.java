@@ -21,10 +21,13 @@ import org.springframework.test.context.DynamicPropertySource;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -126,5 +129,80 @@ class SchedulerIntegrationTest {
         assertEquals(TurnStatus.QUEUED, status(y));
         scheduler.runOnce(1, new AtomicBoolean(false));
         assertEquals(TurnStatus.COMPLETED, status(y));
+    }
+
+    /**
+     * A run another host is executing: RUNNING in the shared store, leased to a worker that is
+     * not this process.
+     *
+     * <p>This is what a second host looks like from here, and it is the only honest way to write
+     * it in one JVM. Two schedulers over one {@link JclawRuntime} would share its worker id, so
+     * {@code claim} would renew rather than contend and neither would ever refuse the other —
+     * which is the mistake the first draft of this test made.
+     */
+    private TurnRunId runningOnAnotherHost(String thread) {
+        TurnRunId run = runtime.enqueue(new ThreadId(thread), "work for the other host");
+        assertTrue(runs.claim(run, "another-host", Instant.now().plus(Duration.ofMinutes(2))),
+                "the other host takes the lease first");
+        runs.updateStatus(run, TurnStatus.RUNNING);
+        return run;
+    }
+
+    /** Finishes a fabricated run, so it stops occupying a slot for every later test. */
+    private void finish(TurnRunId run) {
+        if (status(run) == TurnStatus.QUEUED) {
+            runs.updateStatus(run, TurnStatus.RUNNING);
+        }
+        runs.updateStatus(run, TurnStatus.COMPLETED);
+    }
+
+    /** Whether a tick started this test's own run. The store is shared, so nothing else is asserted. */
+    private boolean ticksInclude(int cap, TurnRunId mine) {
+        return scheduler.tick(cap, new AtomicBoolean(false)).contains(mine);
+    }
+
+    @Test
+    @DisplayName("the cap counts what the deployment is running, not what this process is")
+    void capIsSharedAcrossHosts() {
+        TurnRunId elsewhere = runningOnAnotherHost("shared-cap-elsewhere");
+        TurnRunId mine = runtime.enqueue(new ThreadId("shared-cap-mine"), "work for me");
+
+        assertFalse(ticksInclude(1, mine),
+                "one run is already executing across the deployment, so a cap of 1 is spent");
+        assertEquals(TurnStatus.QUEUED, status(mine));
+
+        finish(elsewhere);
+        assertTrue(ticksInclude(4, mine), "the slot freed and this host took the queued run");
+        scheduler.drain();
+    }
+
+    @Test
+    @DisplayName("a thread another host is running is not even attempted")
+    void anotherHostsThreadIsBusy() {
+        TurnRunId elsewhere = runningOnAnotherHost("contended-thread");
+        TurnRunId queued = runtime.enqueue(new ThreadId("contended-thread"), "second turn");
+
+        assertFalse(ticksInclude(8, queued),
+                "the thread lock would refuse it anyway; not picking it is the cheaper answer");
+        assertEquals(TurnStatus.QUEUED, status(queued));
+
+        finish(elsewhere);
+        assertTrue(ticksInclude(8, queued));
+        scheduler.drain();
+    }
+
+    @Test
+    @DisplayName("a queued run another host claimed first is skipped, not started twice")
+    void aRunClaimedElsewhereIsSkipped() {
+        TurnRunId contended = runtime.enqueue(new ThreadId("claim-race"), "who gets this");
+        // The other host wins the lease between this host selecting the run and starting it.
+        assertTrue(runs.claim(contended, "another-host", Instant.now().plus(Duration.ofMinutes(2))));
+
+        assertFalse(ticksInclude(8, contended),
+                "claiming at selection is what makes the store arbitrate the race");
+        assertEquals(TurnStatus.QUEUED, status(contended));
+
+        finish(contended);
+        scheduler.drain();
     }
 }

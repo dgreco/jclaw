@@ -2,7 +2,7 @@
 
 An honest enumeration of what [IronClaw](https://github.com/nearai/ironclaw) (internally "Reborn") has that jclaw does not, and of what jclaw now has. jclaw is roughly 32k lines of Java (plus 13k of tests) against IronClaw's ~1.4M lines of Rust across ~63 crates. The **architecture** is equivalent — layer ladder, turn/run lifecycle, untrusted `LoopExit`, single `CapabilityHost` authority boundary, checkpoint-kind–driven recovery — and, after the September 2026 parity work, most of the runtime *mechanisms* are present in some form. What remains missing is breadth, not mechanism: section 16 records what each closed item delivered, and section 17 is the ranked list of what is left. This file is the list, organised by IronClaw's own crate families so a gap can be traced to the crate that fills it upstream.
 
-Sources: IronClaw's `README.md`, `crates/Architecture.md`, and the `crates/` listing as of September 2026; jclaw's code on this checkout (392 tests, 0 failures). Where the upstream doc names a concept and jclaw has an equivalent under a different name, the mapping is given. Where the gap is uncertain it is marked *(unverified)*.
+Sources: IronClaw's `README.md`, `crates/Architecture.md`, and the `crates/` listing as of September 2026; jclaw's code on this checkout (402 tests, 0 failures). Where the upstream doc names a concept and jclaw has an equivalent under a different name, the mapping is given. Where the gap is uncertain it is marked *(unverified)*.
 
 Legend: ✅ at parity · 🟡 partial · ❌ missing · ➕ jclaw-only
 
@@ -348,14 +348,17 @@ promoted two items nobody would have ranked highly before.
 Three entries below are *decisions* rather than gaps, marked **(by choice)**. They are listed so
 the list is complete, not so someone closes them without re-reading the reasoning in section 16.
 
-1. **A second host.** Less structural than it sounds, and worth stating precisely. The run store,
-   leases (`RunStore.claim` is already worker-scoped with a TTL), approvals, and every other store
-   coordinate correctly through `storage=sql`. Two things do not: `FileThreadLock` is the only
-   `ThreadLock` and is an OS file lock, which is unreliable on a shared filesystem and invisible
-   to another host; and `TurnRunScheduler` is per-process, so two workers would each schedule
-   under their own concurrency cap rather than a shared one. Closing it is one `ThreadLock` over
-   a SQL advisory lock plus a shared notion of capacity — but nothing today tests two hosts, and
-   an untested exclusion is not an exclusion.
+1. ~~**A second host.**~~ — closed: with `storage=sql` the thread lock is a row in
+   `jclaw_thread_locks` rather than an OS file lock, so the exclusion spans machines; the
+   scheduler counts what the *deployment* is running rather than what its own process is, so a
+   cap of 2 is two runs and not two per host; and a run is claimed at the moment it is selected,
+   which makes `RunStore.claim` arbitrate the race between two hosts ticking milliseconds apart.
+   Verified with two processes, separate state directories, one database. **Still open: fencing.**
+   A row cannot vanish when a process dies, so it carries a lease and the holder renews it; a host
+   frozen past the lease — a long pause, a suspended VM, a partition — can be displaced and, if it
+   then resumes and writes, two runs can still interleave one transcript. Closing that needs a
+   fence token threaded through every durable write. What exists is a real exclusion between live
+   hosts, which is more than the nothing that was there before, and less than a fenced lock.
 2. **Inbound content is never scanned.** `InjectionHeuristics` runs in exactly one place —
    `DefaultCapabilityHost.succeed`, on capability *output*. A user's message, a Slack message
    routed by a channel adapter, and a webhook body all reach the prompt unexamined, and there is

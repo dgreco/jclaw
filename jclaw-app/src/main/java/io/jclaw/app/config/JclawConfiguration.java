@@ -678,12 +678,24 @@ public class JclawConfiguration {
     }
 
     /**
-     * One active run per thread, enforced with OS file locks. The lock is taken before the inbound
-     * message is made durable and dies with the process, so a crash leaves no thread locked.
+     * One active run per thread.
+     *
+     * <p>With JSONL storage this is an OS file lock: taken before the inbound message is made
+     * durable, and it dies with the process, so a crash leaves no thread locked. The guarantee
+     * is one host, which is the topology a state directory supports anyway.
+     *
+     * <p>With {@code storage=sql} it is a row instead, so the exclusion spans hosts. That is
+     * strictly more useful and strictly weaker: a row cannot vanish when a process dies, so it
+     * carries a lease and the holder renews it, and a host frozen past the lease can be
+     * displaced. {@link io.jclaw.storage.lock.SqlThreadLock} says exactly what that does and
+     * does not guarantee.
      */
     @Bean
-    public ThreadLock threadLock(JclawProperties properties) {
-        return new FileThreadLock(properties.locksPath());
+    public ThreadLock threadLock(JclawProperties properties, StorageBackend backend, Clock clock) {
+        return backend.dataSource()
+                .<ThreadLock>map(source -> new io.jclaw.storage.lock.SqlThreadLock(
+                        source, "host-" + java.util.UUID.randomUUID().toString().substring(0, 8), clock))
+                .orElseGet(() -> new FileThreadLock(properties.locksPath()));
     }
 
     @Bean

@@ -143,6 +143,9 @@ native-image:
     - ./jclaw-app/target/jclaw status -n 3 --jclaw.workspace=$SMOKE --jclaw.state-dir=$SMOKE/sql --jclaw.provider=mock --jclaw.storage=sql | grep -q "run.finished"
     # Schema 2 (a table per busy store) and 3 (materialised projections) reached the database,
     # and the projection a finished run wrote reads back through the pooled connection.
+    # The thread lock is a row under sql, so schema 4 and its table must be there: a missing
+    # lock table would silently mean no exclusion at all between two hosts.
+    - ./jclaw-app/target/jclaw doctor --jclaw.workspace=$SMOKE --jclaw.state-dir=$SMOKE/sql --jclaw.provider=mock --jclaw.storage=sql || true
     - export SQLRUN=$(./jclaw-app/target/jclaw status -n 20 --jclaw.workspace=$SMOKE --jclaw.state-dir=$SMOKE/sql --jclaw.provider=mock --jclaw.storage=sql | grep -o 'run_[0-9a-f]*' | head -1)
     - ./jclaw-app/target/jclaw status --run $SQLRUN --spans --jclaw.workspace=$SMOKE --jclaw.state-dir=$SMOKE/sql --jclaw.provider=mock --jclaw.storage=sql | grep -q COMPLETED
     # A loop family defined in configuration, and the startup validation that catches a typo in

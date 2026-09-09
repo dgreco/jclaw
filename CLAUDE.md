@@ -23,7 +23,7 @@ jclaw is a Java/Spring Boot reimplementation of the **architecture** of
 untrusted-`LoopExit` trust model, and the `CapabilityHost` authority boundary are faithful; the
 feature surface is a fraction of IronClaw's. See **Not built yet** for the honest list.
 
-392 tests pass across 9 modules, including 15 machine-checked architecture rules.
+402 tests pass across 9 modules, including 15 machine-checked architecture rules.
 
 ## Commands
 
@@ -299,10 +299,14 @@ the Anthropic SDK, and tool lanes may not read the process environment.
 - Subagents are **child runs on the same machinery** — same turn machine, same interpreter, same
   `CapabilityHost` — never a second private engine. Nesting depth is derived from the thread id
   (`parent~sub1`) rather than passed as a parameter, so a model cannot understate its own depth.
-- **One active run per thread.** `JclawRuntime.submit` and `resume` take a `ThreadLock` (an OS
-  file lock per canonical scope, `FileThreadLock`) before the inbound message is written, so a
-  refused submission leaves no trace and two processes can never interleave one transcript. The
-  lock dies with its process; there is no TTL to reason about. Refusal is `THREAD_BUSY`.
+- **One active run per thread.** `JclawRuntime.submit` and `resume` take a `ThreadLock` before
+  the inbound message is written, so a refused submission leaves no trace and two runs can never
+  interleave one transcript. Refusal is `THREAD_BUSY`. The implementation follows the storage
+  backend, and the two differ in a way worth knowing: `FileThreadLock` (JSONL) is an OS file lock
+  that dies with its process, so there is no TTL to reason about but the guarantee stops at one
+  host; `SqlThreadLock` (`storage=sql`) is a row, so it spans hosts but is a *lease* the holder
+  renews, and a host frozen past the lease can be displaced. Acquisition is a primary-key insert
+  either way, so live contenders are always resolved atomically.
 - **Configuration can only tighten policy.** `jclaw.denied-capabilities` adds hard denials on top
   of the approval-mode posture and removes the tool from the published surface; the egress lists
   narrow `EgressGuard` and never bypass its private-network or metadata checks. Both are
@@ -440,13 +444,14 @@ Honest gaps against IronClaw's surface. jclaw is ~32k lines against IronClaw's ~
 architecture and most runtime mechanisms are equivalent, the breadth is not. PARITY.md section
 17 ranks these; section 16 records what the closed items actually delivered.
 
-- **A second host** — less structural than "single-host" suggests. The run store, leases
-  (`RunStore.claim` is worker-scoped with a TTL), approvals, and every other store coordinate
-  correctly through `storage=sql`. Two things do not: `FileThreadLock` is the only `ThreadLock`
-  and is an OS file lock, unreliable on a shared filesystem and invisible to another host; and
-  `TurnRunScheduler` is per-process, so two workers would each schedule under their own
-  concurrency cap. Closing it is one `ThreadLock` over a SQL advisory lock plus a shared notion
-  of capacity — but nothing today tests two hosts, and an untested exclusion is not an exclusion.
+- **Fencing a frozen host** — with `storage=sql` two hosts now exclude each other: the thread
+  lock is a row (`SqlThreadLock`), the scheduler counts the deployment's running runs rather than
+  its own, and a run is claimed at selection so `RunStore.claim` arbitrates the race. What is
+  missing is fencing. A row cannot vanish when a process dies, so it is a lease the holder
+  renews, and a host frozen past it — a long GC pause, a suspended VM, a partition — can be
+  displaced; if it then resumes and writes, two runs can interleave one transcript. A fence token
+  threaded through every durable write would close it. Live hosts exclude each other correctly;
+  a frozen one is the hole.
 - **Channel adapters beyond two** — Slack and Telegram work over `POST /channels/{adapter}`,
   with reply-target bindings that survive gates and restarts. There is no Discord, Matrix, or
   email adapter, and no outbound-initiated message: jclaw answers, it does not start a
