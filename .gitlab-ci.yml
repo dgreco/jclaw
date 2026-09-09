@@ -208,8 +208,11 @@ native-image:
     # would actually fail. Everything above this line used embedded H2.
     - 'timeout 60 bash -c "until (echo > /dev/tcp/postgres/5432) 2>/dev/null; do sleep 1; done" && echo "postgres reachable"'
     - export PGDIR=$(mktemp -d)
-    - export JCPG="./jclaw-app/target/jclaw --jclaw.workspace=$PGDIR --jclaw.state-dir=$PGDIR/state --jclaw.provider=mock --jclaw.approval-mode=trusted --jclaw.storage=sql --jclaw.datasource-url=jdbc:postgresql://postgres:5432/jclaw --jclaw.datasource-username=jclaw"
-    - export JCLAW_DATASOURCE_PASSWORD=jclaw-ci-password
+    # The credential is scoped to these invocations with `env`, not exported. Exporting it broke
+    # the H2 steps that follow: they share this shell, their database was created earlier with no
+    # password, and an inherited one is then rejected with "Wrong user name or password". Two
+    # databases in one script must not share a credential variable.
+    - export JCPG="env JCLAW_DATASOURCE_PASSWORD=jclaw-ci-password ./jclaw-app/target/jclaw --jclaw.workspace=$PGDIR --jclaw.state-dir=$PGDIR/state --jclaw.provider=mock --jclaw.approval-mode=trusted --jclaw.storage=sql --jclaw.datasource-url=jdbc:postgresql://postgres:5432/jclaw --jclaw.datasource-username=jclaw"
     # A turn proves the driver loads, every migration applies, and writes land.
     - $JCPG run "native on postgres" --jclaw.mock-script=text:pg-ok | grep -q pg-ok
     # Reads come back out of PostgreSQL, not out of a cache in the same process.
