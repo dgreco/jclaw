@@ -1,8 +1,8 @@
 # jclaw vs IronClaw — Parity
 
-An honest enumeration of what [IronClaw](https://github.com/nearai/ironclaw) (internally "Reborn") has that jclaw does not, and of what jclaw now has. jclaw is roughly 20k lines of Java (plus 6.5k of tests) against IronClaw's ~1.4M lines of Rust across ~63 crates. The **architecture** is equivalent — layer ladder, turn/run lifecycle, untrusted `LoopExit`, single `CapabilityHost` authority boundary, checkpoint-kind–driven recovery — and, after the September 2026 parity work, most of the runtime *mechanisms* are present in some form. What remains missing is breadth: channel adapters, a remote extension registry, and observability plumbing. This file is the list, organised by IronClaw's own crate families so a gap can be traced to the crate that fills it upstream.
+An honest enumeration of what [IronClaw](https://github.com/nearai/ironclaw) (internally "Reborn") has that jclaw does not, and of what jclaw now has. jclaw is roughly 20k lines of Java (plus 6.5k of tests) against IronClaw's ~1.4M lines of Rust across ~63 crates. The **architecture** is equivalent — layer ladder, turn/run lifecycle, untrusted `LoopExit`, single `CapabilityHost` authority boundary, checkpoint-kind–driven recovery — and, after the September 2026 parity work, most of the runtime *mechanisms* are present in some form. What remains missing is breadth: channel adapters, a remote extension registry, and a WASM lane. This file is the list, organised by IronClaw's own crate families so a gap can be traced to the crate that fills it upstream.
 
-Sources: IronClaw's `README.md`, `crates/Architecture.md`, and the `crates/` listing as of September 2026; jclaw's code on this checkout (274 tests, 0 failures). Where the upstream doc names a concept and jclaw has an equivalent under a different name, the mapping is given. Where the gap is uncertain it is marked *(unverified)*.
+Sources: IronClaw's `README.md`, `crates/Architecture.md`, and the `crates/` listing as of September 2026; jclaw's code on this checkout (277 tests, 0 failures). Where the upstream doc names a concept and jclaw has an equivalent under a different name, the mapping is given. Where the gap is uncertain it is marked *(unverified)*.
 
 Legend: ✅ at parity · 🟡 partial · ❌ missing · ➕ jclaw-only
 
@@ -220,10 +220,10 @@ At parity on the trust model and on the gate mechanics, and on tenant isolation;
 
 | Capability | IronClaw | jclaw |
 |---|---|---|
-| Structured tracing / metrics substrate (`ironclaw_observability`, `trace_commons`) | ✅ | ❌ — SLF4J/logback with `--debug`/`--trace`; no OpenTelemetry, no metrics |
+| Structured tracing / metrics substrate (`ironclaw_observability`, `trace_commons`) | ✅ | 🟡 both projected from the event log rather than instrumented: `Telemetry` counts every written event into Prometheus-format metrics at `/metrics`; the pure `RunTrace` turns a run's events into spans (root, model calls, capability calls, gates, with measured latencies) served as OTLP/JSON at `/runs/{r}/trace`, printed by `status --trace`, and exported to `jclaw.otlp-endpoint` when a run finishes. No OpenTelemetry SDK in-process, no propagation into provider/MCP calls, no histograms |
 | Latency harness (`harness/latency/`) | ✅ | ❌ |
 | Deployment assets (`deploy/`, `docker/`, `infra/runner/`) | ✅ | ❌ — one jar or one binary, no Dockerfile; a GitLab release pipeline publishes both |
-| Test tooling (`test-tools/`, `tests/` integration suites) | ✅ | 🟡 240 unit + integration tests, including a child-JVM test for cross-process thread locking and a fake-docker test for the sandbox contract; no end-to-end suite against a live provider |
+| Test tooling (`test-tools/`, `tests/` integration suites) | ✅ | 🟡 277 unit + integration tests, including a child-JVM test for cross-process thread locking and a fake-docker test for the sandbox contract; no end-to-end suite against a live provider |
 | `doctor`-style preflight | *(unverified)* | ➕ `jclaw doctor` |
 
 ---
@@ -276,6 +276,6 @@ The twelve items of the original list and the six that followed are closed (sect
 5. ~~**Sandboxing beyond the shell lane**~~ — closed for the code that is actually untrusted: MCP servers now run in the container contract (`mcp-backend: docker`) beside shell commands, with network by configuration and environment by name. Still open under this heading: a WASM lane with capability-based host imports and resource limiting, a sandbox orchestrator with per-job tokens and LLM proxying, and per-host egress for a server process rather than all-or-nothing.
 6. ~~**Extension ecosystem**~~ — closed at the package level: manifests, digests, signatures, trust decided at install, skill and MCP packages. Still open under this heading: a remote registry with versioned upgrades, profiles, channel packages, and a WASM tool kind.
 7. ~~**Loop hooks and loop families**~~ — closed: `LoopHook` at the model and capability stages, `LoopFamily` with a second strategy. Still open under this heading: hooks on prompt assembly and gate raising, and families defined outside Java.
-8. **Observability substrate** (§13) — OpenTelemetry traces and metrics; today the event log and SLF4J are the whole story.
+8. ~~**Observability substrate**~~ — closed as projections of the audit log: Prometheus metrics, OTLP traces, collector export. Still open under this heading: an in-process OpenTelemetry SDK with context propagation into provider and MCP calls, and latency histograms.
 9. **Triggers beyond cron** (§7) — event, webhook, and heartbeat triggers; the ingress could route webhooks to routines with little new machinery.
 10. **MCP breadth** (§3) — HTTP/SSE transports, OAuth, resources and prompts, lazy server lifecycle, and host-mediated egress for server processes.

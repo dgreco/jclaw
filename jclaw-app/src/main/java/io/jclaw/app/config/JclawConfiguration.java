@@ -46,6 +46,9 @@ import io.jclaw.storage.routine.JsonlRoutineStore;
 import io.jclaw.storage.run.JsonlRunStore;
 import io.jclaw.storage.extension.FilesystemExtensionRegistry;
 import io.jclaw.contracts.loop.LoopHook;
+import io.jclaw.app.observability.ObservedEventLog;
+import io.jclaw.app.observability.OtlpExporter;
+import io.jclaw.app.observability.Telemetry;
 import io.jclaw.app.runtime.BudgetNoticeHook;
 import io.jclaw.contracts.extension.ExtensionRegistry;
 import io.jclaw.storage.rows.RowStore;
@@ -363,9 +366,35 @@ public class JclawConfiguration {
         return backend.open("events", properties.eventLogPath());
     }
 
+    /** Process metrics, fed by every event the log accepts. */
     @Bean
-    public EventLog eventLog(RowStore eventLogFile) {
-        return new JsonlEventLog(eventLogFile);
+    public Telemetry telemetry() {
+        return new Telemetry();
+    }
+
+    /**
+     * Trace export, when {@code jclaw.otlp-endpoint} names a collector. The bean is the closer
+     * too, so queued exports get a moment to drain at shutdown.
+     */
+    @Bean
+    public OtlpExporters otlpExporter(JclawProperties properties) {
+        String endpoint = properties.otlpEndpoint();
+        return new OtlpExporters(endpoint == null || endpoint.isBlank()
+                ? java.util.Optional.empty()
+                : java.util.Optional.of(new OtlpExporter(endpoint.trim(), "jclaw")));
+    }
+
+    /** Holds the optional exporter so Spring has a bean to close at shutdown. */
+    public record OtlpExporters(java.util.Optional<OtlpExporter> exporter) implements AutoCloseable {
+        @Override
+        public void close() {
+            exporter.ifPresent(OtlpExporter::close);
+        }
+    }
+
+    @Bean
+    public EventLog eventLog(RowStore eventLogFile, Telemetry telemetry, OtlpExporters otlpExporter) {
+        return new ObservedEventLog(new JsonlEventLog(eventLogFile), telemetry, otlpExporter.exporter());
     }
 
     @Bean

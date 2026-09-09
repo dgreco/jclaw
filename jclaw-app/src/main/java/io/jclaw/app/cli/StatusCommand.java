@@ -28,6 +28,9 @@ public class StatusCommand implements Callable<Integer> {
     @Option(names = {"-n", "--limit"}, description = "Number of events to show. Default 20.")
     private int limit = 20;
 
+    @Option(names = "--trace", description = "With --run: print the run's spans (root, model calls, capabilities, gates).")
+    private boolean trace;
+
     @Option(names = "--run", description = "Show one run's projection folded from its events, instead of the tail.")
     private String run;
 
@@ -86,6 +89,21 @@ public class StatusCommand implements Callable<Integer> {
             System.out.println("injection    " + view.injectionFindings() + " finding(s)");
         }
         view.openGate().ifPresent(gate -> System.out.println("open gate    " + gate.kind() + " " + gate.id()));
+        if (trace) {
+            System.out.println();
+            System.out.println("trace        " + io.jclaw.domain.observability.RunTrace.traceId(id));
+            for (var span : io.jclaw.domain.observability.RunTrace.spans(id, all)) {
+                System.out.printf("  %s%-30s %6d ms  %s%n", span.parentSpanId().isPresent() ? "  " : "",
+                        span.name(), span.duration().toMillis(),
+                        span.attributes().entrySet().stream()
+                                .filter(e -> !e.getKey().equals("jclaw.run") && !e.getKey().equals("jclaw.fingerprint"))
+                                .map(e -> e.getKey().substring("jclaw.".length()) + "=" + e.getValue())
+                                .sorted().collect(java.util.stream.Collectors.joining(" ")));
+                for (var event : span.events()) {
+                    System.out.printf("      @%s %s%n", event.at(), event.name());
+                }
+            }
+        }
         return 0;
     }
 

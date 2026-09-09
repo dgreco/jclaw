@@ -2,7 +2,9 @@ package io.jclaw.app.http;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
+import io.jclaw.app.observability.Telemetry;
 import io.jclaw.app.runtime.JclawRuntime;
+import io.jclaw.domain.observability.RunTrace;
 import io.jclaw.contracts.model.ModelProvider;
 import io.jclaw.contracts.Result;
 import io.jclaw.contracts.capability.ApprovalStore;
@@ -65,6 +67,7 @@ public final class JclawHttpServer {
     private static final Pattern THREAD_MESSAGES = Pattern.compile("^/threads/([^/]+)/messages$");
     private static final Pattern RUN = Pattern.compile("^/runs/([^/]+)$");
     private static final Pattern RUN_EVENTS = Pattern.compile("^/runs/([^/]+)/events$");
+    private static final Pattern RUN_TRACE = Pattern.compile("^/runs/([^/]+)/trace$");
     private static final Pattern APPROVAL = Pattern.compile("^/approvals/([^/]+)$");
 
     /** How often the event stream polls the log. */
@@ -79,6 +82,7 @@ public final class JclawHttpServer {
     private final Optional<String> token;
     private final Map<String, String> tokensToUsers;
     private final String model;
+    private final Telemetry telemetry;
     private final JsonMapper mapper = JsonMapper.builder().build();
     private HttpServer server;
 
@@ -96,6 +100,15 @@ public final class JclawHttpServer {
             JclawRuntime runtime, RunStore runs, EventLog events, ThreadService threads,
             JsonlApprovalStore approvals, Clock clock, Optional<String> token,
             Map<String, String> users, String model) {
+        this(runtime, runs, events, threads, approvals, clock, token, users, model, new Telemetry());
+    }
+
+    /** @param telemetry the process metrics {@code /metrics} renders */
+    public JclawHttpServer(
+            JclawRuntime runtime, RunStore runs, EventLog events, ThreadService threads,
+            JsonlApprovalStore approvals, Clock clock, Optional<String> token,
+            Map<String, String> users, String model, Telemetry telemetry) {
+        this.telemetry = Objects.requireNonNull(telemetry, "telemetry");
         this.runtime = Objects.requireNonNull(runtime, "runtime");
         this.runs = Objects.requireNonNull(runs, "runs");
         this.events = Objects.requireNonNull(events, "events");
@@ -168,6 +181,16 @@ public final class JclawHttpServer {
                                 .map(this::message).toList()));
             } else if (method.equals("GET") && (m = RUN.matcher(path)).matches()) {
                 run(exchange, principal, new TurnRunId(m.group(1)));
+            } else if (method.equals("GET") && path.equals("/metrics")) {
+                sendText(exchange, "text/plain; version=0.0.4; charset=utf-8", telemetry.prometheus());
+            } else if (method.equals("GET") && (m = RUN_TRACE.matcher(path)).matches()) {
+                TurnRunId run = new TurnRunId(m.group(1));
+                if (!owned(principal, run)) {
+                    send(exchange, 404, Map.of("error", "no such run"));
+                } else {
+                    send(exchange, 200, RunTrace.otlp(run,
+                            events.readRun(run).stream().map(EventLog.Entry::event).toList(), "jclaw"));
+                }
             } else if (method.equals("GET") && (m = RUN_EVENTS.matcher(path)).matches()) {
                 TurnRunId run = new TurnRunId(m.group(1));
                 if (!owned(principal, run)) {
@@ -336,6 +359,15 @@ public final class JclawHttpServer {
     private static void writeSse(OutputStream out, String json) throws IOException {
         out.write(("data: " + json + "\n\n").getBytes(StandardCharsets.UTF_8));
         out.flush();
+    }
+
+    private void sendText(HttpExchange exchange, String contentType, String text) throws IOException {
+        byte[] bytes = text.getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().add("Content-Type", contentType);
+        exchange.sendResponseHeaders(200, bytes.length);
+        try (OutputStream out = exchange.getResponseBody()) {
+            out.write(bytes);
+        }
     }
 
     private void sendHtml(HttpExchange exchange, String html) throws IOException {

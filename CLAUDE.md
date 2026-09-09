@@ -20,7 +20,7 @@ jclaw is a Java/Spring Boot reimplementation of the **architecture** of
 untrusted-`LoopExit` trust model, and the `CapabilityHost` authority boundary are faithful; the
 feature surface is a fraction of IronClaw's. See **Not built yet** for the honest list.
 
-274 tests pass across 9 modules, including 14 machine-checked architecture rules.
+277 tests pass across 9 modules, including 14 machine-checked architecture rules.
 
 ## Commands
 
@@ -65,7 +65,7 @@ The `native` profile lives in `jclaw-app/pom.xml`. The Boot parent contributes o
 | `retain [--dry-run]` | drop old rows of finished runs from results, events, checkpoints |
 | `secrets set\|list\|remove` | encrypted vault of credentials tools use by `{{secret:NAME}}` reference, bound to one capability and a host list |
 | `tools` | capability surface with effect/trust/unattended |
-| `status [--run id]` | recent activity from the event log, or one run's projection |
+| `status [--run id [--trace]]` | recent activity from the event log, or one run's projection, or its spans |
 | `doctor` | config + security posture; non-zero on real problems |
 
 `run --stream` prints model output as it arrives, over the Anthropic SDK's event stream or the
@@ -436,7 +436,10 @@ architecture and most runtime mechanisms are equivalent, the breadth is not. PAR
 - **Pluggable pipeline stages** — hooks cover pre/post model and capability, and two families
   exist (`canonical`, `reflective`); there is no hook on prompt assembly or gate raising, and a
   new family is Java code, not configuration.
-- **Observability substrate** — SLF4J and the event log only; no OpenTelemetry, no metrics.
+- **Live instrumentation** — metrics (`/metrics`, Prometheus text) and traces (`/runs/{r}/trace`,
+  OTLP/JSON, optional export to `otlp-endpoint`) are projections of the event log, computed
+  when an event is written or a run finishes; there is no in-process OpenTelemetry SDK, no
+  context propagation into provider or MCP calls, and no histograms (count, sum, max only).
 - **Triggers beyond cron** — no event, webhook, or heartbeat triggers; the ingress does not route
   webhooks to routines.
 - **MCP breadth** — stdio only; no HTTP/SSE transports, no OAuth, no resources or prompts, eager

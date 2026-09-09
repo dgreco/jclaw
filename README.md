@@ -61,7 +61,7 @@ jclaw reimplements the **architecture** of IronClaw — the seven-layer ladder, 
 
 Everything is durable JSONL under `~/.jclaw`: a run can park in one process, be approved in a second, and resume in a third. There is no database, and no server unless you start one (`jclaw serve`).
 
-**Status.** Milestones M0–M7 plus subagents (synchronous or asynchronous), MCP, streaming on every provider, lease-based crash recovery, a per-thread run lock, context compaction with model summaries, vector memory, configurable denials and egress lists, per-tool rate limits, injection heuristics, auth and process gates with expiry, a scheduler with `submit` and `worker`, an HTTP surface with run projections, event streams, and per-user tenants, attachments, store retention, an encrypted secret vault with host-side credential injection, a container sandbox for the shell lane, a SQL storage backend (embedded H2 or PostgreSQL) with schema migrations, signed extension packages, execution-stage hooks, and a second loop family. 274 tests pass across the modules, including 14 machine-checked architecture rules (ArchUnit). Both the uber jar and the native image are verified end to end, including subprocess spawning for MCP servers and shell tools. [PARITY.md](PARITY.md) lists what IronClaw still has that jclaw does not.
+**Status.** Milestones M0–M7 plus subagents (synchronous or asynchronous), MCP, streaming on every provider, lease-based crash recovery, a per-thread run lock, context compaction with model summaries, vector memory, configurable denials and egress lists, per-tool rate limits, injection heuristics, auth and process gates with expiry, a scheduler with `submit` and `worker`, an HTTP surface with run projections, event streams, and per-user tenants, attachments, store retention, an encrypted secret vault with host-side credential injection, a container sandbox for the shell lane, a SQL storage backend (embedded H2 or PostgreSQL) with schema migrations, signed extension packages, execution-stage hooks, a second loop family, and Prometheus metrics with OTLP trace export. 277 tests pass across the modules, including 14 machine-checked architecture rules (ArchUnit). Both the uber jar and the native image are verified end to end, including subprocess spawning for MCP servers and shell tools. [PARITY.md](PARITY.md) lists what IronClaw still has that jclaw does not.
 
 ---
 
@@ -236,6 +236,7 @@ jclaw:
 | `mcp-backend` | `host` | `host` runs MCP server processes directly; `docker` runs each one inside the sandbox contract (see [MCP servers](#mcp-servers-mcp)). |
 | `mcp-sandbox-image` / `mcp-sandbox-network` | *(blank)* | Overrides for MCP servers under `mcp-backend: docker`; blank inherits `sandbox-image` / `sandbox-network`. Servers usually need a runtime image (`node:22-alpine`) and, when their tool exists to reach an API, `bridge`. |
 | `storage` | `jsonl` | Where durable rows live: `jsonl` files under the state directory, or `sql` (every store in one database; see [The state directory](#the-state-directory)). Skills and thread locks stay on the filesystem either way. |
+| `otlp-endpoint` | *(blank)* | An OpenTelemetry collector's base URL (OTLP/HTTP, JSON). Every finished run's trace is POSTed to `<endpoint>/v1/traces`, best effort, off the request path. Blank disables export. |
 | `hooks` | `budget-notice` | Built-in execution-stage hooks to enable, by id. `budget-notice` tells the model, once most of the run's token budget is spent, to finish rather than start new work. Blank disables all built-ins. |
 | `loop-family` | `canonical` | The loop strategy. `reflective` has the model review its draft reply once, without tools and without streaming, before it is persisted; one extra model call per turn. |
 | `trusted-publishers` | *(none)* | Extension publishers whose signatures make an install `VERIFIED`, as a map of publisher name to base64 Ed25519 public key (`jclaw.trusted-publishers.acme=<key>`, printed by `extensions keygen`). |
@@ -443,6 +444,8 @@ jclaw serve --concurrency 4 --per-user 1 \
 | `GET /runs/{run}/events` | Server-sent events following that run's audit log, replaying what exists and pushing new entries until the run is terminal; each `data:` is the same redacted record the JSONL file holds. |
 | `GET /threads/{thread}/messages` | The transcript. |
 | `GET /approvals`, `POST /approvals/{gate}` `{"approved": true}` | Pending gates; decide one and requeue its run for the scheduler. |
+| `GET /runs/{run}/trace` | The run as an OTLP/JSON trace: a root span with a child per model call, capability call, and gate, projected from the same events. |
+| `GET /metrics` | Process metrics in Prometheus text format: runs, model calls and tokens, capability calls by outcome, gates, injections, hooks, latencies. |
 | `GET /health` | Liveness. |
 
 Every route requires `Authorization: Bearer <token>` when `serve-token` or `serve-users` is set, health included; the browser UI's event stream passes it as `?access_token=` because `EventSource` cannot set headers. There is no TLS: put a reverse proxy in front if it leaves the machine.
@@ -634,12 +637,20 @@ A row is dropped only when it is older than the store's `retention-*` age **and*
 ```bash
 jclaw status               # last 20 events from the audit log (-n to change)
 jclaw status --run run_…   # one run's projection: status, timings, calls, tokens, gates, findings
+jclaw status --run run_… --trace   # plus the run's spans: model calls, capabilities, gates, with durations
 jclaw tools [--verbose]    # capability surface: effect, trust, unattended?, schemas
 jclaw models [--probe]     # providers and credentials; --probe sends a tiny real request
 jclaw doctor               # configuration, security posture, and checks; exit 1 on a real problem
 ```
 
 `status` reads the redacted event log rather than internal state, so what you see is exactly what was durably recorded: claims, model calls with token counts and latency, capability invocations with outcome, injection findings (severity, rule count, and whether the output was warned about, sanitised, or blocked), gates, checkpoints, and finishes. `doctor` is designed as a CI preflight: `[fail]` lines (unreadable workspace, unwritable state dir, missing credential) set the exit code; warnings (private networks allowed, `trusted` mode) do not.
+
+### Observability
+
+The event log is the substrate; metrics and traces are projections of it, so neither can disagree with the audit record or carry anything a redactor did not pass.
+
+- **Metrics.** `serve` exposes `/metrics` in Prometheus text format: `jclaw_runs_submitted_total`, `jclaw_runs_finished_total{status}`, `jclaw_model_calls_total{provider,model}`, `jclaw_model_tokens_total{kind}`, `jclaw_model_latency_millis_{count,sum,max}`, `jclaw_capability_calls_total{capability,outcome}`, `jclaw_capability_latency_millis_*`, `jclaw_gates_raised_total{kind}`, `jclaw_injections_total`, `jclaw_secrets_injected_total`, `jclaw_hooks_fired_total`, `jclaw_checkpoints_total`. Counted at the moment each event is written; in-memory for the life of the process.
+- **Traces.** A run's events become one trace: a root span for the run (status, tokens, iterations, thread), a child span per model call and capability call with their measured latency, a span per gate from raised to resolved, and span events for claims, checkpoints, injection findings, secret injections, and hook firings. Trace and span ids derive from the run id, so re-exporting deduplicates. Read one with `status --run … --trace` or `GET /runs/{run}/trace` (OTLP/JSON), or set `otlp-endpoint` to have every finished run POSTed to a collector.
 
 ### Tracing a turn
 

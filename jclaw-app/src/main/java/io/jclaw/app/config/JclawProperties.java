@@ -90,6 +90,8 @@ import java.util.Map;
  *                             for a hosted deployment
  * @param datasourceUsername   database user; the password comes only from
  *                             {@code JCLAW_DATASOURCE_PASSWORD}
+ * @param otlpEndpoint         an OpenTelemetry collector's base URL (OTLP/HTTP); every finished
+ *                             run's trace is POSTed to {@code /v1/traces}. Blank disables export
  * @param hooks                built-in execution-stage hooks to enable, by id. {@code budget-notice}
  *                             tells the model when most of its token budget is spent
  * @param loopFamily           the loop strategy: {@code canonical}, or {@code reflective} (the
@@ -227,7 +229,9 @@ public record JclawProperties(
 
         @DefaultValue("budget-notice") List<String> hooks,
 
-        @DefaultValue("canonical") String loopFamily) {
+        @DefaultValue("canonical") String loopFamily,
+
+        @DefaultValue("") String otlpEndpoint) {
 
     public JclawProperties {
         // Constructor binding leaves an absent map null; an absent map means no limits.
@@ -296,7 +300,8 @@ public record JclawProperties(
                 "sa",
                 Map.of(),
                 List.of("budget-notice"),
-                "canonical");
+                "canonical",
+                "");
     }
 
     /** The JDBC URL {@code storage: sql} uses: the configured one, else an embedded H2 file. */

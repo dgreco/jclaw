@@ -60,6 +60,7 @@ public class ServeCommand implements Callable<Integer> {
     private final RoutineRunner routines;
     private final RecoveryService recovery;
     private final RetentionService retention;
+    private final io.jclaw.app.observability.Telemetry telemetry;
     private final Clock clock;
 
     @Option(names = "--host", description = "Interface to bind. Default 127.0.0.1.")
@@ -77,7 +78,9 @@ public class ServeCommand implements Callable<Integer> {
     public ServeCommand(
             JclawProperties properties, JclawRuntime runtime, RunStore runs, EventLog events,
             ThreadService threads, JsonlApprovalStore approvals, TurnRunScheduler scheduler,
-            RoutineRunner routines, RecoveryService recovery, RetentionService retention, Clock clock) {
+            RoutineRunner routines, RecoveryService recovery, RetentionService retention,
+            io.jclaw.app.observability.Telemetry telemetry, Clock clock) {
+        this.telemetry = telemetry;
         this.properties = properties;
         this.runtime = runtime;
         this.runs = runs;
@@ -99,7 +102,7 @@ public class ServeCommand implements Callable<Integer> {
 
         JclawHttpServer server = new JclawHttpServer(
                 runtime, runs, events, threads, approvals, clock, Optional.ofNullable(properties.serveToken()),
-                properties.serveUsers(), properties.model());
+                properties.serveUsers(), properties.model(), telemetry);
         server.start(host, port);
         boolean anyAuth = (properties.serveToken() != null && !properties.serveToken().isBlank())
                 || !properties.serveUsers().isEmpty();
