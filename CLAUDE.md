@@ -20,7 +20,7 @@ jclaw is a Java/Spring Boot reimplementation of the **architecture** of
 untrusted-`LoopExit` trust model, and the `CapabilityHost` authority boundary are faithful; the
 feature surface is a fraction of IronClaw's. See **Not built yet** for the honest list.
 
-291 tests pass across 9 modules, including 14 machine-checked architecture rules.
+294 tests pass across 9 modules, including 14 machine-checked architecture rules.
 
 ## Commands
 
@@ -422,9 +422,10 @@ architecture and most runtime mechanisms are equivalent, the breadth is not. PAR
   with reply-target bindings that survive gates and restarts. There is no Discord, Matrix, or
   email adapter, and no outbound-initiated message: jclaw answers, it does not start a
   conversation.
-- **Identity beyond static tokens** — `serve` users are tenants (`TurnScope.tenant()`), and every
-  scope-keyed store and the scheduler separate by tenant. There is no login flow, no roles, no
-  per-tenant policy or token accounting, and `TurnScope.agent()` is always `default`.
+- **Identity beyond one provider** — sessions, three roles, an OIDC authorization code flow with
+  PKCE, per-tenant policy and token budgets, and agents that give `TurnScope.agent()` meaning.
+  There is no user directory, no group or team, no per-tenant vault, and the id token's
+  signature is not verified because the code flow authenticates it by channel.
 - **Secrets beyond one tool call** — the vault leases values into `http_fetch` headers (and any
   capability a binding names) but there is no staged handoff to subprocesses, no leak scan of
   outbound model requests, and no per-tenant vaults.

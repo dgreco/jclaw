@@ -95,6 +95,26 @@ import java.util.Map;
  *                             {@code JCLAW_DATASOURCE_PASSWORD}
  * @param otlpEndpoint         an OpenTelemetry collector's base URL (OTLP/HTTP); every finished
  *                             run's trace is POSTed to {@code /v1/traces}. Blank disables export
+ * @param agents               named profiles a run can be given: a model and a system prompt.
+ *                             The chosen one becomes {@code TurnScope.agent()}, so a run records
+ *                             which configuration produced it and a resume replays that one
+ * @param tenantPolicies       per-tenant posture: an approval mode, extra denials, and the agent
+ *                             that tenant's runs use. Can only tighten, never widen, what the
+ *                             host already permits
+ * @param tenantTokenBudget    tokens one tenant may spend across finished runs before their
+ *                             turns are refused at admission. Zero means no limit
+ * @param serveUserRoles       role per user, {@code viewer}, {@code member}, or {@code operator}.
+ *                             Anyone unlisted is a member. Applies to static users and to people
+ *                             who sign in
+ * @param sessionTtl           how long a session issued by {@code POST /login} lasts
+ * @param oidcIssuer           an OpenID Connect provider to sign in through; blank disables the
+ *                             login routes. Its metadata document is read from
+ *                             {@code <issuer>/.well-known/openid-configuration}
+ * @param oidcClientId         the client id registered with that provider
+ * @param oidcClientSecret     name of the vault secret holding the client secret, bound to the
+ *                             capability {@code identity.login} and the provider's host
+ * @param oidcRedirectUri      the callback URL registered with the provider, which must be where
+ *                             this server is actually reachable
  * @param channels             messaging channels to serve, by adapter id ({@code slack},
  *                             {@code telegram}). Each names two vault secrets: one to verify
  *                             inbound webhooks, one to send with. Names, never values, and each
@@ -243,7 +263,42 @@ public record JclawProperties(
 
         @DefaultValue("") String otlpEndpoint,
 
-        Map<String, ChannelSecrets> channels) {
+        Map<String, ChannelSecrets> channels,
+
+        Map<String, AgentProfile> agents,
+
+        Map<String, TenantPolicy> tenantPolicies,
+
+        @DefaultValue("0") long tenantTokenBudget,
+
+        Map<String, String> serveUserRoles,
+
+        @DefaultValue("12h") Duration sessionTtl,
+
+        @DefaultValue("") String oidcIssuer,
+
+        @DefaultValue("") String oidcClientId,
+
+        @DefaultValue("") String oidcClientSecret,
+
+        @DefaultValue("") String oidcRedirectUri) {
+
+    /** A named run profile. Blank fields fall back to the host's model and prompt. */
+    public record AgentProfile(String model, String systemPrompt) {
+        public AgentProfile {
+            model = model == null ? "" : model.trim();
+            systemPrompt = systemPrompt == null ? "" : systemPrompt.trim();
+        }
+    }
+
+    /** What one tenant may do, and as whom. */
+    public record TenantPolicy(String approvalMode, List<String> deniedCapabilities, String agent) {
+        public TenantPolicy {
+            approvalMode = approvalMode == null ? "" : approvalMode.trim();
+            deniedCapabilities = deniedCapabilities == null ? List.of() : List.copyOf(deniedCapabilities);
+            agent = agent == null ? "" : agent.trim();
+        }
+    }
 
     /** The two vault entries one channel needs. */
     public record ChannelSecrets(String verifySecret, String token) {
@@ -263,6 +318,9 @@ public record JclawProperties(
         toolRateLimits = toolRateLimits == null ? Map.of() : Map.copyOf(toolRateLimits);
         serveUsers = serveUsers == null ? Map.of() : Map.copyOf(serveUsers);
         channels = channels == null ? Map.of() : Map.copyOf(channels);
+        serveUserRoles = serveUserRoles == null ? Map.of() : Map.copyOf(serveUserRoles);
+        agents = agents == null ? Map.of() : Map.copyOf(agents);
+        tenantPolicies = tenantPolicies == null ? Map.of() : Map.copyOf(tenantPolicies);
         trustedPublishers = trustedPublishers == null ? Map.of() : Map.copyOf(trustedPublishers);
     }
 
@@ -328,7 +386,56 @@ public record JclawProperties(
                 List.of("budget-notice"),
                 "canonical",
                 "",
-                Map.of());
+                Map.of(),
+                Map.of(),
+                Map.of(),
+                0L,
+                Map.of(),
+                Duration.ofHours(12),
+                "",
+                "",
+                "",
+                "");
+    }
+
+    /** Roles by user, parsed and validated. An unlisted user is a member. */
+    public Map<String, io.jclaw.contracts.identity.Role> roles() {
+        Map<String, io.jclaw.contracts.identity.Role> parsed = new java.util.LinkedHashMap<>();
+        serveUserRoles.forEach((user, role) -> {
+            try {
+                parsed.put(user, io.jclaw.contracts.identity.Role.valueOf(
+                        role.trim().toUpperCase(java.util.Locale.ROOT)));
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException(
+                        "jclaw.serve-user-roles." + user + " must be viewer, member, or operator");
+            }
+        });
+        return Map.copyOf(parsed);
+    }
+
+    /** The agent a tenant's runs are given, or {@code default}. */
+    public String agentFor(String tenant) {
+        TenantPolicy policy = tenantPolicies.get(tenant);
+        String named = policy == null ? "" : policy.agent();
+        return named.isBlank() ? "default" : named;
+    }
+
+    /** The model an agent uses, falling back to the host's. */
+    public String modelFor(String agent) {
+        AgentProfile profile = agents.get(agent);
+        return profile == null || profile.model().isBlank() ? model() : profile.model();
+    }
+
+    /** The system prompt an agent uses, falling back to the host's. */
+    public String systemPromptFor(String agent) {
+        AgentProfile profile = agents.get(agent);
+        return profile == null || profile.systemPrompt().isBlank() ? systemPrompt() : profile.systemPrompt();
+    }
+
+    /** Whether an OpenID Connect provider is configured well enough to offer the login routes. */
+    public boolean oidcConfigured() {
+        return !oidcIssuer.isBlank() && !oidcClientId.isBlank()
+                && !oidcClientSecret.isBlank() && !oidcRedirectUri.isBlank();
     }
 
     /** The JDBC URL {@code storage: sql} uses: the configured one, else an embedded H2 file. */
@@ -439,6 +546,10 @@ public record JclawProperties(
 
     public Path vaultKeyPath() {
         return stateDir.resolve("vault.key");
+    }
+
+    public Path sessionsPath() {
+        return stateDir.resolve("sessions.jsonl");
     }
 
     public Path channelBindingsPath() {

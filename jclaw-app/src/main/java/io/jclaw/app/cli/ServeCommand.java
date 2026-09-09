@@ -63,6 +63,9 @@ public class ServeCommand implements Callable<Integer> {
     private final io.jclaw.app.observability.Telemetry telemetry;
     private final io.jclaw.contracts.routine.RoutineStore routineStore;
     private final io.jclaw.app.channel.ChannelService channelService;
+    private final io.jclaw.contracts.identity.SessionStore sessionStore;
+    private final java.util.Optional<io.jclaw.app.identity.OidcLogin> oidcLogin;
+    private final io.jclaw.contracts.secret.SecretVault vault;
     private final Clock clock;
 
     @Option(names = "--host", description = "Interface to bind. Default 127.0.0.1.")
@@ -83,8 +86,14 @@ public class ServeCommand implements Callable<Integer> {
             RoutineRunner routines, RecoveryService recovery, RetentionService retention,
             io.jclaw.app.observability.Telemetry telemetry,
             io.jclaw.contracts.routine.RoutineStore routineStore,
-            io.jclaw.app.channel.ChannelService channelService, Clock clock) {
+            io.jclaw.app.channel.ChannelService channelService,
+            io.jclaw.contracts.identity.SessionStore sessionStore,
+            java.util.Optional<io.jclaw.app.identity.OidcLogin> oidcLogin,
+            io.jclaw.contracts.secret.SecretVault vault, Clock clock) {
         this.channelService = channelService;
+        this.sessionStore = sessionStore;
+        this.oidcLogin = oidcLogin;
+        this.vault = vault;
         this.telemetry = telemetry;
         this.routineStore = routineStore;
         this.properties = properties;
@@ -100,6 +109,34 @@ public class ServeCommand implements Callable<Integer> {
         this.clock = clock;
     }
 
+    /**
+     * Leases the OIDC client secret at the moment of exchange, never at start.
+     *
+     * <p>The binding names {@code identity.login} and the provider's host, so a secret meant for
+     * a tool cannot be spent signing people in, and one meant for another provider cannot be sent
+     * to this one.
+     */
+    private java.util.Optional<String> leaseOidcSecret() {
+        if (!properties.oidcConfigured()) {
+            return java.util.Optional.empty();
+        }
+        try {
+            var name = new io.jclaw.contracts.secret.SecretVault.SecretName(properties.oidcClientSecret());
+            var lease = vault.lease(name);
+            if (lease.isEmpty()) {
+                return java.util.Optional.empty();
+            }
+            String host = java.net.URI.create(properties.oidcIssuer()).getHost();
+            var refusal = io.jclaw.domain.secret.SecretInjection.refuse(
+                    lease.get().info().binding(), io.jclaw.app.identity.OidcLogin.LOGIN,
+                    java.util.Set.of(host == null ? "" : host));
+            return refusal.isPresent() ? java.util.Optional.empty()
+                    : java.util.Optional.of(lease.get().value());
+        } catch (RuntimeException e) {
+            return java.util.Optional.empty();
+        }
+    }
+
     @Override
     public Integer call() throws IOException {
         AtomicBoolean stop = new AtomicBoolean(false);
@@ -109,6 +146,8 @@ public class ServeCommand implements Callable<Integer> {
         JclawHttpServer server = new JclawHttpServer(
                 runtime, runs, events, threads, approvals, clock, Optional.ofNullable(properties.serveToken()),
                 properties.serveUsers(), properties.model(), telemetry, routineStore);
+        server.withIdentity(sessionStore, properties.roles(), oidcLogin.orElse(null),
+                () -> leaseOidcSecret(), properties.oidcRedirectUri());
         server.withChannels(channelService);
         server.start(host, port);
         boolean anyAuth = (properties.serveToken() != null && !properties.serveToken().isBlank())

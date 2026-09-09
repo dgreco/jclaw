@@ -2,7 +2,7 @@
 
 An honest enumeration of what [IronClaw](https://github.com/nearai/ironclaw) (internally "Reborn") has that jclaw does not, and of what jclaw now has. jclaw is roughly 20k lines of Java (plus 6.5k of tests) against IronClaw's ~1.4M lines of Rust across ~63 crates. The **architecture** is equivalent — layer ladder, turn/run lifecycle, untrusted `LoopExit`, single `CapabilityHost` authority boundary, checkpoint-kind–driven recovery — and, after the September 2026 parity work, most of the runtime *mechanisms* are present in some form. What remains missing is breadth, not mechanism: channel adapters, a remote extension registry, a WASM lane, and the long tail catalogued in section 16. This file is the list, organised by IronClaw's own crate families so a gap can be traced to the crate that fills it upstream.
 
-Sources: IronClaw's `README.md`, `crates/Architecture.md`, and the `crates/` listing as of September 2026; jclaw's code on this checkout (291 tests, 0 failures). Where the upstream doc names a concept and jclaw has an equivalent under a different name, the mapping is given. Where the gap is uncertain it is marked *(unverified)*.
+Sources: IronClaw's `README.md`, `crates/Architecture.md`, and the `crates/` listing as of September 2026; jclaw's code on this checkout (294 tests, 0 failures). Where the upstream doc names a concept and jclaw has an equivalent under a different name, the mapping is given. Where the gap is uncertain it is marked *(unverified)*.
 
 Legend: ✅ at parity · 🟡 partial · ❌ missing · ➕ jclaw-only
 
@@ -182,7 +182,7 @@ At parity on the trust model and on the gate mechanics, and on tenant isolation;
 | Encrypted secret vault (AES-256-GCM), leased/staged per runtime handoff | ✅ `ironclaw_secrets` | ✅ `FileSecretVault`: AES-256-GCM per value with the name as associated data, append-only JSONL, key from an owner-only file or `JCLAW_VAULT_KEY`. Leased per capability call, and staged into an MCP server's process environment at start (`McpCredentials`) or into an HTTP server's bearer header, under a `mcp.connect` binding. No store anywhere holds a credential value |
 | Secret references usable by tools without exposure | ✅ | ✅ `{{secret:NAME}}` in any tool argument, bound to one capability and a host list; `jclaw secrets set/list/remove`; the system prompt lists names and bindings, never values |
 | Multi-user identity (`ironclaw_identity`), per-user scoping | ✅ | 🟡 `jclaw.serve-users` names users with static bearer tokens; each is the tenant of its runs, with namespaced threads (`alice:work`), its own memories and approvals, and read access only to its own runs and gates. The operator (`serve-token`) is the `local` tenant the CLI uses and reads everything. No user directory, roles, or per-user policy |
-| Auth domain (`ironclaw_auth`): Google OAuth, NEAR AI login, WebUI login tokens | ✅ | ❌ (Anthropic `ANTHROPIC_AUTH_TOKEN` OAuth-style credential is honoured; `serve-token` and `serve-users` are static bearers, no login flow) |
+| Auth domain (`ironclaw_auth`): Google OAuth, NEAR AI login, WebUI login tokens | ✅ | ✅ an OpenID Connect authorization code flow with PKCE against any discovered provider, plus operator-minted sessions. Sessions name a person, carry a role, expire, and are stored as hashes. The id token is checked for issuer, audience, and expiry; its signature is not, since the code flow delivers it over an authenticated back channel |
 | Auth gates that park a run until credentials arrive | ✅ | ✅ (see §4); cleared by setting the credential and resuming, shown by `approvals list` |
 | Outbound domain (`ironclaw_outbound`) — typed outbound messages to channels | ✅ | ❌ |
 
@@ -223,7 +223,7 @@ At parity on the trust model and on the gate mechanics, and on tenant isolation;
 | Structured tracing / metrics substrate (`ironclaw_observability`, `trace_commons`) | ✅ | 🟡 both projected from the event log rather than instrumented: `Telemetry` counts every written event into Prometheus-format metrics at `/metrics`; the pure `RunTrace` turns a run's events into spans (root, model calls, capability calls, gates, with measured latencies) served as OTLP/JSON at `/runs/{r}/trace`, printed by `status --trace`, and exported to `jclaw.otlp-endpoint` when a run finishes. No OpenTelemetry SDK in-process, no propagation into provider/MCP calls, no histograms |
 | Latency harness (`harness/latency/`) | ✅ | ❌ |
 | Deployment assets (`deploy/`, `docker/`, `infra/runner/`) | ✅ | ❌ — one jar or one binary, no Dockerfile; a GitLab release pipeline publishes both |
-| Test tooling (`test-tools/`, `tests/` integration suites) | ✅ | 🟡 291 unit + integration tests, including a child-JVM test for cross-process thread locking and a fake-docker test for the sandbox contract; no end-to-end suite against a live provider |
+| Test tooling (`test-tools/`, `tests/` integration suites) | ✅ | 🟡 294 unit + integration tests, including a child-JVM test for cross-process thread locking and a fake-docker test for the sandbox contract; no end-to-end suite against a live provider |
 | `doctor`-style preflight | *(unverified)* | ➕ `jclaw doctor` |
 
 ---
@@ -279,9 +279,10 @@ Ranked, again, by what a deployment beyond one operator's machine would hit firs
    durable reply-target bindings. Still open under this heading: platform-native slash commands,
    adapters as installable packages rather than compiled in, and any outbound-initiated
    message.
-2. **A login flow** (§10) — users are tenants and every scope-keyed store separates by them, but
-   identity is a static bearer token per user. No OAuth, no session, no roles, no per-tenant
-   policy or token accounting, and `TurnScope.agent()` is always `default`.
+2. ~~**A login flow**~~ — closed: OIDC with PKCE, sessions, three roles, per-tenant policy and
+   token budgets, and named agents that make `TurnScope.agent()` mean something. Still open under
+   this heading: a user directory, groups, per-tenant vaults, and id token signature
+   verification for flows that would need it.
 3. **A WASM lane** (§3) — the two kinds of genuinely untrusted code, shell commands and MCP
    servers, can each be put in a container. Extensions cannot: a `VERIFIED` package's code still
    runs as a process or in-process. WASM with capability-based host imports and resource

@@ -81,7 +81,7 @@ public final class DefaultCapabilityHost implements CapabilityHost {
     private final ApprovalStore approvals;
     private final CapabilityResultStore results;
     private final EventLog events;
-    private final CapabilityPolicy policy;
+    private final CapabilityPolicyResolver policies;
     private final CapabilityHandler.HandlerContext context;
     private final Supplier<Set<String>> knownSecrets;
     private final SecretVault vault;
@@ -112,14 +112,29 @@ public final class DefaultCapabilityHost implements CapabilityHost {
             Supplier<Set<String>> knownSecrets,
             SecretVault vault,
             Clock clock) {
+        this(handlers, approvals, results, events, CapabilityPolicyResolver.fixed(policy),
+                context, knownSecrets, vault, clock);
+    }
+
+    /** @param policies the posture per scope, so one host can serve tenants trusted differently */
+    public DefaultCapabilityHost(
+            List<CapabilityHandler> handlers,
+            ApprovalStore approvals,
+            CapabilityResultStore results,
+            EventLog events,
+            CapabilityPolicyResolver policies,
+            CapabilityHandler.HandlerContext context,
+            Supplier<Set<String>> knownSecrets,
+            SecretVault vault,
+            Clock clock) {
 
         Objects.requireNonNull(handlers, "handlers");
+        this.policies = Objects.requireNonNull(policies, "policies");
         this.vault = Objects.requireNonNull(vault, "vault");
         this.handlers = index(handlers);
         this.approvals = Objects.requireNonNull(approvals, "approvals");
         this.results = Objects.requireNonNull(results, "results");
         this.events = Objects.requireNonNull(events, "events");
-        this.policy = Objects.requireNonNull(policy, "policy");
         this.context = Objects.requireNonNull(context, "context");
         this.knownSecrets = Objects.requireNonNull(knownSecrets, "knownSecrets");
         this.clock = Objects.requireNonNull(clock, "clock");
@@ -143,7 +158,7 @@ public final class DefaultCapabilityHost implements CapabilityHost {
         Objects.requireNonNull(scope, "scope");
         return handlers.values().stream()
                 .map(CapabilityHandler::descriptor)
-                .filter(descriptor -> !policy.isDenied(descriptor.id()))
+                .filter(descriptor -> !policies.forScope(scope).isDenied(descriptor.id()))
                 .sorted(Comparator.comparing(descriptor -> descriptor.id().value()))
                 .toList();
     }
@@ -170,6 +185,7 @@ public final class DefaultCapabilityHost implements CapabilityHost {
         }
         CapabilityDescriptor descriptor = handler.descriptor();
 
+        CapabilityPolicy policy = policies.forScope(invocation.scope());
         if (policy.isDenied(descriptor.id())) {
             log.debug("capability {}: denied by policy", descriptor.id().value());
             return denied(invocation, descriptor, "capability_denied_by_policy");
@@ -198,7 +214,7 @@ public final class DefaultCapabilityHost implements CapabilityHost {
     private Optional<CapabilityOutcome> evaluateRateLimit(
             CapabilityInvocation invocation, CapabilityDescriptor descriptor) {
 
-        RateLimit limit = policy.rateLimits().get(descriptor.id());
+        RateLimit limit = policies.forScope(invocation.scope()).rateLimits().get(descriptor.id());
         if (limit == null) {
             return Optional.empty();
         }
@@ -228,6 +244,7 @@ public final class DefaultCapabilityHost implements CapabilityHost {
     private Optional<CapabilityOutcome> evaluateApproval(
             CapabilityInvocation invocation, CapabilityDescriptor descriptor) {
 
+        CapabilityPolicy policy = policies.forScope(invocation.scope());
         if (policy.permitsUnattended(descriptor)) {
             log.debug("capability {}: unattended execution permitted (effect {}, trust {})",
                     descriptor.id().value(), descriptor.effect(), descriptor.trust());
@@ -287,6 +304,7 @@ public final class DefaultCapabilityHost implements CapabilityHost {
         log.debug("capability {}: dispatching to {}",
                 descriptor.id().value(), handler.getClass().getSimpleName());
 
+        CapabilityPolicy policy = policies.forScope(invocation.scope());
         RateLimit limit = policy.rateLimits().get(descriptor.id());
         if (limit != null) {
             Deque<Instant> history = dispatches.computeIfAbsent(descriptor.id(), ignored -> new ArrayDeque<>());
@@ -411,6 +429,7 @@ public final class DefaultCapabilityHost implements CapabilityHost {
         // model-facing summary is chosen. The gate above already decided whether the effect may
         // happen; this decides how its output is framed, or whether it is withheld.
         String modelFacing = bounded;
+        CapabilityPolicy policy = policies.forScope(invocation.scope());
         if (policy.injection() != InjectionPolicy.OFF) {
             InjectionHeuristics.Assessment assessment = InjectionHeuristics.scan(bounded);
             if (!assessment.clean()) {

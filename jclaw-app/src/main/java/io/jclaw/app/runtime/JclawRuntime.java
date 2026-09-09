@@ -74,6 +74,7 @@ public class JclawRuntime {
     private final WorkspaceGuard workspace;
     private final SkillCatalog skills;
     private final SecretVault vault;
+    private java.util.Optional<TenantLedger> ledger = java.util.Optional.empty();
     private final Clock clock;
 
     /**
@@ -117,6 +118,13 @@ public class JclawRuntime {
         this.workspace = Objects.requireNonNull(workspace, "workspace");
         this.skills = Objects.requireNonNull(skills, "skills");
         this.clock = Objects.requireNonNull(clock, "clock");
+    }
+
+    /** Refuses an enqueue for a tenant that has spent its budget. Callers map it to a refusal. */
+    public static final class TenantOverBudget extends IllegalStateException {
+        public TenantOverBudget(String tenant) {
+            super("tenant '" + tenant + "' has spent its token budget");
+        }
     }
 
     /** The outcome of one turn, as the product surface sees it. */
@@ -198,8 +206,15 @@ public class JclawRuntime {
         String userText = inbound.displayText();
 
         TurnScope scope = scopeFor(tenant, thread);
+        if (!admits(scope.tenant())) {
+            log.debug("tenant {} is over its token budget; refusing admission", scope.tenant());
+            return new TurnResult(TurnRunId.fresh(), TurnStatus.FAILED, Optional.empty(),
+                    Optional.of(FailureKind.BUDGET_EXHAUSTED), Optional.of("tenant token budget spent"),
+                    Optional.empty(), 0, 0);
+        }
         TurnRunId run = TurnRunId.fresh();
-        LoopPolicy policy = resolvePolicy(scope, properties.model(), assembleSystemPrompt());
+        LoopPolicy policy = resolvePolicy(scope, properties.modelFor(scope.agent()),
+                assembleSystemPrompt(scope.agent()));
 
         log.debug("run {}: admitted on thread {} (project {}, model {}, {} tools visible, "
                         + "system prompt {} chars)",
@@ -372,6 +387,9 @@ public class JclawRuntime {
     /** As {@link #enqueue(ThreadId, ChatMessage)}, on behalf of a tenant. */
     public TurnRunId enqueue(String tenant, ThreadId thread, ChatMessage inbound) {
         Objects.requireNonNull(thread, "thread");
+        if (!admits(tenant)) {
+            throw new TenantOverBudget(tenant);
+        }
         Objects.requireNonNull(inbound, "inbound");
         if (inbound.role() != ChatMessage.Role.USER) {
             throw new IllegalArgumentException("an inbound message must have the user role");
@@ -379,7 +397,8 @@ public class JclawRuntime {
 
         TurnScope scope = scopeFor(tenant, thread);
         TurnRunId run = TurnRunId.fresh();
-        LoopPolicy policy = resolvePolicy(scope, properties.model(), assembleSystemPrompt());
+        LoopPolicy policy = resolvePolicy(scope, properties.modelFor(scope.agent()),
+                assembleSystemPrompt(scope.agent()));
 
         threads.acceptInbound(thread, inbound);
         runs.record(new RunStore.RunRecord(
@@ -617,9 +636,9 @@ public class JclawRuntime {
      * rather than picking up a skill installed in the meantime — the model's instructions must not
      * change underneath a conversation it is midway through.
      */
-    private String assembleSystemPrompt() {
+    private String assembleSystemPrompt(String agent) {
         return PromptAssembly.systemPrompt(
-                properties.systemPrompt(),
+                properties.systemPromptFor(agent),
                 PromptAssembly.workspaceName(workspace.root()),
                 skills.list(),
                 vault.list());
@@ -682,12 +701,33 @@ public class JclawRuntime {
     /** The tenant the CLI runs as. */
     public static final String LOCAL_TENANT = TurnScope.local("p", new ThreadId("t")).tenant();
 
+    /**
+     * Gives the runtime a token ledger, so a tenant over budget is refused at admission.
+     *
+     * <p>Set after construction rather than injected, because the ledger reads the event log the
+     * runtime writes to and a constructor cycle would be the price of doing it the other way.
+     */
+    public void withLedger(TenantLedger ledger) {
+        this.ledger = java.util.Optional.ofNullable(ledger);
+    }
+
+    /**
+     * Whether this tenant may start another turn.
+     *
+     * <p>Checked at admission by callers that enqueue, so a refusal costs nothing and leaves no
+     * trace, and never mid-run, since stopping a turn halfway spends the tokens and produces
+     * nothing.
+     */
+    public boolean admits(String tenant) {
+        return ledger.map(l -> l.permits(tenant)).orElse(true);
+    }
+
     /** The scope a turn on {@code thread} would run under for {@code tenant}. */
     public TurnScope scopeFor(String tenant, ThreadId thread) {
         Objects.requireNonNull(tenant, "tenant");
-        return LOCAL_TENANT.equals(tenant)
-                ? TurnScope.local(projectName(), thread)
-                : new TurnScope(tenant, "default", projectName(), thread);
+        // The agent is part of the isolation key and part of the run's recorded profile, so a
+        // resume replays the configuration the turn was admitted under.
+        return new TurnScope(tenant, properties.agentFor(tenant), projectName(), thread);
     }
 
     /** Capabilities publishable to the model for a scope. Used by {@code jclaw tools}. */

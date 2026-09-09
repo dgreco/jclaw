@@ -47,6 +47,7 @@ import io.jclaw.storage.routine.JsonlRoutineStore;
 import io.jclaw.storage.run.JsonlRunStore;
 import io.jclaw.storage.extension.FilesystemExtensionRegistry;
 import io.jclaw.contracts.loop.LoopHook;
+import io.jclaw.kernel.capability.CapabilityPolicyResolver;
 import io.jclaw.app.observability.ObservedEventLog;
 import io.jclaw.app.observability.OtlpExporter;
 import io.jclaw.app.observability.Telemetry;
@@ -219,6 +220,92 @@ public class JclawConfiguration {
                 properties.mcpLazy() ? mcpSurfaceCache : null);
     }
 
+    /**
+     * The posture per tenant.
+     *
+     * <p>A tenant policy may pick a stricter approval mode and add denials; it inherits the
+     * host's denials whatever it says, so configuring a tenant can only narrow what the process
+     * already permits.
+     */
+    @Bean
+    public CapabilityPolicyResolver capabilityPolicyResolver(
+            JclawProperties properties, CapabilityPolicy capabilityPolicy) {
+        java.util.Map<String, CapabilityPolicy> byTenant = new java.util.LinkedHashMap<>();
+        properties.tenantPolicies().forEach((tenant, tenantPolicy) -> {
+            CapabilityPolicy posture = tenantPolicy.approvalMode().isBlank()
+                    ? capabilityPolicy
+                    : posture(tenantPolicy.approvalMode());
+            java.util.Set<io.jclaw.contracts.capability.CapabilityId> denied =
+                    new java.util.LinkedHashSet<>(capabilityPolicy.denied());
+            JclawProperties.nonBlank(tenantPolicy.deniedCapabilities())
+                    .forEach(id -> denied.add(io.jclaw.contracts.capability.CapabilityId.of(id)));
+            byTenant.put(tenant, posture
+                    .withDenied(denied)
+                    .withRateLimits(capabilityPolicy.rateLimits())
+                    .withToolEgress(capabilityPolicy.toolEgress())
+                    .withInjection(capabilityPolicy.injection()));
+        });
+        return byTenant.isEmpty()
+                ? CapabilityPolicyResolver.fixed(capabilityPolicy)
+                : CapabilityPolicyResolver.byTenant(capabilityPolicy, byTenant);
+    }
+
+
+    /** One of the three postures, by name. The only place a mode string becomes a policy. */
+    static CapabilityPolicy posture(String approvalMode) {
+        return switch (approvalMode) {
+            case "read-only" -> CapabilityPolicy.unattended();
+            case "trusted" -> CapabilityPolicy.trustedLocal();
+            case "interactive" -> CapabilityPolicy.interactiveDefault();
+            default -> throw new IllegalArgumentException(
+                    "unknown approval mode '" + approvalMode
+                            + "'; expected read-only, interactive, or trusted");
+        };
+    }
+
+    /** Tokens spent per tenant, and whether a tenant may start another turn. */
+    @Bean
+    public io.jclaw.app.runtime.TenantLedger tenantLedger(
+            EventLog eventLog, RunStore runStore, JclawProperties properties) {
+        return new io.jclaw.app.runtime.TenantLedger(eventLog, runStore, properties.tenantTokenBudget());
+    }
+
+    /**
+     * Hands the ledger to the runtime once both exist.
+     *
+     * <p>A tiny bean whose construction is the wiring: the runtime writes the events the ledger
+     * reads, so they cannot be constructor arguments of one another.
+     */
+    @Bean
+    public LedgerWiring ledgerWiring(
+            io.jclaw.app.runtime.JclawRuntime runtime, io.jclaw.app.runtime.TenantLedger tenantLedger) {
+        runtime.withLedger(tenantLedger);
+        return new LedgerWiring();
+    }
+
+    /** Marker for the wiring above. */
+    public static final class LedgerWiring { }
+
+    /** Sessions issued by logging in, stored as hashes. */
+    @Bean
+    public io.jclaw.contracts.identity.SessionStore sessionStore(
+            JclawProperties properties, StorageBackend backend, Clock clock) {
+        return new io.jclaw.storage.identity.JsonlSessionStore(
+                backend.open("sessions", properties.sessionsPath()), clock);
+    }
+
+    /**
+     * The OpenID Connect provider, when one is configured. Absent otherwise, which is what turns
+     * the login routes into a 404 rather than an endpoint that fails confusingly.
+     */
+    @Bean
+    public java.util.Optional<io.jclaw.app.identity.OidcLogin> oidcLogin(JclawProperties properties, Clock clock) {
+        return properties.oidcConfigured()
+                ? java.util.Optional.of(new io.jclaw.app.identity.OidcLogin(
+                        properties.oidcIssuer(), properties.oidcClientId(), clock))
+                : java.util.Optional.empty();
+    }
+
     /** The messaging channels jclaw can be talked to from. Empty unless configured. */
     @Bean
     public java.util.List<io.jclaw.contracts.channel.ChannelAdapter> channelAdapters(Clock clock) {
@@ -333,14 +420,7 @@ public class JclawConfiguration {
 
     @Bean
     public CapabilityPolicy capabilityPolicy(JclawProperties properties) {
-        CapabilityPolicy posture = switch (properties.approvalMode()) {
-            case "read-only" -> CapabilityPolicy.unattended();
-            case "trusted" -> CapabilityPolicy.trustedLocal();
-            case "interactive" -> CapabilityPolicy.interactiveDefault();
-            default -> throw new IllegalArgumentException(
-                    "unknown jclaw.approval-mode '" + properties.approvalMode()
-                            + "'; expected read-only, interactive, or trusted");
-        };
+        CapabilityPolicy posture = posture(properties.approvalMode());
         // Hard denials from configuration. Validated at startup: a typo here must fail loudly
         // rather than silently deny nothing.
         Set<CapabilityId> denied = new java.util.LinkedHashSet<>();
@@ -518,7 +598,7 @@ public class JclawConfiguration {
             ApprovalStore approvalStore,
             CapabilityResultStore capabilityResultStore,
             EventLog eventLog,
-            CapabilityPolicy capabilityPolicy,
+            CapabilityPolicyResolver capabilityPolicyResolver,
             CapabilityHandler.HandlerContext handlerContext,
             SecretVault secretVault,
             Clock clock) {
@@ -528,7 +608,7 @@ public class JclawConfiguration {
                 approvalStore,
                 capabilityResultStore,
                 eventLog,
-                capabilityPolicy,
+                capabilityPolicyResolver,
                 handlerContext,
                 // Credentials the redactor should mask if a tool ever echoes them back. Read
                 // lazily so a key exported after startup is still covered.

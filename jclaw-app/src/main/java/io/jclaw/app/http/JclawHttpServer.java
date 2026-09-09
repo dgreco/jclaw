@@ -7,6 +7,8 @@ import io.jclaw.app.runtime.JclawRuntime;
 import io.jclaw.domain.observability.RunTrace;
 import io.jclaw.domain.trigger.Trigger;
 import io.jclaw.contracts.routine.RoutineStore;
+import io.jclaw.contracts.identity.Role;
+import io.jclaw.contracts.identity.SessionStore;
 import io.jclaw.contracts.model.ModelProvider;
 import io.jclaw.contracts.Result;
 import io.jclaw.contracts.capability.ApprovalStore;
@@ -91,6 +93,11 @@ public final class JclawHttpServer {
     private final Telemetry telemetry;
     private final Optional<RoutineStore> routines;
     private Optional<io.jclaw.app.channel.ChannelService> channels = Optional.empty();
+    private Optional<SessionStore> sessions = Optional.empty();
+    private Optional<io.jclaw.app.identity.OidcLogin> oidc = Optional.empty();
+    private java.util.function.Supplier<Optional<String>> oidcClientSecret = Optional::empty;
+    private Map<String, Role> userRoles = Map.of();
+    private String loginRedirectUri = "";
     private final JsonMapper mapper = JsonMapper.builder().build();
     private HttpServer server;
 
@@ -135,7 +142,7 @@ public final class JclawHttpServer {
         this.token = Objects.requireNonNull(token, "token").filter(t -> !t.isBlank());
         Map<String, String> byToken = new LinkedHashMap<>();
         Objects.requireNonNull(users, "users").forEach((name, secret) -> {
-            new Principal(name); // validates the name
+            new Principal(name, io.jclaw.contracts.identity.Role.MEMBER); // validates the name
             if (secret != null && !secret.isBlank()) {
                 byToken.put(secret, name);
             }
@@ -157,6 +164,25 @@ public final class JclawHttpServer {
         log.debug("http: listening on {}:{}", host, port());
     }
 
+    /**
+     * Serves the login routes and accepts session tokens.
+     *
+     * @param roles           role per configured static user; anyone unlisted is a member
+     * @param oidc            the provider, when one is configured
+     * @param clientSecret    leases the OIDC client secret at the moment of exchange
+     * @param redirectUri     the callback this server is reachable at, as registered with the
+     *                        provider. It is sent in both legs of the flow and must match
+     */
+    public void withIdentity(SessionStore sessionStore, Map<String, Role> roles,
+            io.jclaw.app.identity.OidcLogin oidc,
+            java.util.function.Supplier<Optional<String>> clientSecret, String redirectUri) {
+        this.sessions = Optional.ofNullable(sessionStore);
+        this.userRoles = Map.copyOf(Objects.requireNonNull(roles, "roles"));
+        this.oidc = Optional.ofNullable(oidc);
+        this.oidcClientSecret = Objects.requireNonNull(clientSecret, "clientSecret");
+        this.loginRedirectUri = Objects.requireNonNull(redirectUri, "redirectUri");
+    }
+
     /** Serves {@code POST /channels/{adapter}}. Optional: without it the route is a 404. */
     public void withChannels(io.jclaw.app.channel.ChannelService channelService) {
         this.channels = Optional.ofNullable(channelService);
@@ -176,6 +202,15 @@ public final class JclawHttpServer {
 
     private void dispatch(HttpExchange exchange) throws IOException {
         try {
+            String route = exchange.getRequestURI().getPath();
+            if (oidc.isPresent() && exchange.getRequestMethod().equals("GET") && route.equals("/login/oidc")) {
+                beginLogin(exchange);
+                return;
+            }
+            if (oidc.isPresent() && exchange.getRequestMethod().equals("GET") && route.equals("/login/callback")) {
+                finishLogin(exchange);
+                return;
+            }
             Matcher channel = CHANNEL.matcher(exchange.getRequestURI().getPath());
             if (exchange.getRequestMethod().equals("POST") && channel.matches()) {
                 // A platform authenticates with its own signature, not the operator's token.
@@ -207,15 +242,35 @@ public final class JclawHttpServer {
                 send(exchange, 200, Map.of("object", "list", "data", List.of(Map.of(
                         "id", model, "object", "model", "owned_by", "jclaw"))));
             } else if (method.equals("POST") && path.equals("/v1/chat/completions")) {
-                chatCompletions(exchange, principal);
+                if (!principal.mayWrite()) {
+                    send(exchange, 403, Map.of("error", "a viewer may not start a turn"));
+                } else {
+                    chatCompletions(exchange, principal);
+                }
             } else if (method.equals("POST") && (m = THREAD_TURNS.matcher(path)).matches()) {
-                submitTurn(exchange, principal, principal.thread(m.group(1)));
+                if (!principal.mayWrite()) {
+                    send(exchange, 403, Map.of("error", "a viewer may not start a turn"));
+                } else {
+                    submitTurn(exchange, principal, principal.thread(m.group(1)));
+                }
             } else if (method.equals("GET") && (m = THREAD_MESSAGES.matcher(path)).matches()) {
                 send(exchange, 200, Map.of("thread", m.group(1), "messages",
                         threads.history(principal.thread(m.group(1)), Integer.MAX_VALUE).stream()
                                 .map(this::message).toList()));
             } else if (method.equals("GET") && (m = RUN.matcher(path)).matches()) {
                 run(exchange, principal, new TurnRunId(m.group(1)));
+            } else if (method.equals("POST") && path.equals("/login")) {
+                mintSession(exchange, principal);
+            } else if (method.equals("POST") && path.equals("/logout")) {
+                send(exchange, 200, Map.of("revoked", revokePresented(exchange)));
+            } else if (method.equals("GET") && path.equals("/sessions")) {
+                send(exchange, principal.role().canAdminister() ? 200 : 403,
+                        principal.role().canAdminister()
+                                ? Map.of("sessions", sessions.map(SessionStore::active).orElse(List.of()).stream()
+                                        .map(session -> Map.of("user", session.user(),
+                                                "role", session.role().name(),
+                                                "expiresAt", session.expiresAt().toString())).toList())
+                                : Map.of("error", "forbidden"));
             } else if (method.equals("GET") && path.equals("/metrics")) {
                 sendText(exchange, "text/plain; version=0.0.4; charset=utf-8", telemetry.prometheus());
             } else if (method.equals("GET") && (m = RUN_TRACE.matcher(path)).matches()) {
@@ -238,7 +293,11 @@ public final class JclawHttpServer {
                         .filter(gate -> principal.mayRead(gate.scope()))
                         .map(this::gate).toList()));
             } else if (method.equals("POST") && (m = APPROVAL.matcher(path)).matches()) {
-                decide(exchange, principal, new GateId(m.group(1)));
+                if (!principal.mayWrite()) {
+                    send(exchange, 403, Map.of("error", "a viewer may not answer a gate"));
+                } else {
+                    decide(exchange, principal, new GateId(m.group(1)));
+                }
             } else {
                 send(exchange, 404, Map.of("error", "no such route"));
             }
@@ -255,24 +314,11 @@ public final class JclawHttpServer {
      * configured), a named user by their token, or nobody.
      */
     private Optional<Principal> authenticate(HttpExchange exchange) {
-        if (token.isEmpty() && tokensToUsers.isEmpty()) {
+        if (token.isEmpty() && tokensToUsers.isEmpty() && sessions.isEmpty()) {
             return Optional.of(Principal.operator());
         }
-        String presented = null;
-        String header = exchange.getRequestHeaders().getFirst("Authorization");
-        if (header != null && header.startsWith("Bearer ")) {
-            presented = header.substring("Bearer ".length()).trim();
-        }
         // EventSource cannot set headers; the browser UI passes the token as a query parameter.
-        String query = exchange.getRequestURI().getRawQuery();
-        if (presented == null && query != null) {
-            for (String pair : query.split("&")) {
-                int eq = pair.indexOf('=');
-                if (eq > 0 && pair.substring(0, eq).equals("access_token")) {
-                    presented = java.net.URLDecoder.decode(pair.substring(eq + 1), StandardCharsets.UTF_8);
-                }
-            }
-        }
+        String presented = presentedToken(exchange).orElse(null);
         if (presented == null) {
             return Optional.empty();
         }
@@ -280,7 +326,129 @@ public final class JclawHttpServer {
             return Optional.of(Principal.operator());
         }
         String user = tokensToUsers.get(presented);
-        return user == null ? Optional.empty() : Optional.of(new Principal(user));
+        if (user != null) {
+            return Optional.of(new Principal(user, userRoles.getOrDefault(user, Role.MEMBER)));
+        }
+        // A session, which unlike a static token names a person, carries a role, and expires.
+        return sessions.flatMap(store -> store.find(presented))
+                .map(session -> session.role() == Role.OPERATOR
+                        ? Principal.operator()
+                        : new Principal(session.user(), session.role()));
+    }
+
+    /** Whatever bearer the caller presented, however they presented it. */
+    private Optional<String> presentedToken(HttpExchange exchange) {
+        String header = exchange.getRequestHeaders().getFirst("Authorization");
+        if (header != null && header.startsWith("Bearer ")) {
+            return Optional.of(header.substring("Bearer ".length()).trim());
+        }
+        String query = exchange.getRequestURI().getRawQuery();
+        if (query != null) {
+            for (String pair : query.split("&")) {
+                int eq = pair.indexOf('=');
+                if (eq > 0 && pair.substring(0, eq).equals("access_token")) {
+                    return Optional.of(java.net.URLDecoder.decode(
+                            pair.substring(eq + 1), StandardCharsets.UTF_8));
+                }
+            }
+        }
+        return Optional.empty();
+    }
+
+    /** Mints a session for someone else. Operators only: this is handing out access. */
+    private void mintSession(HttpExchange exchange, Principal principal) throws IOException {
+        if (!principal.role().canAdminister() || sessions.isEmpty()) {
+            send(exchange, 403, Map.of("error", "forbidden"));
+            return;
+        }
+        Map<String, Object> body = readJson(exchange);
+        String user = body.get("user") instanceof String name ? name.trim() : "";
+        if (user.isEmpty()) {
+            send(exchange, 400, Map.of("error", "user required"));
+            return;
+        }
+        Role role;
+        try {
+            role = Role.valueOf(String.valueOf(body.getOrDefault("role", "MEMBER"))
+                    .toUpperCase(java.util.Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            send(exchange, 400, Map.of("error", "role must be VIEWER, MEMBER, or OPERATOR"));
+            return;
+        }
+        java.time.Duration ttl;
+        try {
+            ttl = java.time.Duration.parse(String.valueOf(body.getOrDefault("ttl", "PT12H")));
+        } catch (RuntimeException e) {
+            send(exchange, 400, Map.of("error", "ttl must be an ISO duration"));
+            return;
+        }
+        SessionStore.Session issued = sessions.get().issue(user, role, ttl);
+        send(exchange, 201, Map.of(
+                "token", issued.token().orElseThrow(),
+                "user", issued.user(),
+                "role", issued.role().name(),
+                "expiresAt", issued.expiresAt().toString()));
+    }
+
+    private boolean revokePresented(HttpExchange exchange) {
+        return sessions.isPresent()
+                && presentedToken(exchange).map(sessions.get()::revoke).orElse(false);
+    }
+
+    /** Sends the browser to the provider. */
+    private void beginLogin(HttpExchange exchange) throws IOException {
+        var started = oidc.get().start(loginRedirectUri);
+        if (started.isErr()) {
+            send(exchange, 502, Map.of("error", started.errorAsOptional().orElse("login unavailable")));
+            return;
+        }
+        exchange.getResponseHeaders().add("Location", started.orElseThrow());
+        exchange.sendResponseHeaders(302, -1);
+        exchange.close();
+    }
+
+    /** Exchanges the code the provider sent back and issues a session. */
+    private void finishLogin(HttpExchange exchange) throws IOException {
+        Map<String, String> query = new LinkedHashMap<>();
+        String raw = exchange.getRequestURI().getRawQuery();
+        if (raw != null) {
+            for (String pair : raw.split("&")) {
+                int eq = pair.indexOf('=');
+                if (eq > 0) {
+                    query.put(pair.substring(0, eq),
+                            java.net.URLDecoder.decode(pair.substring(eq + 1), StandardCharsets.UTF_8));
+                }
+            }
+        }
+        if (query.containsKey("error")) {
+            send(exchange, 401, Map.of("error", "login refused"));
+            return;
+        }
+        String code = query.get("code");
+        String state = query.get("state");
+        if (code == null || state == null) {
+            send(exchange, 400, Map.of("error", "code and state required"));
+            return;
+        }
+        Optional<String> secret = oidcClientSecret.get();
+        if (secret.isEmpty() || sessions.isEmpty()) {
+            send(exchange, 502, Map.of("error", "login unavailable"));
+            return;
+        }
+        var identity = oidc.get().complete(code, state, secret.get());
+        if (identity.isErr()) {
+            log.debug("login: exchange failed ({})", identity.errorAsOptional().orElse("?"));
+            send(exchange, 401, Map.of("error", "login failed"));
+            return;
+        }
+        String user = identity.orElseThrow().user();
+        SessionStore.Session issued = sessions.get().issue(
+                user, userRoles.getOrDefault(user, Role.MEMBER), java.time.Duration.ofHours(12));
+        send(exchange, 200, Map.of(
+                "token", issued.token().orElseThrow(),
+                "user", issued.user(),
+                "role", issued.role().name(),
+                "expiresAt", issued.expiresAt().toString()));
     }
 
     private boolean owned(Principal principal, TurnRunId run) {
@@ -513,7 +681,13 @@ public final class JclawHttpServer {
             send(exchange, 400, Map.of("error", "text or attachments required"));
             return;
         }
-        TurnRunId run = runtime.enqueue(principal.tenant(), thread, new ChatMessage(ChatMessage.Role.USER, blocks));
+        TurnRunId run;
+        try {
+            run = runtime.enqueue(principal.tenant(), thread, new ChatMessage(ChatMessage.Role.USER, blocks));
+        } catch (JclawRuntime.TenantOverBudget e) {
+            send(exchange, 429, Map.of("error", "token budget spent"));
+            return;
+        }
         send(exchange, 202, Map.of("run", run.value(), "thread", thread.value(), "status", "QUEUED"));
     }
 

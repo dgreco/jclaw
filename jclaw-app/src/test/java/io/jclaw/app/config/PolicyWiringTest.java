@@ -85,7 +85,16 @@ class PolicyWiringTest {
                 java.util.List.of(),
                 "canonical",
                 "",
-                java.util.Map.of());
+                java.util.Map.of(),
+                java.util.Map.of(),
+                java.util.Map.of(),
+                0L,
+                java.util.Map.of(),
+                java.time.Duration.ofHours(12),
+                "",
+                "",
+                "",
+                "");
     }
 
     @Test

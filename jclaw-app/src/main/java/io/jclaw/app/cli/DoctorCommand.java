@@ -106,6 +106,16 @@ public class DoctorCommand implements Callable<Integer> {
                 ? "docker (" + properties.sandboxImage() + ", network " + properties.sandboxNetwork()
                         + ", " + properties.sandboxMemory() + ", " + properties.sandboxCpus() + " cpu)"
                 : "host (no sandbox)"));
+        System.out.println("  agents               " + (properties.agents().isEmpty()
+                ? "default only"
+                : String.join(", ", new java.util.TreeSet<>(properties.agents().keySet())))
+                + (properties.tenantPolicies().isEmpty() ? ""
+                        : ", " + properties.tenantPolicies().size() + " tenant policy(ies)")
+                + (properties.tenantTokenBudget() == 0 ? ""
+                        : ", budget " + properties.tenantTokenBudget() + " tokens per tenant"));
+        System.out.println("  login                " + (properties.oidcConfigured()
+                ? "oidc at " + properties.oidcIssuer() : "static tokens only")
+                + (properties.roles().isEmpty() ? "" : ", " + properties.roles().size() + " role(s) set"));
         System.out.println("  channels             " + (channels.enabled()
                 ? String.join(", ", new java.util.TreeSet<>(channels.channels()))
                 : "none"));
