@@ -67,6 +67,25 @@ public class McpCommand implements Runnable {
                         + "Bind the secret to the capability mcp.connect. Repeatable.")
         private String[] secrets = new String[0];
 
+        @Option(names = "--oauth-client-id",
+                description = "With --url: authenticate by OAuth 2.1 client credentials instead of "
+                        + "a static token. jclaw exchanges the client secret for short-lived "
+                        + "access tokens and refreshes them.")
+        private String oauthClientId;
+
+        @Option(names = "--oauth-client-secret",
+                description = "With --oauth-client-id: name of the vault secret holding the client "
+                        + "secret. Bind it to mcp.connect and the token endpoint's host.")
+        private String oauthClientSecret;
+
+        @Option(names = "--oauth-token-url",
+                description = "The token endpoint. Omit to discover it from the server's "
+                        + "/.well-known/oauth-authorization-server.")
+        private String oauthTokenUrl;
+
+        @Option(names = "--oauth-scope", description = "Requested scope, if the server needs one.")
+        private String oauthScope;
+
         public Add(McpServerStore store) {
             this.store = store;
         }
@@ -88,6 +107,25 @@ public class McpCommand implements Runnable {
                 System.err.println("jclaw: --auth-secret applies to --url servers only");
                 return 1;
             }
+            if (oauthClientId != null && !remote) {
+                System.err.println("jclaw: --oauth-client-id applies to --url servers only");
+                return 1;
+            }
+            if (oauthClientId != null && authSecret != null) {
+                System.err.println("jclaw: give either --auth-secret or --oauth-client-id, not both");
+                return 1;
+            }
+            if (oauthClientId != null && (oauthClientSecret == null || oauthClientSecret.isBlank())) {
+                System.err.println("jclaw: --oauth-client-id needs --oauth-client-secret "
+                        + "(the name of a vault entry, not the value)");
+                return 1;
+            }
+            java.util.Optional<McpServerStore.OAuth> oauth = oauthClientId == null
+                    ? java.util.Optional.empty()
+                    : java.util.Optional.of(new McpServerStore.OAuth(
+                            oauthClientId.trim(), oauthClientSecret.trim(),
+                            oauthTokenUrl == null ? "" : oauthTokenUrl.trim(),
+                            oauthScope == null ? "" : oauthScope.trim()));
             java.util.Map<String, String> envSecrets = new java.util.LinkedHashMap<>();
             for (String pair : secrets) {
                 int eq = pair.indexOf('=');
@@ -103,7 +141,7 @@ public class McpCommand implements Runnable {
                 return 1;
             }
             store.add(new McpServerStore.McpServer(name, remote ? List.of() : List.of(command), envSecrets,
-                    remote ? url.trim() : "", authSecret == null ? "" : authSecret.trim(), true));
+                    remote ? url.trim() : "", authSecret == null ? "" : authSecret.trim(), oauth, true));
             System.out.println("Added MCP server '" + name + "'");
             System.out.println("Verify it with: jclaw mcp test " + name);
             System.out.println();

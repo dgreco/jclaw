@@ -36,6 +36,9 @@ public class McpRegistry {
     private final io.jclaw.kernel.guard.EgressGuard egress;
     private final io.jclaw.contracts.secret.SecretVault vault;
     private final io.jclaw.storage.mcp.McpSurfaceCache cache;
+    private final java.time.Clock clock = java.time.Clock.systemUTC();
+    private java.util.function.Function<String, io.jclaw.tools.mcp.McpTransport.ServerRequests>
+            samplingFor = server -> null;
 
     public McpRegistry(McpServerStore servers, Path workspaceRoot) {
         this(servers, workspaceRoot, java.util.Optional.empty());
@@ -142,6 +145,16 @@ public class McpRegistry {
             return io.jclaw.contracts.Result.err("endpoint_" + checked.errorAsOptional().orElse("denied"));
         }
         java.net.URI endpoint = checked.orElseThrow();
+
+        // OAuth 2.1, when configured: a supplier rather than a value, because an access token
+        // expires and the header has to be current when the request is built.
+        if (server.oauth().isPresent()) {
+            io.jclaw.app.mcp.McpOAuth oauth = new io.jclaw.app.mcp.McpOAuth(
+                    server.oauth().get(), server.url(), vault, egress, clock);
+            return io.jclaw.contracts.Result.ok(
+                    new io.jclaw.tools.mcp.HttpTransport(endpoint, oauth::header));
+        }
+
         java.util.Optional<String> authorization;
         if (server.authSecret().isBlank()) {
             authorization = java.util.Optional.empty();
@@ -180,6 +193,7 @@ public class McpRegistry {
         if (cached.isPresent()) {
             McpClient client = McpClient.deferred(server.name(), cached.get().offers(),
                     () -> transportFor(server, workspaceRoot, sandbox, declaredHosts));
+            withSampling(server.name(), client);
             clients.add(client);
             for (Map<String, Object> tool : cached.get().tools()) {
                 handlers.add(new McpCapabilityHandler(client, toTool(tool), trust, effect));
@@ -190,7 +204,7 @@ public class McpRegistry {
             return;
         }
         transportFor(server, workspaceRoot, sandbox, declaredHosts)
-                .flatMap(transport -> McpClient.connect(server.name(), transport))
+                .flatMap(transport -> connectWithSampling(server.name(), transport))
                 .fold(
                         client -> {
                             boolean registered = register(server, client, trust, effect);
@@ -202,6 +216,34 @@ public class McpRegistry {
                             return registered;
                         },
                         reason -> warn(server, reason));
+    }
+
+    /**
+     * Lets a server answer for itself: sampling, when the operator enabled it.
+     *
+     * <p>A handler per server rather than one shared, because the cap is per server. A server in
+     * a loop should exhaust its own budget, not everyone's.
+     */
+    public void withSamplingHandlers(
+            java.util.function.Function<String, io.jclaw.tools.mcp.McpTransport.ServerRequests> factory) {
+        this.samplingFor = java.util.Objects.requireNonNull(factory, "factory");
+    }
+
+    private void withSampling(String server, McpClient client) {
+        io.jclaw.tools.mcp.McpTransport.ServerRequests handler = samplingFor.apply(server);
+        if (handler != null) {
+            client.withSampling(handler);
+        }
+    }
+
+    private io.jclaw.contracts.Result<McpClient, String> connectWithSampling(
+            String server, io.jclaw.tools.mcp.McpTransport transport) {
+        io.jclaw.tools.mcp.McpTransport.ServerRequests handler = samplingFor.apply(server);
+        if (handler != null) {
+            // Installed before the handshake, because the handshake is what advertises it.
+            transport.onServerRequest(handler);
+        }
+        return McpClient.connect(server, transport);
     }
 
     /**

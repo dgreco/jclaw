@@ -61,7 +61,7 @@ jclaw reimplements the **architecture** of IronClaw — the seven-layer ladder, 
 
 Everything is durable JSONL under `~/.jclaw`: a run can park in one process, be approved in a second, and resume in a third. There is no database, and no server unless you start one (`jclaw serve`).
 
-**Status.** Milestones M0–M7 plus subagents (synchronous or asynchronous), MCP, streaming on every provider, lease-based crash recovery, a per-thread run lock, context compaction with model summaries, vector memory, configurable denials and egress lists, per-tool rate limits, injection heuristics, auth and process gates with expiry, a scheduler with `submit` and `worker`, an HTTP surface with run projections, event streams, and per-user tenants, attachments, store retention, an encrypted secret vault with host-side credential injection, a container sandbox for the shell lane, a SQL storage backend (embedded H2 or PostgreSQL) with schema migrations, signed extension packages, execution-stage hooks, a second loop family, Prometheus metrics with OTLP trace export, webhook, heartbeat, and event triggers, and MCP over HTTP with resources, prompts, and lazily started servers. 364 tests pass across the modules, including 15 machine-checked architecture rules (ArchUnit). Both the uber jar and the native image are verified end to end, including subprocess spawning for MCP servers and shell tools. [PARITY.md](PARITY.md) lists what IronClaw still has that jclaw does not.
+**Status.** Milestones M0–M7 plus subagents (synchronous or asynchronous), MCP, streaming on every provider, lease-based crash recovery, a per-thread run lock, context compaction with model summaries, vector memory, configurable denials and egress lists, per-tool rate limits, injection heuristics, auth and process gates with expiry, a scheduler with `submit` and `worker`, an HTTP surface with run projections, event streams, and per-user tenants, attachments, store retention, an encrypted secret vault with host-side credential injection, a container sandbox for the shell lane, a SQL storage backend (embedded H2 or PostgreSQL) with schema migrations, signed extension packages, execution-stage hooks, a second loop family, Prometheus metrics with OTLP trace export, webhook, heartbeat, and event triggers, and MCP over HTTP with resources, prompts, and lazily started servers. 380 tests pass across the modules, including 15 machine-checked architecture rules (ArchUnit). Both the uber jar and the native image are verified end to end, including subprocess spawning for MCP servers and shell tools. [PARITY.md](PARITY.md) lists what IronClaw still has that jclaw does not.
 
 ---
 
@@ -234,6 +234,7 @@ jclaw:
 | `shell-backend` | `host` | `host` runs `builtin.shell` as a child process; `docker` runs each command in a container (see [Tools](#tools-the-agent-can-use)). |
 | `sandbox-docker` / `sandbox-image` / `sandbox-network` / `sandbox-memory` / `sandbox-cpus` / `sandbox-pids-limit` | `docker` / `alpine:3.20` / `none` / `512m` / `1` / `256` | The container contract for `shell-backend: docker` and `mcp-backend: docker`: binary, image, network (`none` unless you say otherwise), memory, CPU, and pid limits. |
 | `mcp-lazy` | `true` | Publish an MCP server's capabilities from its cached surface and start the server only when one is invoked. `false` rediscovers, and so starts every server, on every invocation. |
+| `mcp-sampling` | `0` | Sampled model calls each MCP server may make in this process. `0` disables sampling, and the client does not advertise the capability at all. |
 | `mcp-backend` | `host` | `host` runs MCP server processes directly; `docker` runs each one inside the sandbox contract (see [MCP servers](#mcp-servers-mcp)). |
 | `mcp-sandbox-image` / `mcp-sandbox-network` | *(blank)* | Overrides for MCP servers under `mcp-backend: docker`; blank inherits `sandbox-image` / `sandbox-network`. Servers usually need a runtime image (`node:22-alpine`) and, when their tool exists to reach an API, `bridge`. |
 | `storage` | `jsonl` | Where durable rows live: `jsonl` files under the state directory, or `sql` (every store in one database; see [The state directory](#the-state-directory)). Skills and thread locks stay on the filesystem either way. |
@@ -694,6 +695,8 @@ jclaw mcp test fs --jclaw.mcp-backend=docker --jclaw.mcp-sandbox-image=node:22-a
 ```bash
 jclaw mcp add --name fs npx -y @modelcontextprotocol/server-filesystem .
 jclaw mcp add --name gh --url https://mcp.example.com/mcp --auth-secret gh-mcp
+jclaw mcp add --name gh2 --url https://mcp.example.com/mcp \
+  --oauth-client-id jclaw --oauth-client-secret gh-oauth      # OAuth 2.1; token endpoint discovered
 jclaw mcp add --name fs2 --secret API_KEY=fs-token npx -y @acme/fs-mcp   # a stdio server's environment, from the vault
 jclaw mcp test fs              # start, handshake, list tools, shut down
 jclaw mcp list
@@ -708,6 +711,21 @@ The command is stored as argv (never re-parsed through a shell). A stdio server 
 ```bash
 echo -n "$GH_MCP_TOKEN" | jclaw secrets set gh-mcp --capability mcp.connect --host mcp.example.com
 ```
+
+**OAuth 2.1.** Instead of a static token, `--oauth-client-id` and `--oauth-client-secret` (the name of a vault entry) make jclaw exchange the operator's long-lived client secret for short-lived access tokens by the **client-credentials** grant, refreshed a minute before they expire. The token endpoint comes from `--oauth-token-url` or is discovered from the server's `/.well-known/oauth-authorization-server` (RFC 8414), once per process. The client secret is checked against its binding on every mint, so one bound to a different authorization server cannot be spent here.
+
+Not the authorization-code flow the MCP specification describes for interactive clients, and deliberately: that assumes a browser and a person to consent, and a headless worker parking a run until somebody clicks "allow" would be worse than a static token. What client credentials buys is real on its own — the credential that travels on every request expires in minutes and can be revoked at the authorization server without touching jclaw's configuration.
+
+**Sampling: the reverse direction.** MCP is bidirectional, and `sampling/createMessage` is a server asking *jclaw* to run a model call — to summarise what it just read, name a file, choose between two branches — without shipping a model key of its own. It is also the one place third-party code can make the host spend money, so it is **off unless `jclaw.mcp-sampling` sets a per-server cap**, and the client simply never advertises the capability otherwise. Advertising one it would then refuse is worse than not advertising it: a server would build a plan around it and fail late.
+
+What a server may influence is narrow, and that is the whole design:
+
+- **No tools.** A sampled call publishes none. A server that could put tools in front of the model would have found a side door around the capability host.
+- **The host's model.** A `modelPreferences` hint is read and ignored — letting a server pick the model is letting it pick the price.
+- **Bounded.** Output tokens are clamped to the host's cap and an absolute ceiling; the conversation is capped at 40 messages and each message at 16 KiB.
+- **Text only.** Images and other blocks are dropped, not forwarded: an image is expensive and a server has no way to have obtained one the user consented to send.
+
+Every sampled call is written to the audit log as a `model.called` event under a synthetic `run_mcpsample_<server>` id, so an MCP server is not the one caller whose spending appears nowhere. A server that reaches its cap is told so, rather than left to stall.
 
 **What a server offers.** Tools register as `mcp.<server>.<tool>`. A server that declares resources also gets `mcp.<server>.list_resources` and `read_resource`; one that declares prompts gets `list_prompts` and `get_prompt`. Declared, not assumed: a server is never asked for a capability it did not claim. All of them carry `COMMUNITY` trust, which means **every call needs approval in every mode, including `trusted`** — no setting can raise a third-party ceiling. Only text content is returned to the model; images, binary resources, and other content types are named and elided.
 

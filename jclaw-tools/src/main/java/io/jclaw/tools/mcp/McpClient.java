@@ -42,6 +42,7 @@ public final class McpClient implements AutoCloseable {
     private final Object connectLock = new Object();
     private volatile McpTransport transport;
     private volatile Set<String> offers;
+    private volatile McpTransport.ServerRequests sampling;
 
     private McpClient(
             String serverName,
@@ -163,10 +164,18 @@ public final class McpClient implements AutoCloseable {
             envelope.put("jsonrpc", "2.0");
             envelope.put("id", id);
             envelope.put("method", "initialize");
+            // Declare sampling only when a handler is installed. Advertising a capability the
+            // client would then refuse is worse than not advertising it: a server would build a
+            // plan around it and fail late.
+            Map<String, Object> clientCapabilities = sampling == null
+                    ? Map.of() : Map.of("sampling", Map.of());
             envelope.put("params", Map.of(
                     "protocolVersion", PROTOCOL_VERSION,
-                    "capabilities", Map.of(),
+                    "capabilities", clientCapabilities,
                     "clientInfo", Map.of("name", "jclaw", "version", "0.1.0")));
+            if (sampling != null) {
+                fresh.onServerRequest(sampling);
+            }
             Result<Map<String, Object>, String> handshake =
                     fresh.send(envelope, Optional.of(id), REQUEST_TIMEOUT);
             if (handshake.isErr()) {
@@ -196,6 +205,16 @@ public final class McpClient implements AutoCloseable {
     }
 
     /** What the server said it offers: some of {@code tools}, {@code resources}, {@code prompts}. */
+    /**
+     * Answers the server's {@code sampling/createMessage} requests, when the host allows them.
+     *
+     * <p>Set before connecting. Installing one is what makes the client advertise the capability
+     * at all, so a host that has not opted into sampling never invites a server to ask.
+     */
+    public void withSampling(McpTransport.ServerRequests handler) {
+        this.sampling = java.util.Objects.requireNonNull(handler, "handler");
+    }
+
     public Set<String> offers() {
         return offers;
     }

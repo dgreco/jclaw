@@ -248,6 +248,8 @@ public record JclawProperties(
 
         @DefaultValue("host") String mcpBackend,
 
+        @DefaultValue("0") int mcpSampling,
+
         @DefaultValue("true") boolean mcpLazy,
 
         @DefaultValue("") String mcpSandboxImage,
@@ -418,6 +420,7 @@ public record JclawProperties(
                 "1",
                 256,
                 "host",
+                0,
                 true,
                 "",
                 "",

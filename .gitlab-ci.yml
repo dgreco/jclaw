@@ -150,6 +150,11 @@ native-image:
     - $JC run "family" --jclaw.loop-families.strict.base=reflective --jclaw.loop-families.strict.review-instruction=REVIEW-IT --jclaw.loop-family=strict '--jclaw.mock-script[0]=text:draft' '--jclaw.mock-script[1]=text:REVIEWED' | grep -q REVIEWED
     - "! $JC run x --jclaw.loop-family=nope"
     - "! $JC run x --jclaw.loop-families.canonical.base=reflective --jclaw.loop-families.canonical.review-instruction=x"
+    # MCP: a remote server configured with OAuth 2.1 client credentials round-trips through the
+    # store. Nothing is contacted — the point is that the record binds and replays under AOT.
+    - $JC mcp add --name ci-oauth --url https://mcp.example.com/mcp --oauth-client-id jclaw --oauth-client-secret ci-oauth-secret
+    - $JC mcp list | grep -q ci-oauth
+    - "! $JC mcp add --name ci-both --url https://mcp.example.com/mcp --auth-secret a --oauth-client-id b --oauth-client-secret c"
     # Spans: `--spans` is the option `--trace` could never be, since that name is claimed
     # process-wide for verbosity. Cheap to check and silent to lose.
     - $JC run "metrics" --jclaw.mock-script=text:done

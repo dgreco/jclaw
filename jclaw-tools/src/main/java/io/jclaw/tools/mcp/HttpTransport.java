@@ -35,6 +35,8 @@ import java.util.concurrent.atomic.AtomicReference;
  * endpoint that moves is configuration to fix, not a hop to take, and a redirect is how a
  * validated URL becomes an unvalidated one. And it holds no credential of its own — the caller
  * supplies the ready {@code Authorization} header value, so the vault stays above the tool layer.
+ * That supply is a function rather than a value, because an OAuth access token expires and the
+ * header has to be current at the moment the request is built.
  */
 public final class HttpTransport implements McpTransport {
 
@@ -43,15 +45,27 @@ public final class HttpTransport implements McpTransport {
     private final JsonMapper mapper = JsonMapper.builder().build();
     private final HttpClient client;
     private final URI endpoint;
-    private final Optional<String> authorization;
+    private final java.util.function.Supplier<Optional<String>> authorization;
     private final AtomicReference<String> sessionId = new AtomicReference<>();
     private volatile boolean closed;
+    private volatile ServerRequests serverRequests;
 
     /**
      * @param endpoint      the server's MCP endpoint, already checked by the host's egress guard
      * @param authorization a complete {@code Authorization} header value, or empty
      */
     public HttpTransport(URI endpoint, Optional<String> authorization) {
+        this(endpoint, () -> authorization);
+    }
+
+    /**
+     * @param endpoint      the server's MCP endpoint, already checked by the host's egress guard
+     * @param authorization supplies a complete {@code Authorization} header value per request, or
+     *                      empty. A supplier rather than a value because an OAuth access token
+     *                      expires: the credential has to be re-read, not captured once at
+     *                      construction and used until the server starts answering 401
+     */
+    public HttpTransport(URI endpoint, java.util.function.Supplier<Optional<String>> authorization) {
         this.endpoint = Objects.requireNonNull(endpoint, "endpoint");
         this.authorization = Objects.requireNonNull(authorization, "authorization");
         this.client = HttpClient.newBuilder()
@@ -74,7 +88,7 @@ public final class HttpTransport implements McpTransport {
                 .header("Accept", "application/json, text/event-stream")
                 .POST(HttpRequest.BodyPublishers.ofString(
                         mapper.writeValueAsString(envelope), StandardCharsets.UTF_8));
-        authorization.ifPresent(value -> request.header("Authorization", value));
+        authorization.get().ifPresent(value -> request.header("Authorization", value));
         // The run's trace, when one is current, so an MCP server's own spans join jclaw's.
         io.jclaw.contracts.observability.TraceContext.current()
                 .ifPresent(trace -> request.header("traceparent", trace.traceparent()));
@@ -177,11 +191,81 @@ public final class HttpTransport implements McpTransport {
 
     @SuppressWarnings("unchecked")
     private Result<Map<String, Object>, String> frame(String data, long id) {
+        Map<String, Object> message;
         try {
-            return McpProtocol.matchResponse(mapper.readValue(data, Map.class), id);
+            message = mapper.readValue(data, Map.class);
         } catch (RuntimeException e) {
             return null; // not protocol; skip the frame
         }
+        // A frame carrying a method and an id is the server asking us something, not answering.
+        // Answer it out of band and keep waiting for the response we came for.
+        if (message.get("method") instanceof String method && message.get("id") != null) {
+            answerServer(method, message);
+            return null;
+        }
+        try {
+            return McpProtocol.matchResponse(message, id);
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    /**
+     * Answers a server-initiated request by POSTing the reply on its own request.
+     *
+     * <p>Best effort, and deliberately so: this is happening while a tool call is in flight, and
+     * failing to answer a server's question must not fail the answer the model is waiting for.
+     * A server that gets no reply times out its own request, which is its problem to handle.
+     */
+    @SuppressWarnings("unchecked")
+    private void answerServer(String method, Map<String, Object> request) {
+        ServerRequests handler = serverRequests;
+        Map<String, Object> reply = new java.util.LinkedHashMap<>();
+        reply.put("jsonrpc", "2.0");
+        reply.put("id", request.get("id"));
+        if (handler == null) {
+            // We never advertised any client capability, so the honest answer is that the method
+            // does not exist here. -32601 is JSON-RPC's "method not found".
+            reply.put("error", Map.of("code", -32601, "message", "method_not_supported"));
+        } else {
+            Map<String, Object> params = request.get("params") instanceof Map<?, ?> raw
+                    ? (Map<String, Object>) raw : Map.of();
+            Result<Map<String, Object>, String> answered;
+            try {
+                answered = handler.answer(method, params);
+            } catch (RuntimeException e) {
+                answered = Result.err("handler_failed");
+            }
+            if (answered.isErr()) {
+                reply.put("error", Map.of("code", -32603,
+                        "message", answered.errorAsOptional().orElse("internal_error")));
+            } else {
+                reply.put("result", answered.orElseThrow());
+            }
+        }
+        try {
+            HttpRequest.Builder post = HttpRequest.newBuilder(endpoint)
+                    .timeout(Duration.ofSeconds(20))
+                    .header("Content-Type", "application/json")
+                    .header("Accept", "application/json, text/event-stream")
+                    .POST(HttpRequest.BodyPublishers.ofString(
+                            mapper.writeValueAsString(reply), StandardCharsets.UTF_8));
+            authorization.get().ifPresent(value -> post.header("Authorization", value));
+            String session = sessionId.get();
+            if (session != null) {
+                post.header("Mcp-Session-Id", session);
+            }
+            client.send(post.build(), HttpResponse.BodyHandlers.discarding());
+        } catch (IOException | RuntimeException e) {
+            // See the note above: a reply that does not land is the server's timeout, not ours.
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    @Override
+    public void onServerRequest(ServerRequests handler) {
+        this.serverRequests = Objects.requireNonNull(handler, "handler");
     }
 
     @Override
@@ -191,7 +275,7 @@ public final class HttpTransport implements McpTransport {
 
     @Override
     public String describe() {
-        return "http " + endpoint + (authorization.isPresent() ? " (authenticated)" : "");
+        return "http " + endpoint + (authorization.get().isPresent() ? " (authenticated)" : "");
     }
 
     @Override

@@ -2,7 +2,7 @@
 
 An honest enumeration of what [IronClaw](https://github.com/nearai/ironclaw) (internally "Reborn") has that jclaw does not, and of what jclaw now has. jclaw is roughly 20k lines of Java (plus 6.5k of tests) against IronClaw's ~1.4M lines of Rust across ~63 crates. The **architecture** is equivalent — layer ladder, turn/run lifecycle, untrusted `LoopExit`, single `CapabilityHost` authority boundary, checkpoint-kind–driven recovery — and, after the September 2026 parity work, most of the runtime *mechanisms* are present in some form. What remains missing is breadth, not mechanism: the long tail catalogued in section 16. This file is the list, organised by IronClaw's own crate families so a gap can be traced to the crate that fills it upstream.
 
-Sources: IronClaw's `README.md`, `crates/Architecture.md`, and the `crates/` listing as of September 2026; jclaw's code on this checkout (364 tests, 0 failures). Where the upstream doc names a concept and jclaw has an equivalent under a different name, the mapping is given. Where the gap is uncertain it is marked *(unverified)*.
+Sources: IronClaw's `README.md`, `crates/Architecture.md`, and the `crates/` listing as of September 2026; jclaw's code on this checkout (380 tests, 0 failures). Where the upstream doc names a concept and jclaw has an equivalent under a different name, the mapping is given. Where the gap is uncertain it is marked *(unverified)*.
 
 Legend: ✅ at parity · 🟡 partial · ❌ missing · ➕ jclaw-only
 
@@ -71,8 +71,8 @@ IronClaw's premise is that already-authorized work runs **in isolation**. jclaw 
 | First-party executors routed through `RuntimeDispatcher` | ✅ | ✅ (`CapabilityHandler` lanes behind `DefaultCapabilityHost`) |
 | MCP over stdio | ✅ | ✅ `StdioTransport`, behind the same `McpTransport` port as HTTP |
 | MCP over HTTP / SSE / streamable HTTP | ✅ *(unverified which transports)* | ✅ `HttpTransport`: streamable HTTP (protocol `2025-03-26`), reading either a JSON body or an SSE stream, echoing the server's session id, never following a redirect |
-| MCP OAuth for authenticated servers | ✅ *(unverified)* | 🟡 an HTTP server authenticates with a bearer token held in the secret vault, bound to the capability `mcp.connect` and the endpoint's host; the app layer leases it and hands the transport a finished header. No OAuth 2.1 discovery, dynamic client registration, or authorization-code flow |
-| MCP resources, prompts, sampling, notifications | ✅ *(unverified)* | 🟡 tools, resources (`list_resources`, `read_resource`), and prompts (`list_prompts`, `get_prompt`), registered only for what the server declared in its handshake. No sampling; server notifications are still ignored |
+| MCP OAuth for authenticated servers | ✅ *(unverified)* | ✅ a static bearer token from the vault, or **OAuth 2.1 client credentials**: the client secret is a vault entry bound to `mcp.connect` and the token endpoint's host, exchanged for short-lived access tokens, cached until a minute before expiry, with the token endpoint configured or discovered via RFC 8414. No dynamic client registration, and no authorization-code flow — deliberately, since an agent has nobody at a keyboard to consent |
+| MCP resources, prompts, sampling, notifications | ✅ *(unverified)* | 🟡 tools, resources (`list_resources`, `read_resource`), and prompts (`list_prompts`, `get_prompt`), registered only for what the server declared in its handshake, plus **sampling**: a server-initiated `sampling/createMessage` is answered on its own request while a tool call is in flight, behind a per-server cap (`jclaw.mcp-sampling`, off by default), with no tools, the host's model, clamped tokens, and text-only content. The capability is advertised only when a handler exists. Server-initiated *notifications* are still ignored |
 | MCP server lifecycle | lazy / managed *(unverified)* | ✅ lazy: `McpSurfaceCache` remembers what each server offered, keyed by a fingerprint of its command, URL, and environment names, so capabilities are published without a handshake and the server starts on first invocation. `mcp refresh` drops an entry; `jclaw.mcp-lazy=false` restores eager discovery |
 | Host-mediated egress for MCP servers | ✅ | 🟡 a remote server's endpoint goes through `EgressGuard` before a connection is opened, so an MCP URL is checked exactly as a tool's is. Under `mcp-backend: docker` a stdio server's network is what `mcp-sandbox-network` says: `none` (default) or a Docker network; its configured environment reaches it by name, never on a command line. On the host a stdio server's own sockets remain unmediated |
 
@@ -314,10 +314,14 @@ Ranked, again, by what a deployment beyond one operator's machine would hit firs
    gate hook may reword the question or refuse to ask it and has **no outcome that approves**,
    which is what keeps the authority gate single. Still open: no hook on checkpoint writes or
    exit validation, and a configured family varies only the review instruction.
-9. **MCP auth and the reverse direction** (§3) — servers reach over stdio or HTTP and expose
-   tools, resources, and prompts. Authentication is a vault-held bearer token, not the OAuth 2.1
-   flow; sampling and server-initiated notifications are unimplemented; a stdio server's own
-   sockets are unmediated unless it is containerised.
+9. ~~**MCP auth and the reverse direction**~~ — mostly closed: OAuth 2.1 **client credentials**
+   with RFC 8414 discovery, caching, and refresh, and **sampling** answered behind a per-server
+   cap with no tools, the host's model, and a bounded conversation. The interactive
+   authorization-code flow is deliberately not implemented — it assumes a browser and someone to
+   consent, and a headless worker parking a run until they do would be worse than a static token.
+   Still open: server-initiated *notifications* (`tools/list_changed`), which need a transport
+   that reads outside a request; and host-mediated per-host egress for a stdio server, which
+   needs a proxy rather than the container's all-or-nothing network.
 10. **Triggers with more sources** (§7) — cron, intervals, webhooks, and two audit-event types.
     No filesystem watches, no inbound-message triggers, no fan-out from one webhook.
 

@@ -27,6 +27,32 @@ public interface McpTransport extends AutoCloseable {
     Result<Map<String, Object>, String> send(
             Map<String, Object> envelope, Optional<Long> expectId, Duration timeout);
 
+    /**
+     * Answers a request the <em>server</em> initiated, such as {@code sampling/createMessage}.
+     *
+     * <p>MCP is bidirectional: a server may ask the client to do something, and the only one of
+     * those jclaw answers is sampling. A handler returns the JSON-RPC {@code result} object, or
+     * an error to send back.
+     *
+     * <p>Unset by default, and a transport with no handler simply skips such a frame — which is
+     * the correct behaviour for a client that never advertised the capability. A server sending
+     * one anyway is not a reason to fail the call in flight.
+     */
+    @FunctionalInterface
+    interface ServerRequests {
+        /**
+         * @param method the JSON-RPC method the server asked for
+         * @param params its params, decoded
+         * @return the result object, or an error token to return as a JSON-RPC error
+         */
+        Result<Map<String, Object>, String> answer(String method, Map<String, Object> params);
+    }
+
+    /** Installs the handler for server-initiated requests. Set once, before any call. */
+    default void onServerRequest(ServerRequests handler) {
+        // Most transports never see one; a default keeps them from having to say so.
+    }
+
     /** Whether the server is still reachable. */
     boolean isAlive();
 

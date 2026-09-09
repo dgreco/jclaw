@@ -33,6 +33,14 @@ public final class JsonlMcpServerStore implements McpServerStore {
         row.put("envSecrets", server.envSecrets());
         row.put("url", server.url());
         row.put("authSecret", server.authSecret());
+        // Names, never values: the client secret lives in the vault, and this row records only
+        // which entry to lease. Written flat rather than nested so the row stays a flat map.
+        server.oauth().ifPresent(oauth -> {
+            row.put("oauthClientId", oauth.clientId());
+            row.put("oauthClientSecret", oauth.clientSecretName());
+            row.put("oauthTokenUrl", oauth.tokenUrl());
+            row.put("oauthScope", oauth.scope());
+        });
         row.put("enabled", server.enabled());
         file.append(row);
     }
@@ -92,6 +100,13 @@ public final class JsonlMcpServerStore implements McpServerStore {
                                     : Map.of(),
                             row.get("url") instanceof String url ? url : "",
                             row.get("authSecret") instanceof String secret ? secret : "",
+                            row.get("oauthClientId") instanceof String clientId && !clientId.isBlank()
+                                    ? Optional.of(new McpServerStore.OAuth(
+                                            clientId,
+                                            row.get("oauthClientSecret") instanceof String s ? s : "",
+                                            row.get("oauthTokenUrl") instanceof String u ? u : "",
+                                            row.get("oauthScope") instanceof String sc ? sc : ""))
+                                    : Optional.<McpServerStore.OAuth>empty(),
                             !(row.get("enabled") instanceof Boolean flag) || flag));
                     case KIND_REMOVED -> servers.remove(name);
                     case KIND_ENABLED -> {

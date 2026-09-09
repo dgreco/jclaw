@@ -216,10 +216,20 @@ public class JclawConfiguration {
     public McpRegistry mcpRegistry(
             McpServerStore mcpServerStore, WorkspaceGuard workspaceGuard, JclawProperties properties,
             ExtensionRegistry extensionRegistry, EgressGuard egressGuard, SecretVault secretVault,
-            McpSurfaceCache mcpSurfaceCache) {
-        return new McpRegistry(mcpServerStore, workspaceGuard.root(), mcpSandboxSpec(properties),
-                extensionRegistry, egressGuard, secretVault,
+            McpSurfaceCache mcpSurfaceCache, ModelProvider modelProvider, EventLog eventLog,
+            Clock clock) {
+        McpRegistry registry = new McpRegistry(mcpServerStore, workspaceGuard.root(),
+                mcpSandboxSpec(properties), extensionRegistry, egressGuard, secretVault,
                 properties.mcpLazy() ? mcpSurfaceCache : null);
+        // Sampling is the one request that travels from a server to jclaw, and the one place
+        // third-party code can make the host spend money. Off unless the operator sets a cap,
+        // and the cap is what the client advertises the capability for at all.
+        if (properties.mcpSampling() > 0) {
+            registry.withSamplingHandlers(server -> new io.jclaw.app.mcp.McpSampling(
+                    server, modelProvider, eventLog, clock,
+                    properties.model(), 4096, properties.mcpSampling()));
+        }
+        return registry;
     }
 
     /**

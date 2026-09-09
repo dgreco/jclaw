@@ -27,9 +27,41 @@ public interface McpServerStore {
      * @param authSecret name of a vault secret to send as a bearer token when connecting over
      *                   HTTP; blank for none. The value never lives here
      */
+    /**
+     * OAuth 2.1 client credentials for a remote server.
+     *
+     * <p>The client-credentials grant, not the authorization-code flow the MCP specification
+     * describes for interactive clients. An agent is not a browser: there is nobody at the
+     * keyboard to consent, and a headless process that parked a run waiting for one would be
+     * worse than a static token. What this buys over a static token is real — the credential the
+     * operator holds is exchanged for a short-lived one, and a leaked access token expires — so
+     * it is worth having even without the interactive half.
+     *
+     * @param clientId         the OAuth client id; not a secret, so it may sit in configuration
+     * @param clientSecretName the <em>vault entry</em> holding the client secret, bound to
+     *                         {@code mcp.connect} and the token endpoint's host
+     * @param tokenUrl         the token endpoint, or blank to discover it from the server's
+     *                         {@code /.well-known/oauth-authorization-server}
+     * @param scope            requested scope, or blank for none
+     */
+    record OAuth(String clientId, String clientSecretName, String tokenUrl, String scope) {
+        public OAuth {
+            clientId = Objects.requireNonNull(clientId, "clientId").trim();
+            clientSecretName = Objects.requireNonNull(clientSecretName, "clientSecretName").trim();
+            tokenUrl = Objects.requireNonNull(tokenUrl, "tokenUrl").trim();
+            scope = Objects.requireNonNull(scope, "scope").trim();
+            if (clientId.isBlank()) {
+                throw new IllegalArgumentException("an oauth client needs a client id");
+            }
+            if (clientSecretName.isBlank()) {
+                throw new IllegalArgumentException("an oauth client needs the name of a vault secret");
+            }
+        }
+    }
+
     record McpServer(
             String name, List<String> command, Map<String, String> envSecrets,
-            String url, String authSecret, boolean enabled) {
+            String url, String authSecret, Optional<OAuth> oauth, boolean enabled) {
 
         public McpServer {
             Objects.requireNonNull(name, "name");
@@ -37,6 +69,7 @@ public interface McpServerStore {
             envSecrets = Map.copyOf(Objects.requireNonNull(envSecrets, "envSecrets"));
             url = Objects.requireNonNull(url, "url").trim();
             authSecret = Objects.requireNonNull(authSecret, "authSecret").trim();
+            Objects.requireNonNull(oauth, "oauth");
             if (name.isBlank()) {
                 throw new IllegalArgumentException("server name must not be blank");
             }
@@ -46,11 +79,24 @@ public interface McpServerStore {
             if (!url.isBlank() && !command.isEmpty()) {
                 throw new IllegalArgumentException("an http server has no command");
             }
+            if (oauth.isPresent() && url.isBlank()) {
+                throw new IllegalArgumentException("oauth is for an http server; a stdio child has no endpoint");
+            }
+            if (oauth.isPresent() && !authSecret.isBlank()) {
+                throw new IllegalArgumentException(
+                        "give either a static --auth-secret or --oauth-client-id, not both");
+            }
         }
 
         /** A stdio server: the common form, and what {@code mcp add} creates without {@code --url}. */
         public McpServer(String name, List<String> command, Map<String, String> envSecrets, boolean enabled) {
-            this(name, command, envSecrets, "", "", enabled);
+            this(name, command, envSecrets, "", "", Optional.empty(), enabled);
+        }
+
+        /** An HTTP server with a static bearer token, or none. */
+        public McpServer(String name, List<String> command, Map<String, String> envSecrets,
+                String url, String authSecret, boolean enabled) {
+            this(name, command, envSecrets, url, authSecret, Optional.empty(), enabled);
         }
 
         public boolean isHttp() {
@@ -58,7 +104,7 @@ public interface McpServerStore {
         }
 
         public McpServer withEnabled(boolean enabled) {
-            return new McpServer(name, command, envSecrets, url, authSecret, enabled);
+            return new McpServer(name, command, envSecrets, url, authSecret, oauth, enabled);
         }
 
         /** How the server is reached, for listings. Never a credential. */
