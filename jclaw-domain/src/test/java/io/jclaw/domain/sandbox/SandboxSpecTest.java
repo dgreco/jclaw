@@ -38,6 +38,21 @@ class SandboxSpecTest {
     }
 
     @Test
+    @DisplayName("a program runs as-is, with environment passed by name only")
+    void programForm() {
+        List<String> argv = SandboxSpec.defaults("docker", "node:22-alpine")
+                .argv(Path.of("/w"), List.of("npx", "-y", "server"), java.util.Set.of("API_KEY"));
+        assertEquals(List.of("node:22-alpine", "npx", "-y", "server"), argv.subList(argv.size() - 4, argv.size()));
+        assertTrue(argv.contains("API_KEY"), "the name is passed for docker to read from its environment");
+        assertFalse(argv.stream().anyMatch(a -> a.startsWith("API_KEY=")), "never the value");
+        assertFalse(argv.contains("/bin/sh"));
+        assertThrows(IllegalArgumentException.class, () -> SandboxSpec.defaults("docker", "img")
+                .argv(Path.of("/w"), List.of("x"), java.util.Set.of("KEY=value")));
+        assertThrows(IllegalArgumentException.class, () -> SandboxSpec.defaults("docker", "img")
+                .argv(Path.of("/w"), List.of(), java.util.Set.of()));
+    }
+
+    @Test
     @DisplayName("network can be opened deliberately; nonsense is refused")
     void validation() {
         SandboxSpec open = new SandboxSpec("docker", "img", "bridge", "1g", "2", 512, false);

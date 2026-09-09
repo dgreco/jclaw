@@ -4,14 +4,16 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
+import java.util.TreeSet;
 
 /**
- * Pure description of a container sandbox for one shell command, and the {@code docker run}
- * argument vector that realises it.
+ * Pure description of a container sandbox for one process, and the {@code docker run} argument
+ * vector that realises it.
  *
- * <p>The lane that executes shell commands can run them on the host or inside a container; this
- * record is the container's contract, decided by the operator and rendered here without touching
- * a process. Every flag exists for one threat:
+ * <p>The shell lane runs commands in it and the MCP lane runs server processes in it; either can
+ * instead run on the host. This record is the container's contract, decided by the operator and
+ * rendered here without touching a process. Every flag exists for one threat:
  *
  * <ul>
  *   <li>{@code --network none} by default: a command that can reach the network from inside the
@@ -67,8 +69,26 @@ public record SandboxSpec(
      * @param command   the shell command, run by the image's {@code /bin/sh -c}
      */
     public List<String> argv(Path workspace, String command) {
-        Objects.requireNonNull(workspace, "workspace");
         Objects.requireNonNull(command, "command");
+        return argv(workspace, List.of("/bin/sh", "-c", command), Set.of());
+    }
+
+    /**
+     * The argument vector for one program, such as an MCP server.
+     *
+     * @param program        the program and its arguments, run as-is inside the container
+     * @param passThroughEnv names of variables the container should receive from the Docker
+     *                       client's own environment. Passing names rather than values keeps a
+     *                       server's API key out of the argument vector, where every process on
+     *                       the host could read it
+     */
+    public List<String> argv(Path workspace, List<String> program, Set<String> passThroughEnv) {
+        Objects.requireNonNull(workspace, "workspace");
+        Objects.requireNonNull(program, "program");
+        Objects.requireNonNull(passThroughEnv, "passThroughEnv");
+        if (program.isEmpty()) {
+            throw new IllegalArgumentException("program must not be empty");
+        }
         List<String> argv = new ArrayList<>();
         argv.add(dockerBinary);
         argv.add("run");
@@ -95,10 +115,15 @@ public record SandboxSpec(
         argv.add("HOME=" + MOUNT);
         argv.add("--env");
         argv.add("LANG=C.UTF-8");
+        for (String name : new TreeSet<>(passThroughEnv)) {
+            if (name.isBlank() || name.indexOf('=') >= 0) {
+                throw new IllegalArgumentException("not an environment variable name: '" + name + "'");
+            }
+            argv.add("--env");
+            argv.add(name);
+        }
         argv.add(image);
-        argv.add("/bin/sh");
-        argv.add("-c");
-        argv.add(command);
+        argv.addAll(program);
         return List.copyOf(argv);
     }
 }

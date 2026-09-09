@@ -30,14 +30,21 @@ public class McpRegistry {
     private final List<CapabilityHandler> handlers = new ArrayList<>();
 
     public McpRegistry(McpServerStore servers, Path workspaceRoot) {
+        this(servers, workspaceRoot, java.util.Optional.empty());
+    }
+
+    /** @param sandbox when present, every server process runs inside this container contract */
+    public McpRegistry(McpServerStore servers, Path workspaceRoot,
+            java.util.Optional<io.jclaw.domain.sandbox.SandboxSpec> sandbox) {
         Objects.requireNonNull(servers, "servers");
         Objects.requireNonNull(workspaceRoot, "workspaceRoot");
+        Objects.requireNonNull(sandbox, "sandbox");
 
         for (McpServerStore.McpServer server : servers.list()) {
             if (!server.enabled()) {
                 continue;
             }
-            McpClient.start(server.name(), server.command(), server.env(), workspaceRoot)
+            McpClient.start(server.name(), server.command(), server.env(), workspaceRoot, sandbox)
                     .fold(
                             client -> register(server, client),
                             reason -> warn(server, reason));

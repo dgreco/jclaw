@@ -61,7 +61,7 @@ jclaw reimplements the **architecture** of IronClaw — the seven-layer ladder, 
 
 Everything is durable JSONL under `~/.jclaw`: a run can park in one process, be approved in a second, and resume in a third. There is no database, and no server unless you start one (`jclaw serve`).
 
-**Status.** Milestones M0–M7 plus subagents (synchronous or asynchronous), MCP, streaming on every provider, lease-based crash recovery, a per-thread run lock, context compaction with model summaries, vector memory, configurable denials and egress lists, per-tool rate limits, injection heuristics, auth and process gates with expiry, a scheduler with `submit` and `worker`, an HTTP surface with run projections, event streams, and per-user tenants, attachments, store retention, an encrypted secret vault with host-side credential injection, a container sandbox for the shell lane, and a SQL storage backend (embedded H2 or PostgreSQL) with schema migrations. 259 tests pass across the modules, including 14 machine-checked architecture rules (ArchUnit). Both the uber jar and the native image are verified end to end, including subprocess spawning for MCP servers and shell tools. [PARITY.md](PARITY.md) lists what IronClaw still has that jclaw does not.
+**Status.** Milestones M0–M7 plus subagents (synchronous or asynchronous), MCP, streaming on every provider, lease-based crash recovery, a per-thread run lock, context compaction with model summaries, vector memory, configurable denials and egress lists, per-tool rate limits, injection heuristics, auth and process gates with expiry, a scheduler with `submit` and `worker`, an HTTP surface with run projections, event streams, and per-user tenants, attachments, store retention, an encrypted secret vault with host-side credential injection, a container sandbox for the shell lane, and a SQL storage backend (embedded H2 or PostgreSQL) with schema migrations. 261 tests pass across the modules, including 14 machine-checked architecture rules (ArchUnit). Both the uber jar and the native image are verified end to end, including subprocess spawning for MCP servers and shell tools. [PARITY.md](PARITY.md) lists what IronClaw still has that jclaw does not.
 
 ---
 
@@ -232,7 +232,9 @@ jclaw:
 | `serve-token` | *(blank)* | The operator's bearer token for `serve` (`JCLAW_SERVE_TOKEN` works too). The operator is the same `local` tenant as the CLI and can read every user's runs. Blank with no `serve-users` means no authentication: keep it on loopback. |
 | `serve-users` | *(none)* | Named users for `serve`, as a map of user name to bearer token (`jclaw.serve-users.alice=<token>`). Each user is a tenant: their thread names are namespaced, their memories, routines, and approvals are their own, and they see only their own runs and gates. |
 | `shell-backend` | `host` | `host` runs `builtin.shell` as a child process; `docker` runs each command in a container (see [Tools](#tools-the-agent-can-use)). |
-| `sandbox-docker` / `sandbox-image` / `sandbox-network` / `sandbox-memory` / `sandbox-cpus` / `sandbox-pids-limit` | `docker` / `alpine:3.20` / `none` / `512m` / `1` / `256` | The container contract for `shell-backend: docker`: binary, image, network (`none` unless you say otherwise), memory, CPU, and pid limits. |
+| `sandbox-docker` / `sandbox-image` / `sandbox-network` / `sandbox-memory` / `sandbox-cpus` / `sandbox-pids-limit` | `docker` / `alpine:3.20` / `none` / `512m` / `1` / `256` | The container contract for `shell-backend: docker` and `mcp-backend: docker`: binary, image, network (`none` unless you say otherwise), memory, CPU, and pid limits. |
+| `mcp-backend` | `host` | `host` runs MCP server processes directly; `docker` runs each one inside the sandbox contract (see [MCP servers](#mcp-servers-mcp)). |
+| `mcp-sandbox-image` / `mcp-sandbox-network` | *(blank)* | Overrides for MCP servers under `mcp-backend: docker`; blank inherits `sandbox-image` / `sandbox-network`. Servers usually need a runtime image (`node:22-alpine`) and, when their tool exists to reach an API, `bridge`. |
 | `storage` | `jsonl` | Where durable rows live: `jsonl` files under the state directory, or `sql` (every store in one database; see [The state directory](#the-state-directory)). Skills and thread locks stay on the filesystem either way. |
 | `datasource-url` / `datasource-username` | *(blank)* / `sa` | For `storage: sql`. Blank URL means an embedded H2 file under the state directory; a `jdbc:postgresql://…` URL is the hosted option. The password comes only from `JCLAW_DATASOURCE_PASSWORD`. |
 
@@ -541,6 +543,12 @@ Routines run unattended, so pair them with `--jclaw.approval-mode=read-only` (wr
 
 jclaw speaks [Model Context Protocol](https://modelcontextprotocol.io) to external tool servers over **stdio** (JSON-RPC 2.0, protocol `2024-11-05`).
 
+An MCP server is third-party code with its own network stack. On the host it can reach anything and read the workspace directly; with `mcp-backend: docker` each server runs inside the same container contract as the sandboxed shell, with the workspace as its only mount, the network as `mcp-sandbox-network` says (`none` by default), and resource limits. Its configured environment is passed to the container **by name**, never as a value on the command line. The protocol is unchanged: the container's stdio is the server's.
+
+```bash
+jclaw mcp test fs --jclaw.mcp-backend=docker --jclaw.mcp-sandbox-image=node:22-alpine
+```
+
 ```bash
 jclaw mcp add --name fs npx -y @modelcontextprotocol/server-filesystem .
 jclaw mcp test fs              # start, handshake, list tools, shut down
@@ -628,7 +636,7 @@ Default level is INFO and prints only the reply. The domain never logs; the inte
 - **Egress guard.** `http_fetch` refuses non-http(s) schemes, URLs with embedded credentials, cloud-metadata hostnames, and any hostname resolving to *any* private, loopback, link-local, CGNAT, or ULA address (all resolved addresses must be public, defeating DNS-based bypasses). Redirects are re-checked per hop.
 - **One authority gate.** `DefaultCapabilityHost` orders checks so a denied call never reaches side-effecting code: existence → policy denial → rate limit → approval → dispatch → redact/bound/store → injection scan. Per-invocation fingerprints, sticky denials, third-party trust ceilings that policy cannot raise, per-tool egress lists that can only narrow.
 - **Untrusted tool output is framed.** Instruction-shaped text in a tool result is audited and, by default, fenced and defused before the model sees it; `block` withholds it. The stored payload is never altered.
-- **The shell can be contained.** `shell-backend: docker` runs every command in a throwaway container with no network, the workspace as its only mount, and resource limits. `doctor` says which backend is active.
+- **Untrusted processes can be contained.** `shell-backend: docker` runs every command, and `mcp-backend: docker` every MCP server, in a throwaway container with no network unless configured, the workspace as its only mount, and resource limits. `doctor` says which backends are active.
 - **Least-privilege lanes.** Tool handlers receive a context with exactly four methods (resolve path, check egress, display path, output budget). There is no method to obtain a secret; the dependency law bars tools, providers, and the loop from the vault port. Shell and MCP children get a scrubbed environment.
 - **Secrets are leased, not held.** A `{{secret:NAME}}` reference is substituted by the kernel into one call's arguments, only for the bound capability and hosts, and masked out of that call's output. Nothing durable ever contains the value.
 - **Structural redaction.** Events have no field for a prompt, argument, or host path. Tool output, provider errors, approval prompts, and trace logs all pass through the same redactor; truncation happens after redaction.

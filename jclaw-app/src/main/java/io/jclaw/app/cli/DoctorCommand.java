@@ -100,6 +100,9 @@ public class DoctorCommand implements Callable<Integer> {
                 ? "docker (" + properties.sandboxImage() + ", network " + properties.sandboxNetwork()
                         + ", " + properties.sandboxMemory() + ", " + properties.sandboxCpus() + " cpu)"
                 : "host (no sandbox)"));
+        System.out.println("  mcp backend          " + io.jclaw.app.config.JclawConfiguration.mcpSandboxSpec(properties)
+                .map(spec -> "docker (" + spec.image() + ", network " + spec.network() + ")")
+                .orElse("host (servers unsandboxed)"));
         System.out.println("  retention            results " + properties.retentionResults()
                 + ", events " + properties.retentionEvents() + ", checkpoints " + properties.retentionCheckpoints()
                 + " (0 = keep forever; transcript is never swept)");

@@ -165,6 +165,27 @@ public class JclawConfiguration {
     }
 
     /**
+     * The MCP lane's container contract, when configured.
+     *
+     * <p>An MCP server is third-party code with its own network stack; on the host it can reach
+     * anything. {@code jclaw.mcp-backend=docker} starts each server inside the shell sandbox's
+     * contract, with its own image and network setting since servers usually need a runtime
+     * (node, python) and sometimes the network the tool exists to reach.
+     */
+    public static java.util.Optional<io.jclaw.domain.sandbox.SandboxSpec> mcpSandboxSpec(JclawProperties properties) {
+        return switch (properties.mcpBackend()) {
+            case "host" -> java.util.Optional.empty();
+            case "docker" -> java.util.Optional.of(new io.jclaw.domain.sandbox.SandboxSpec(
+                    properties.sandboxDocker(),
+                    properties.mcpSandboxImage().isBlank() ? properties.sandboxImage() : properties.mcpSandboxImage(),
+                    properties.mcpSandboxNetwork().isBlank() ? properties.sandboxNetwork() : properties.mcpSandboxNetwork(),
+                    properties.sandboxMemory(), properties.sandboxCpus(), properties.sandboxPidsLimit(), true));
+            default -> throw new IllegalArgumentException(
+                    "unknown jclaw.mcp-backend '" + properties.mcpBackend() + "'; expected host or docker");
+        };
+    }
+
+    /**
      * Skills read from disk. Exposed as the concrete type as well so the CLI can report the
      * directory it reads from — useful when nothing is installed and the user needs to know where
      * to put one.
@@ -181,8 +202,9 @@ public class JclawConfiguration {
 
     /** Connects to configured MCP servers. A no-op when none are configured. */
     @Bean
-    public McpRegistry mcpRegistry(McpServerStore mcpServerStore, WorkspaceGuard workspaceGuard) {
-        return new McpRegistry(mcpServerStore, workspaceGuard.root());
+    public McpRegistry mcpRegistry(
+            McpServerStore mcpServerStore, WorkspaceGuard workspaceGuard, JclawProperties properties) {
+        return new McpRegistry(mcpServerStore, workspaceGuard.root(), mcpSandboxSpec(properties));
     }
 
     /** Scheduled routines. Nothing fires them on its own — see RoutineRunner. */

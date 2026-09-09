@@ -163,9 +163,12 @@ public class McpCommand implements Runnable {
         @Parameters(index = "0", description = "Server name.")
         private String name;
 
-        public Test(McpServerStore store, WorkspaceGuard workspace, JclawProperties ignored) {
+        private final JclawProperties properties;
+
+        public Test(McpServerStore store, WorkspaceGuard workspace, JclawProperties properties) {
             this.store = store;
             this.workspace = workspace;
+            this.properties = properties;
         }
 
         @Override
@@ -180,7 +183,8 @@ public class McpCommand implements Runnable {
 
         private int probe(McpServerStore.McpServer server) {
             System.out.println("Starting " + server.commandLine() + " ...");
-            return McpClient.start(server.name(), server.command(), server.env(), workspace.root())
+            return McpClient.start(server.name(), server.command(), server.env(), workspace.root(),
+                            io.jclaw.app.config.JclawConfiguration.mcpSandboxSpec(properties))
                     .fold(
                             client -> {
                                 try {

@@ -20,7 +20,7 @@ jclaw is a Java/Spring Boot reimplementation of the **architecture** of
 untrusted-`LoopExit` trust model, and the `CapabilityHost` authority boundary are faithful; the
 feature surface is a fraction of IronClaw's. See **Not built yet** for the honest list.
 
-259 tests pass across 9 modules, including 14 machine-checked architecture rules.
+261 tests pass across 9 modules, including 14 machine-checked architecture rules.
 
 ## Commands
 
@@ -421,9 +421,11 @@ architecture and most runtime mechanisms are equivalent, the breadth is not. PAR
 - **SQL beyond one table** — `storage=sql` keeps every store's rows in `jclaw_rows` with
   versioned migrations; there are no per-concept tables, no materialised projections (folds run
   on demand over indexed reads), and no connection pool (a connection per operation).
-- **Sandboxing beyond the shell lane** — `shell-backend=docker` contains `builtin.shell` only;
-  file, http, memory, and MCP lanes run in-process, and an MCP server's sockets are unmediated.
-  No WASM lane, no orchestrator, no per-job tokens, no LLM proxying.
+- **A WASM lane** — the two kinds of untrusted code jclaw runs, shell commands and MCP
+  servers, can each be contained (`shell-backend=docker`, `mcp-backend=docker`); first-party
+  lanes (file, http, memory) are host code behind the guards and run in-process by design. There
+  is no WASM lane with capability-based host imports, no orchestrator, no per-job tokens, no LLM
+  proxying, and a sandboxed MCP server's network is all-or-nothing, not host-mediated per host.
 - **Extension ecosystem** — no manifests, registry, signed `VERIFIED` extensions, or installable
   skill packages; built-ins are compiled in and MCP is the only external route.
 - **Loop hooks and loop families** — one machine, no pre/post model or tool hooks.

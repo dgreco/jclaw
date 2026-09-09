@@ -74,6 +74,14 @@ import java.util.Map;
  * @param sandboxMemory        container memory limit, e.g. {@code 512m}
  * @param sandboxCpus          container CPU limit, e.g. {@code 1}
  * @param sandboxPidsLimit     container pid limit
+ * @param mcpBackend           {@code host} runs MCP server processes directly; {@code docker}
+ *                             runs each inside the sandbox contract, so a server's network and
+ *                             filesystem reach are what the operator says
+ * @param mcpSandboxImage      image for MCP servers under {@code mcp-backend: docker}; blank
+ *                             means {@code sandbox-image}. Servers usually need a runtime
+ * @param mcpSandboxNetwork    network for MCP servers under {@code mcp-backend: docker}; blank
+ *                             means {@code sandbox-network}. A server whose tool exists to
+ *                             reach an API needs {@code bridge}
  * @param storage              {@code jsonl} (files under the state directory) or {@code sql}
  *                             (every durable store in one database; skills and thread locks
  *                             stay on the filesystem)
@@ -195,6 +203,12 @@ public record JclawProperties(
 
         @DefaultValue("256") int sandboxPidsLimit,
 
+        @DefaultValue("host") String mcpBackend,
+
+        @DefaultValue("") String mcpSandboxImage,
+
+        @DefaultValue("") String mcpSandboxNetwork,
+
         @DefaultValue("jsonl") String storage,
 
         @DefaultValue("") String datasourceUrl,
@@ -259,6 +273,9 @@ public record JclawProperties(
                 "512m",
                 "1",
                 256,
+                "host",
+                "",
+                "",
                 "jsonl",
                 "",
                 "sa");

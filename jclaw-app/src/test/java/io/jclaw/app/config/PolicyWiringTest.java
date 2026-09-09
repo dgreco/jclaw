@@ -74,6 +74,9 @@ class PolicyWiringTest {
                 "512m",
                 "1",
                 256,
+                "host",
+                "",
+                "",
                 "jsonl",
                 "",
                 "sa");

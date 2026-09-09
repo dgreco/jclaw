@@ -1,6 +1,7 @@
 package io.jclaw.tools.mcp;
 
 import io.jclaw.contracts.Result;
+import io.jclaw.domain.sandbox.SandboxSpec;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.io.BufferedReader;
@@ -16,6 +17,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -92,14 +94,33 @@ public final class McpClient implements AutoCloseable {
      */
     public static Result<McpClient, String> start(
             String serverName, List<String> command, Map<String, String> extraEnv, Path workingDirectory) {
+        return start(serverName, command, extraEnv, workingDirectory, Optional.empty());
+    }
+
+    /**
+     * As {@link #start(String, List, Map, Path)}, optionally inside a container.
+     *
+     * <p>With a sandbox the process jclaw spawns is the Docker client, and the server runs in the
+     * container it starts, with the workspace mounted and the network as the spec says. The
+     * server's configured environment is set on the Docker client and passed through by name, so
+     * it reaches the server without appearing in any argument vector. The protocol is stdio
+     * either way; the container's stdin and stdout are the server's.
+     */
+    public static Result<McpClient, String> start(
+            String serverName, List<String> command, Map<String, String> extraEnv, Path workingDirectory,
+            Optional<SandboxSpec> sandbox) {
 
         Objects.requireNonNull(serverName, "serverName");
         Objects.requireNonNull(command, "command");
+        Objects.requireNonNull(sandbox, "sandbox");
         if (command.isEmpty()) {
             return Result.err("empty_command");
         }
 
-        ProcessBuilder builder = new ProcessBuilder(command);
+        List<String> argv = sandbox
+                .map(spec -> spec.argv(workingDirectory, command, extraEnv.keySet()))
+                .orElse(command);
+        ProcessBuilder builder = new ProcessBuilder(argv);
         builder.directory(workingDirectory.toFile());
         // stderr stays separate: server diagnostics must never be parsed as protocol.
         builder.redirectError(ProcessBuilder.Redirect.DISCARD);

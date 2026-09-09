@@ -2,7 +2,7 @@
 
 An honest enumeration of what [IronClaw](https://github.com/nearai/ironclaw) (internally "Reborn") has that jclaw does not, and of what jclaw now has. jclaw is roughly 20k lines of Java (plus 6.5k of tests) against IronClaw's ~1.4M lines of Rust across ~63 crates. The **architecture** is equivalent — layer ladder, turn/run lifecycle, untrusted `LoopExit`, single `CapabilityHost` authority boundary, checkpoint-kind–driven recovery — and, after the September 2026 parity work, most of the runtime *mechanisms* are present in some form. What remains missing is breadth: channel adapters, the extension ecosystem, and observability plumbing. This file is the list, organised by IronClaw's own crate families so a gap can be traced to the crate that fills it upstream.
 
-Sources: IronClaw's `README.md`, `crates/Architecture.md`, and the `crates/` listing as of September 2026; jclaw's code on this checkout (259 tests, 0 failures). Where the upstream doc names a concept and jclaw has an equivalent under a different name, the mapping is given. Where the gap is uncertain it is marked *(unverified)*.
+Sources: IronClaw's `README.md`, `crates/Architecture.md`, and the `crates/` listing as of September 2026; jclaw's code on this checkout (261 tests, 0 failures). Where the upstream doc names a concept and jclaw has an equivalent under a different name, the mapping is given. Where the gap is uncertain it is marked *(unverified)*.
 
 Legend: ✅ at parity · 🟡 partial · ❌ missing · ➕ jclaw-only
 
@@ -59,14 +59,14 @@ IronClaw is a multi-surface runtime. jclaw has the CLI, the REPL, and a minimal 
 
 ## 3. Runtime lanes and sandboxing
 
-IronClaw's premise is that already-authorized work runs **in isolation**. jclaw authorizes identically and now offers one isolated backend for the shell lane; everything else still runs in-process or as an ordinary child process.
+IronClaw's premise is that already-authorized work runs **in isolation**. jclaw authorizes identically and can contain both kinds of untrusted code it runs, shell commands and MCP servers, in the same container contract; first-party lanes (file, http, memory, skills, triggers, subagents) are host code behind the guards and run in-process by design.
 
 | Capability | IronClaw | jclaw |
 |---|---|---|
 | WASM extension lane with capability-based host imports (filesystem, HTTP, credentials, output) | ✅ `ironclaw_wasm` | ❌ |
 | WASM resource limiting (memory, CPU, time) | ✅ `ironclaw_wasm_limiter` | ❌ |
 | Container sandbox: Docker orchestrator/worker pattern, per-job tokens, LLM proxying through the host | ✅ `ironclaw_sandbox`, `Dockerfile.sandbox-worker`, `Dockerfile.process-sandbox` | 🟡 `jclaw.shell-backend=docker` runs each `builtin.shell` command in `docker run --rm` with no network, the workspace as the only mount at `/workspace`, memory/CPU/pid limits, a read-only root, and an explicit environment (`SandboxSpec`). One command per container, no orchestrator, no per-job tokens, no LLM proxying; the host backend is the default |
-| Process backend selected by policy (in-process worker vs container) | ✅ | 🟡 selected by configuration for the shell lane only; file, http, memory, and MCP lanes are unsandboxed |
+| Process backend selected by policy (in-process worker vs container) | ✅ | 🟡 selected by configuration per lane: `jclaw.shell-backend` and `jclaw.mcp-backend`, each `host` or `docker` (`SandboxSpec`, with an image and network override for MCP). Not per capability, not per trust class |
 | Dynamic tool building (agent authors and installs new WASM tools) | ✅ | ❌ |
 | First-party executors routed through `RuntimeDispatcher` | ✅ | ✅ (`CapabilityHandler` lanes behind `DefaultCapabilityHost`) |
 | MCP over stdio | ✅ | ✅ |
@@ -74,7 +74,7 @@ IronClaw's premise is that already-authorized work runs **in isolation**. jclaw 
 | MCP OAuth for authenticated servers | ✅ *(unverified)* | ❌ |
 | MCP resources, prompts, sampling, notifications | ✅ *(unverified)* | ❌ — only `initialize`, `tools/list`, `tools/call`; notifications are ignored |
 | MCP server lifecycle | lazy / managed *(unverified)* | 🟡 all enabled servers start eagerly at boot, on every CLI invocation |
-| Host-mediated egress for MCP servers | ✅ | ❌ — an MCP server process makes its own network calls; only jclaw's `http_fetch` is guarded |
+| Host-mediated egress for MCP servers | ✅ | 🟡 under `mcp-backend: docker` a server's network is what `mcp-sandbox-network` says: `none` (default) or a Docker network; its configured environment reaches it by name, never on a command line. On the host its sockets are unmediated. No per-host allowlist for a server process |
 
 ---
 
@@ -273,7 +273,7 @@ The twelve items of the original list and the six that followed are closed (sect
 2. ~~**Identity and multi-tenancy**~~ — closed at the mechanism level: `serve` users are tenants, and every scope-keyed store and the scheduler separate by tenant. Still open under this heading: a login flow instead of static tokens, roles, per-tenant policy and token accounting, and the `agent` field of `TurnScope`, which is always `default`.
 3. ~~**A secrets vault with credential injection**~~ — closed: an encrypted vault and host-side substitution of `{{secret:NAME}}` under capability + host bindings. Still open under this heading: staged handoff into subprocess environments, leak scanning of outbound model requests, and per-tenant vaults.
 4. ~~**SQL persistence**~~ — closed: one `RowStore` port, a JDBC backend with versioned migrations, H2 or PostgreSQL. Still open under this heading: materialised projections (folds run on demand over indexed reads), per-concept tables, and a connection pool.
-5. **Sandboxing beyond the shell lane** (§3) — the container backend covers `builtin.shell`; file, http, memory, and MCP lanes still run in-process, and MCP servers' network access is unmediated. A WASM lane with capability-based host imports is the upstream answer.
+5. ~~**Sandboxing beyond the shell lane**~~ — closed for the code that is actually untrusted: MCP servers now run in the container contract (`mcp-backend: docker`) beside shell commands, with network by configuration and environment by name. Still open under this heading: a WASM lane with capability-based host imports and resource limiting, a sandbox orchestrator with per-job tokens and LLM proxying, and per-host egress for a server process rather than all-or-nothing.
 6. **Extension ecosystem** (§12) — manifests, a registry, signed `VERIFIED` extensions, installable skill packages. jclaw compiles its built-ins in and has MCP as its only external route.
 7. **Loop hooks and loop families** (§5) — pre/post model and tool hooks, and more than one machine, are what plugins and alternative agent strategies would need.
 8. **Observability substrate** (§13) — OpenTelemetry traces and metrics; today the event log and SLF4J are the whole story.
