@@ -63,11 +63,43 @@ public final class TenantVaults implements SecretVaults {
         if (DEFAULT_TENANT.equals(tenant)) {
             return new FileSecretVault(backend.open("secrets", defaultPath), key, clock);
         }
-        // TurnScope already constrains a tenant to a safe token, so this cannot climb out of the
-        // state directory; the sanitising below is belt to that braces, since a path is being
-        // built from a name that arrives with a run.
-        String safe = tenant.replaceAll("[^A-Za-z0-9_.-]", "_");
+        String safe = fileNameFor(tenant);
         Path path = defaultPath.resolveSibling("secrets." + safe + ".jsonl");
         return new FileSecretVault(backend.open("secrets_" + safe, path), key, clock);
+    }
+
+    /**
+     * A file-name segment for a tenant: readable, inert, and unique.
+     *
+     * <p>{@code TurnScope} already forbids {@code /} in a tenant, so a path built from one cannot
+     * climb out of the state directory. The sanitising here is belt to that braces — but
+     * sanitising alone would be worse than nothing, because collapsing every awkward character to
+     * {@code _} makes {@code a.b} and {@code a_b} the same file, and two tenants sharing a vault
+     * is precisely the leak this class exists to prevent.
+     *
+     * <p>So the readable part is followed by a short hash of the <em>original</em> name. The hash
+     * is what guarantees distinctness; the sanitised prefix is only so an operator listing the
+     * state directory can tell whose vault is whose.
+     */
+    static String fileNameFor(String tenant) {
+        String readable = tenant.replaceAll("[^A-Za-z0-9_-]", "_");
+        if (readable.length() > 40) {
+            readable = readable.substring(0, 40);
+        }
+        return readable + "-" + shortHash(tenant);
+    }
+
+    private static String shortHash(String text) {
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(text.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder hex = new StringBuilder();
+            for (int i = 0; i < 6; i++) {
+                hex.append(String.format("%02x", digest[i]));
+            }
+            return hex.toString();
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is mandatory in every JDK", e);
+        }
     }
 }
