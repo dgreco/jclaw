@@ -9,15 +9,16 @@
   Coverage appears once, and it is the static one on purpose: GitLab already shows its live
   figure on the project page and the merge request widget from the `coverage:` keyword, so a
   second badge there would say the same thing twice while leaving a GitHub visitor with nothing.
-  It links to the JaCoCo report the `coverage-pages` job publishes on every push to main. A
-  README has one link per badge and is rendered on both hosts, so that link serves the public
-  audience; the GitLab mirror carries its own coverage badge as a project badge, pointing at the
-  copy its own `pages` job publishes, and never at github.io. The coverage and test figures are
-  the ones stated further down, refreshed when those move.
+
+  Its link is deliberately local — a heading in this file, not a report on either host. One file
+  is rendered by both, so any absolute link makes one audience click through to the other's
+  infrastructure, and a reader on the mirror should never be sent to github.io for a number the
+  mirror computed. #coverage names both published reports and lets the reader take the one that
+  applies. The coverage and test figures are the ones stated there, refreshed when those move.
 -->
 [![CI](https://github.com/dgreco/jclaw/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dgreco/jclaw/actions/workflows/ci.yml)
 [![pipeline](https://gitlab.davidgreco.it/dgreco/jclaw/badges/main/pipeline.svg)](https://gitlab.davidgreco.it/dgreco/jclaw/-/pipelines)
-[![coverage](https://img.shields.io/badge/coverage-73.3%25-brightgreen)](https://dgreco.github.io/jclaw/)
+[![coverage](https://img.shields.io/badge/coverage-73.3%25-brightgreen)](#coverage)
 [![tests](https://img.shields.io/badge/tests-432-brightgreen)](#tests-and-source-integrity-checks)
 [![license](https://img.shields.io/github/license/dgreco/jclaw?color=blue)](LICENSE)
 [![Java](https://img.shields.io/badge/Java-21%2B-orange)](#building)
@@ -39,6 +40,7 @@ jclaw-domain/src/main/java/io/jclaw/domain/loop/TurnMachine.java ...
   - [Uber jar](#uber-jar)
   - [Native image](#native-image)
   - [Tests and source-integrity checks](#tests-and-source-integrity-checks)
+  - [Coverage](#coverage)
   - [Continuous integration](#continuous-integration)
 - [Configuration](#configuration)
   - [Where settings come from](#where-settings-come-from)
@@ -188,7 +190,16 @@ because an exclusion nobody can audit is worse than no filter at all.
 
 Test totals by module (verified on this checkout, with a Docker daemon so the PostgreSQL test runs rather than skipping): domain 166 · app 160 · storage 43 · providers 28 · kernel 14 · contracts 14 · tools 7 = **432, 0 failures**.
 
-Coverage comes from JaCoCo in the ordinary build — `mvn verify` writes a per-module report and an aggregate one under `jclaw-app/target/site/jacoco-aggregate`, and `./scripts/coverage.sh` prints the one-line total both pipelines publish. On this checkout: **73.3% of instructions, 55.3% of branches, 72.3% of lines**. GitLab shows the percentage on the merge request and the project badge; GitHub writes it to the run summary. The report itself is published to [GitHub Pages](https://dgreco.github.io/jclaw/) on every push to `main`, which is what the coverage badge links to. The GitLab mirror serves the same report from its own GitLab Pages, published by the `pages` job on every default-branch pipeline, so neither remote has to reach across to the other for a number it already computes. Its URL is whatever that instance is configured for — the project's **Deploy → Pages** page names it after the first deploy — and it is what the mirror's coverage project badge points at.
+### Coverage
+
+JaCoCo runs in the ordinary build: `mvn verify` writes a per-module report and an aggregate one under `jclaw-app/target/site/jacoco-aggregate`, and `./scripts/coverage.sh` prints the one-line total both pipelines publish. On this checkout: **73.3% of instructions, 55.3% of branches, 72.3% of lines**.
+
+Each remote publishes the report it computed, to its own hosting, and neither links to the other:
+
+| Remote | Live figure | The report |
+|---|---|---|
+| GitHub | the run summary, and the badge above | [GitHub Pages](https://dgreco.github.io/jclaw/), from the `coverage-pages` job on pushes to `main` |
+| GitLab | the merge request widget and the project badge, from the `coverage:` keyword | that instance's GitLab Pages, from the `pages` job on default-branch pipelines. **Deploy → Pages** in the project names the URL |
 
 Read the aggregate rather than the per-module figures: most of `contracts`, `kernel` and `tools` is exercised by integration tests that live in `jclaw-app`, so their own reports read 5–16% while the aggregate, which credits a class wherever it actually ran, reads 73%. `DependencyLawTest` in `jclaw-app` machine-checks the layer ladder with ArchUnit; the rules were confirmed to fire by planting deliberate violations.
 

@@ -609,9 +609,11 @@ the Anthropic SDK, and tool lanes may not read the process environment.
   `.github/workflows/ci.yml` run the same six jobs; a change to one needs the same change to
   the other, and nothing checks that. Each also has a seventh job that publishes the JaCoCo
   report to its own Pages — `coverage-pages` on GitHub, `pages` on GitLab — so a reader is never
-  sent across to the other remote for a number this one computed. The README badge can only
-  carry one link, so it carries the public one; the mirror's own coverage badge is a GitLab
-  project badge, which lives in that project's settings rather than in a file both hosts render. Where they differ it is deliberate and commented at the
+  sent across to the other remote for a number this one computed. The README badge's link is deliberately
+  local — a heading in the file, not either host's report — because one file is rendered by both
+  and any absolute link sends one audience to the other's infrastructure. The mirror's own
+  coverage badge is a GitLab project badge, which lives in that project's settings rather than in
+  a file both hosts render, which is what lets it point somewhere GitHub never sees. Where they differ it is deliberate and commented at the
   step: GitHub's runners have a Docker socket, so the dind service and its three cleared TLS
   variables are absent; its `postgres` service gates on `pg_isready`, so the `/dev/tcp` wait
   loop is absent; `setup-graalvm` installs the toolchain, so there is no ENTRYPOINT to override.
