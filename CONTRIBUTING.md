@@ -43,7 +43,7 @@ stale).
 
 ## Five rules that will bite you otherwise
 
-**Every new `.java` and `.sh` file needs the SPDX header**, before the `package` declaration or
+**Every new `.java`, `.sh` and `.py` file needs the SPDX header**, before the `package` declaration or
 directly after the shebang, with a blank line after it:
 
 ```java

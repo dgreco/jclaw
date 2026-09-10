@@ -76,3 +76,7 @@ Desktop.ini
 *.pem
 *.key
 .jclaw/
+
+# Python bytecode, from running scripts/*.py in place
+__pycache__/
+*.pyc

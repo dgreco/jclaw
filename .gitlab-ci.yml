@@ -5,8 +5,8 @@
 #   build    compile + full test suite (with coverage), and static analysis alongside it
 #   native   GraalVM native image, built and smoke-tested on every pipeline; a broken native
 #            build fails the pipeline the same way a broken test does
-#   deploy   publishes the coverage report to this instance's GitLab Pages, on the default
-#            branch only
+#   deploy   publishes coverage: the Cobertura report GitLab paints onto merge request diffs,
+#            and the HTML report to this instance's Pages when it has them
 #   release  on tags only: publishes the native binary (and the uber jar) as a GitLab Release
 #
 # Assumes a Docker-executor runner. Maven's local repository is cached per branch so
@@ -325,6 +325,32 @@ native-image:
 # Pages access control, not on this file. Here that costs nothing — the same sources are public
 # on GitHub — but a JaCoCo report does embed source listings, so it is the wrong pattern to copy
 # into a project whose code is actually private.
+# Coverage on the merge request diff itself: GitLab colours covered and uncovered lines from a
+# Cobertura report, and reads no other format. JaCoCo does not emit one, so scripts/ converts.
+#
+# In-tree rather than the published converter image, for two reasons that both bite here: that
+# image is amd64-only and this runner is arm64, and it carries no versioned tag, so using it means
+# using whatever `latest` points at on the day. The script is stdlib-only python3, verified
+# against that converter's own output — same 219 files, same 12,187 line entries, same rates.
+#
+# This is the half of coverage publishing that does not need Pages, and it is the half that
+# changes behaviour: the number lands where the decision is made.
+coverage-report:
+  stage: deploy
+  image: python:3.13-slim
+  needs: [build-test]
+  script:
+    - SRC=""; for d in */src/main/java; do SRC="$SRC $d"; done
+    - python3 scripts/jacoco-to-cobertura.py
+        jclaw-app/target/site/jacoco-aggregate/jacoco.xml $SRC > cobertura.xml
+  artifacts:
+    when: always
+    expire_in: 2 weeks
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: cobertura.xml
+
 pages:
   stage: deploy
   image: debian:bookworm-slim
@@ -337,7 +363,11 @@ pages:
     paths: [public]
     expire_in: 4 weeks
   rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    # Only where Pages actually exists. GitLab predefines CI_PAGES_URL when the feature is
+    # enabled for the instance, so this job skips cleanly on one without it instead of failing a
+    # pipeline over a deployment target that was never configured — and starts publishing by
+    # itself the day somebody sets pages_external_url.
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PAGES_URL
 
 # Publishes a GitLab Release for the tag with the native binary and the uber jar attached.
 # The files go to the project's generic package registry (a release cannot host files itself)

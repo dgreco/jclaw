@@ -17,7 +17,7 @@ id_line="SPDX-License-Identifier: Apache-2.0"
 copyright_line="SPDX-FileCopyrightText:"
 
 sources() {
-  find . -type f \( -name '*.java' -o -name '*.sh' \) \
+  find . -type f \( -name '*.java' -o -name '*.sh' -o -name '*.py' \) \
     -not -path '*/target/*' -not -path '*/.git/*' \
     | sort
 }

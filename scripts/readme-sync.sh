@@ -27,7 +27,13 @@ check=""
 # The reports, one per host. Both are published by that host's own pipeline: `coverage-pages` in
 # .github/workflows/ci.yml, `pages` in .gitlab-ci.yml.
 GITHUB_REPORT="https://dgreco.github.io/jclaw/"
-GITLAB_REPORT="https://gitlab.davidgreco.it/dgreco/jclaw/-/pages"
+# The mirror's report comes out of build-test's artifacts rather than off GitLab Pages, because
+# Pages is an instance-level feature (`pages_external_url`) and this one does not have it turned
+# on — with it off, the project has no Pages menu and /-/pages is a 404. The artifact browser
+# needs nothing enabled and serves the same directory, for anyone who can see the project.
+# If Pages is ever enabled there, this is the one line to change: the `pages` job already
+# publishes to it, and the URL is on the project's Deploy > Pages page.
+GITLAB_REPORT="https://gitlab.davidgreco.it/dgreco/jclaw/-/jobs/artifacts/main/file/jclaw-app/target/site/jacoco-aggregate/index.html?job=build-test"
 
 # Each host gets its own status badge and its own coverage badge, and every link stays on the
 # host doing the rendering. GitLab's coverage badge is live — the number comes from the

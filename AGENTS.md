@@ -538,7 +538,7 @@ the Anthropic SDK, and tool lanes may not read the process environment.
   `RowStore`, and `StorageBackend` picks the medium once. `results.jsonl` holds full capability
   payloads. Result refs are evidence: `JclawRuntime.validate` re-resolves each one in a
   `Completed` exit, and a run resumed in a second process completes with refs the first minted.
-- **Every new `.java` and `.sh` file needs the two-line SPDX header**, before the `package`
+- **Every new `.java`, `.sh` and `.py` file needs the two-line SPDX header**, before the `package`
   declaration (or directly after the shebang), with a blank line after it:
   ```java
   // SPDX-FileCopyrightText: 2026 David Greco
@@ -606,6 +606,15 @@ the Anthropic SDK, and tool lanes may not read the process environment.
   the `coverage:` keyword for the MR widget and the badge, GitHub appends it to the run summary
   — so the two cannot report different numbers. The script pins `LC_ALL=C`, because awk formats
   73.3 as "73,3" under an Italian locale and the GitLab regex expects a dot.
+- **The JaCoCo-to-Cobertura converter is in-tree, and it reads `<group>`.** GitLab paints
+  coverage onto a merge request diff from a Cobertura report and reads nothing else; JaCoCo does
+  not emit one. The published converter is an amd64-only image with no versioned tag, against an
+  arm64 runner, so `scripts/jacoco-to-cobertura.py` does it in stdlib python3 instead. The trap it
+  fell into first is worth remembering: an *aggregate* report nests its packages inside a
+  `<group>` per module, so reading only top-level `<package>` elements produces a report with
+  correct totals and no classes at all — valid XML that annotates nothing. It is verified by
+  diffing against the reference converter's output rather than by looking right: same 219 files,
+  same 12,187 line entries, same rates.
 - **Two CI pipelines, kept in step by hand.** `.gitlab-ci.yml` (the live remote) and
   `.github/workflows/ci.yml` run the same six jobs; a change to one needs the same change to
   the other, and nothing checks that. Each also has a seventh job that publishes the JaCoCo

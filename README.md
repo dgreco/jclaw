@@ -13,7 +13,7 @@
 -->
 <!-- BADGES:START -->
 [![pipeline](https://gitlab.davidgreco.it/dgreco/jclaw/badges/main/pipeline.svg)](https://gitlab.davidgreco.it/dgreco/jclaw/-/pipelines)
-[![coverage](https://gitlab.davidgreco.it/dgreco/jclaw/badges/main/coverage.svg)](https://gitlab.davidgreco.it/dgreco/jclaw/-/pages)
+[![coverage](https://gitlab.davidgreco.it/dgreco/jclaw/badges/main/coverage.svg)](https://gitlab.davidgreco.it/dgreco/jclaw/-/jobs/artifacts/main/file/jclaw-app/target/site/jacoco-aggregate/index.html?job=build-test)
 [![tests](https://img.shields.io/badge/tests-432-brightgreen)](#coverage)
 [![license](https://img.shields.io/github/license/dgreco/jclaw?color=blue)](LICENSE)
 [![Java](https://img.shields.io/badge/Java-21%2B-orange)](#building)
@@ -193,10 +193,23 @@ JaCoCo runs in the ordinary build: `mvn verify` writes a per-module report and a
 Each remote publishes the report its own pipeline computed, and the coverage badge at the top of
 this page opens the one belonging to the host you are reading it on:
 
-| Remote | Publishing job | The report | The live figure |
-|---|---|---|---|
-| GitHub | `coverage-pages` | [GitHub Pages](https://dgreco.github.io/jclaw/) | the run summary |
-| GitLab | `pages` | that instance's GitLab Pages | the merge request widget and the badge, from the `coverage:` keyword |
+| Remote | Job | Where it shows |
+|---|---|---|
+| GitHub | `coverage-pages` | the report on [GitHub Pages](https://dgreco.github.io/jclaw/), and the total in the run summary |
+| GitLab | `coverage-report` | **covered and uncovered lines painted onto the merge request diff**, from a Cobertura report |
+| GitLab | `build-test` | the percentage on the MR widget and the project badge, from the `coverage:` keyword; the HTML report in the job's artifacts |
+| GitLab | `pages` | the HTML report on that instance's Pages, where it has them |
+
+The diff annotation is the one that changes behaviour, because it puts the number where the
+decision is made. GitLab reads only Cobertura and JaCoCo does not write it, so
+[`scripts/jacoco-to-cobertura.py`](scripts/jacoco-to-cobertura.py) converts — in-tree rather than
+by pulling the published converter image, which is amd64-only against an arm64 runner and carries
+no versioned tag. It is stdlib-only, and was verified against that converter's own output: the
+same 219 files, the same 12,187 line entries, the same rates.
+
+GitLab Pages is an instance-level feature, so the `pages` job runs only where `CI_PAGES_URL` is
+defined and skips cleanly elsewhere; the badge points at the artifact browser, which needs nothing
+enabled and serves the same directory.
 
 That works because the two hosts read different files: GitHub renders `.github/README.md` in
 preference to the root one, GitLab renders only the root one. Both are generated from one body by
@@ -1078,7 +1091,7 @@ Dependencies flow strictly downward (contracts ← domain ← kernel ← loop/to
 jclaw is licensed under the **Apache License, Version 2.0**. The full text is in
 [LICENSE](LICENSE); the attribution that a redistribution must carry is in [NOTICE](NOTICE).
 
-Every `.java` and `.sh` file carries a two-line SPDX header, so a file copied out of this tree
+Every `.java`, `.sh` and `.py` file carries a two-line SPDX header, so a file copied out of this tree
 carries its licence with it and scanners can read the tree without guessing:
 
 ```java
