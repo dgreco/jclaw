@@ -357,11 +357,15 @@ Connections come from a **HikariCP pool** (`jclaw.datasource-pool-size`, default
 **Trying it.** `docker compose` brings up PostgreSQL and jclaw together, which is the cheapest way to see the SQL backend do real work:
 
 ```bash
+docker compose up -d postgres                                  # start the database first
 docker compose run --rm jclaw doctor
 docker compose run --rm jclaw run "hello"
-docker compose exec postgres psql -U jclaw -d jclaw -c '\dt'   # the twelve tables jclaw created
+docker compose exec postgres psql -U jclaw -d jclaw -c '\dt'   # twelve tables, once jclaw has run
 docker compose --profile serve up                              # the HTTP surface on :8080
+docker compose down -v                                         # and throw it all away
 ```
+
+The first and last lines are not decoration. `docker compose run` starts the database as a dependency, so the `jclaw` lines work without it — but `docker compose exec postgres …` attaches to a running container and starts nothing, so on its own it fails with `service "postgres" is not running`. Starting the database explicitly makes every line work in any order. Run the `\dt` before any `jclaw` line and it correctly reports no relations: jclaw applies its migrations at startup, so the schema appears when jclaw first runs, not when PostgreSQL does.
 
 The CLI container and the `serve` container are two processes on one database, which is exactly the topology the thread lock and the shared cap exist for. That image is the uber jar on a JRE base, because a native image has to be compiled for the container's platform and that takes minutes — the default should be the one you can try immediately.
 

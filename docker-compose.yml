@@ -1,9 +1,11 @@
 # jclaw against a real PostgreSQL.
 #
+#   docker compose up -d postgres              # first: `exec` below starts nothing itself
 #   docker compose run --rm jclaw doctor
 #   docker compose run --rm jclaw run "hello"
 #   docker compose run --rm jclaw status -n 10
 #   docker compose --profile serve up          # the HTTP surface on http://localhost:8080
+#   docker compose down -v                     # throw the database away
 #
 # Everything under `storage: sql` was written against embedded H2 and is verified against
 # PostgreSQL by PostgresStorageIntegrationTest; this is the same thing by hand, for when you
@@ -11,6 +13,10 @@
 #
 #   docker compose exec postgres psql -U jclaw -d jclaw -c '\dt'
 #   docker compose exec postgres psql -U jclaw -d jclaw -c 'SELECT * FROM jclaw_schema'
+#
+# `exec` attaches to a running container and will not start one: without the `up -d postgres`
+# above it fails with `service "postgres" is not running`. The `run --rm jclaw` lines do start
+# the database as a dependency, so the order above works either way.
 
 services:
   postgres:

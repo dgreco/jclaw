@@ -6,6 +6,7 @@
 # instead of about 1.2 s.
 #
 #   docker compose -f docker-compose.native.yml build          # slow, once
+#   docker compose -f docker-compose.native.yml up -d postgres  # `exec` below starts nothing
 #   docker compose -f docker-compose.native.yml run --rm jclaw doctor
 #   docker compose -f docker-compose.native.yml run --rm jclaw run "hello"
 #   docker compose -f docker-compose.native.yml --profile serve up
@@ -13,6 +14,9 @@
 # Looking at what it wrote:
 #
 #   docker compose -f docker-compose.native.yml exec postgres psql -U jclaw -d jclaw -c '\dt'
+#
+# `exec` attaches to a running container rather than starting one, hence the `up -d postgres`
+# line: on its own it fails with `service "postgres" is not running`.
 
 name: jclaw-native
 
