@@ -1,5 +1,23 @@
 # jclaw
 
+<!--
+  Two pipelines, two sets of badges. The github.com and shields.io ones render everywhere,
+  including inside the GitLab mirror's README view. The two gitlab.davidgreco.it ones are live —
+  they follow the mirror's own pipeline and its `coverage:` keyword — but the project is private,
+  so they resolve only for a signed-in viewer and appear as broken images to anyone reading this
+  on GitHub. That is the trade: a live number where the pipeline runs, a static one everywhere
+  else. The static coverage and test figures are the ones stated further down, refreshed when
+  those move.
+-->
+[![CI](https://github.com/dgreco/jclaw/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dgreco/jclaw/actions/workflows/ci.yml)
+[![pipeline](https://gitlab.davidgreco.it/dgreco/jclaw/badges/main/pipeline.svg)](https://gitlab.davidgreco.it/dgreco/jclaw/-/pipelines)
+[![coverage](https://img.shields.io/badge/coverage-73.3%25-brightgreen)](#tests-and-source-integrity-checks)
+[![coverage](https://gitlab.davidgreco.it/dgreco/jclaw/badges/main/coverage.svg)](https://gitlab.davidgreco.it/dgreco/jclaw/-/graphs/main/charts)
+[![tests](https://img.shields.io/badge/tests-432-brightgreen)](#tests-and-source-integrity-checks)
+[![license](https://img.shields.io/github/license/dgreco/jclaw?color=blue)](LICENSE)
+[![Java](https://img.shields.io/badge/Java-21%2B-orange)](#building)
+[![GraalVM](https://img.shields.io/badge/GraalVM-native%20image-blue)](#native-image)
+
 **A hexagonal agent OS harness in Java 21 / Spring Boot 4.1 — an architectural clone of [IronClaw](https://github.com/nearai/ironclaw).**
 
 jclaw runs an LLM agent loop the way an operating system runs a process: every effect the model asks for passes through one authority gate, every run is durable and resumable across process boundaries, and the decision logic is a pure function you can test without a network. It ships as a single uber jar or a GraalVM native binary, talks to Anthropic, OpenAI, OpenRouter, Ollama, or any local OpenAI-compatible server, and can be driven from a terminal, a queue, or a small HTTP surface.
