@@ -14,7 +14,7 @@
 <!-- BADGES:START -->
 [![pipeline](https://gitlab.davidgreco.it/dgreco/jclaw/badges/main/pipeline.svg)](https://gitlab.davidgreco.it/dgreco/jclaw/-/pipelines)
 [![coverage](https://gitlab.davidgreco.it/dgreco/jclaw/badges/main/coverage.svg)](https://gitlab.davidgreco.it/dgreco/jclaw/-/wikis/Coverage)
-[![tests](https://img.shields.io/badge/tests-481-brightgreen)](#coverage)
+[![tests](https://img.shields.io/badge/tests-499-brightgreen)](#coverage)
 [![license](https://img.shields.io/github/license/dgreco/jclaw?color=blue)](LICENSE)
 [![Java](https://img.shields.io/badge/Java-21%2B-orange)](#building)
 [![GraalVM](https://img.shields.io/badge/GraalVM-native%20image-blue)](#native-image)
@@ -184,11 +184,11 @@ source. The tree is clean under all three and each fails the build. Their filter
 [`config/pmd-ruleset.xml`](config/pmd-ruleset.xml) — give a reason in prose for every exclusion,
 because an exclusion nobody can audit is worse than no filter at all.
 
-Test totals by module (verified on this checkout, with a Docker daemon so the PostgreSQL test runs rather than skipping): app 168 · domain 166 · storage 56 · providers 42 · contracts 22 · kernel 14 · tools 13 = **481, 0 failures**.
+Test totals by module (verified on this checkout, with a Docker daemon so the PostgreSQL test runs rather than skipping): app 186 · domain 166 · storage 56 · providers 42 · contracts 22 · kernel 14 · tools 13 = **499, 0 failures**.
 
 ### Coverage
 
-JaCoCo runs in the ordinary build: `mvn verify` writes a per-module report and an aggregate one under `jclaw-app/target/site/jacoco-aggregate`, and `./scripts/coverage.sh` prints the one-line total both pipelines publish. On this checkout: **75.4% of instructions, 57.8% of branches, 74.5% of lines**.
+JaCoCo runs in the ordinary build: `mvn verify` writes a per-module report and an aggregate one under `jclaw-app/target/site/jacoco-aggregate`, and `./scripts/coverage.sh` prints the one-line total both pipelines publish. On this checkout: **77.1% of instructions, 59.4% of branches, 76.1% of lines**.
 
 Each remote publishes the report its own pipeline computed, and the coverage badge at the top of
 this page opens the one belonging to the host you are reading it on:

@@ -49,11 +49,15 @@ public final class WasmLane {
         }
     }
 
-    /** What the host lets a module do, when the spec grants it. */
+    /**
+     * What the host lets a module do, when the spec grants it.
+     *
+     * <p>Note what is <em>not</em> here: the {@code jclaw.log} import a module may call. The lane
+     * collects that output itself and returns it with the result, so routing it back out through
+     * this interface would only give a host somewhere to drop it. The method used to exist, did
+     * nothing in its only implementation, and misled the first test written against it.
+     */
     public interface HostServices {
-        /** Appends to the call's output. */
-        void log(String message);
-
         /** Reads a workspace file, or empty when the guard refuses or it does not exist. */
         Optional<String> readFile(String path);
 

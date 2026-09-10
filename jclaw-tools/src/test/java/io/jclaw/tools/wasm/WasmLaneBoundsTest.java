@@ -52,9 +52,6 @@ class WasmLaneBoundsTest {
 
     /** Host services that answer nothing, so a refusal is what the module sees. */
     private static final class Refusing implements WasmLane.HostServices {
-        final StringBuilder logged = new StringBuilder();
-
-        @Override public void log(String message) { logged.append(message); }
         @Override public Optional<String> readFile(String path) { return Optional.empty(); }
         @Override public Optional<String> httpGet(String url) { return Optional.empty(); }
     }
@@ -113,16 +110,13 @@ class WasmLaneBoundsTest {
     @DisplayName("a granted host function is callable, and what it logged precedes the result")
     void grantedImportIsCallable() {
         var lane = WasmLane.load(decode(CALLS_LOG), granting("log")).orElseThrow();
-        Refusing services = new Refusing();
 
-        String answer = lane.call("{}", services).orElseThrow();
+        String answer = lane.call("{}", new Refusing()).orElseThrow();
 
-        // The lane collects `log` itself rather than passing it to HostServices.log, which is why
-        // the evidence that the import was reached is the answer and not the services object.
+        // The lane collects what a module logs and returns it with the result; HostServices has
+        // no say in it, which is why the answer is the only evidence the import was reached.
         assertEquals("hello\nhello", answer,
                 "the module's output comes first, then its result");
-        assertEquals("", services.logged.toString(),
-                "HostServices.log is not on this path: the lane keeps the output and returns it");
     }
 
     @Test

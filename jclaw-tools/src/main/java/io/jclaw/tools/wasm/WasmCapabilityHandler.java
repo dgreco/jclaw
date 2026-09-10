@@ -97,12 +97,6 @@ public final class WasmCapabilityHandler implements CapabilityHandler {
     private WasmLane.HostServices services(HandlerContext context) {
         return new WasmLane.HostServices() {
             @Override
-            public void log(String message) {
-                // Collected by the lane and returned with the result; there is nowhere else for a
-                // module's output to go that the audit log would not have to be told about.
-            }
-
-            @Override
             public Optional<String> readFile(String path) {
                 if (context == null) {
                     return Optional.empty();

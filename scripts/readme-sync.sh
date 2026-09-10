@@ -51,7 +51,7 @@ badges() {   # $1 = github | gitlab
   local host="$1" status coverage
   if [ "$host" = github ]; then
     status='[![CI](https://github.com/dgreco/jclaw/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dgreco/jclaw/actions/workflows/ci.yml)'
-    coverage="[![coverage](https://img.shields.io/badge/coverage-75.4%25-brightgreen)]($GITHUB_REPORT)"
+    coverage="[![coverage](https://img.shields.io/badge/coverage-77.1%25-brightgreen)]($GITHUB_REPORT)"
   else
     status='[![pipeline](https://gitlab.davidgreco.it/dgreco/jclaw/badges/main/pipeline.svg)](https://gitlab.davidgreco.it/dgreco/jclaw/-/pipelines)'
     coverage="[![coverage](https://gitlab.davidgreco.it/dgreco/jclaw/badges/main/coverage.svg)]($GITLAB_REPORT)"
@@ -59,7 +59,7 @@ badges() {   # $1 = github | gitlab
   cat <<EOF
 $status
 $coverage
-[![tests](https://img.shields.io/badge/tests-481-brightgreen)](#coverage)
+[![tests](https://img.shields.io/badge/tests-499-brightgreen)](#coverage)
 [![license](https://img.shields.io/github/license/dgreco/jclaw?color=blue)](LICENSE)
 [![Java](https://img.shields.io/badge/Java-21%2B-orange)](#building)
 [![GraalVM](https://img.shields.io/badge/GraalVM-native%20image-blue)](#native-image)

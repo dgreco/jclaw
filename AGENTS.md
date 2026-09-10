@@ -23,7 +23,7 @@ jclaw is a Java/Spring Boot reimplementation of the **architecture** of
 untrusted-`LoopExit` trust model, and the `CapabilityHost` authority boundary are faithful; the
 feature surface is a fraction of IronClaw's. See **Not built yet** for the honest list.
 
-481 tests pass across seven modules with tests, including 16 machine-checked architecture rules.
+499 tests pass across seven modules with tests, including 16 machine-checked architecture rules.
 
 ## Commands
 

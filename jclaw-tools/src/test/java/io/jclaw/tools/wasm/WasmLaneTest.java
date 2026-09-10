@@ -43,12 +43,6 @@ class WasmLaneTest {
 
     /** Host services that record what was asked of them. */
     private static final class Recording implements WasmLane.HostServices {
-        final StringBuilder logged = new StringBuilder();
-
-        @Override
-        public void log(String message) {
-            logged.append(message);
-        }
 
         @Override
         public Optional<String> readFile(String path) {
