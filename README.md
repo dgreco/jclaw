@@ -9,9 +9,11 @@
   Coverage appears once, and it is the static one on purpose: GitLab already shows its live
   figure on the project page and the merge request widget from the `coverage:` keyword, so a
   second badge there would say the same thing twice while leaving a GitHub visitor with nothing.
-  It links to the JaCoCo report the `coverage-pages` job publishes on every push to main, which
-  is a URL both READMEs can point at. The coverage and test figures are the ones stated further
-  down, refreshed when those move.
+  It links to the JaCoCo report the `coverage-pages` job publishes on every push to main. A
+  README has one link per badge and is rendered on both hosts, so that link serves the public
+  audience; the GitLab mirror carries its own coverage badge as a project badge, pointing at the
+  report inside its own job artifacts, and never at github.io. The coverage and test figures are
+  the ones stated further down, refreshed when those move.
 -->
 [![CI](https://github.com/dgreco/jclaw/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dgreco/jclaw/actions/workflows/ci.yml)
 [![pipeline](https://gitlab.davidgreco.it/dgreco/jclaw/badges/main/pipeline.svg)](https://gitlab.davidgreco.it/dgreco/jclaw/-/pipelines)
@@ -186,7 +188,7 @@ because an exclusion nobody can audit is worse than no filter at all.
 
 Test totals by module (verified on this checkout, with a Docker daemon so the PostgreSQL test runs rather than skipping): domain 166 · app 160 · storage 43 · providers 28 · kernel 14 · contracts 14 · tools 7 = **432, 0 failures**.
 
-Coverage comes from JaCoCo in the ordinary build — `mvn verify` writes a per-module report and an aggregate one under `jclaw-app/target/site/jacoco-aggregate`, and `./scripts/coverage.sh` prints the one-line total both pipelines publish. On this checkout: **73.3% of instructions, 55.3% of branches, 72.3% of lines**. GitLab shows the percentage on the merge request and the project badge; GitHub writes it to the run summary. The report itself is published to [GitHub Pages](https://dgreco.github.io/jclaw/) on every push to `main`, which is what the coverage badge links to, and both pipelines keep it as an artifact as well.
+Coverage comes from JaCoCo in the ordinary build — `mvn verify` writes a per-module report and an aggregate one under `jclaw-app/target/site/jacoco-aggregate`, and `./scripts/coverage.sh` prints the one-line total both pipelines publish. On this checkout: **73.3% of instructions, 55.3% of branches, 72.3% of lines**. GitLab shows the percentage on the merge request and the project badge; GitHub writes it to the run summary. The report itself is published to [GitHub Pages](https://dgreco.github.io/jclaw/) on every push to `main`, which is what the coverage badge links to. On the GitLab mirror the same report is served from the job's own artifacts — `/-/jobs/artifacts/main/file/jclaw-app/target/site/jacoco-aggregate/index.html?job=build-test`, with a project badge pointing at it — so neither remote has to reach across to the other for its own numbers.
 
 Read the aggregate rather than the per-module figures: most of `contracts`, `kernel` and `tools` is exercised by integration tests that live in `jclaw-app`, so their own reports read 5–16% while the aggregate, which credits a class wherever it actually ran, reads 73%. `DependencyLawTest` in `jclaw-app` machine-checks the layer ladder with ArchUnit; the rules were confirmed to fire by planting deliberate violations.
 
