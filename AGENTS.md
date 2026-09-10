@@ -32,6 +32,7 @@ feature surface is a fraction of IronClaw's. See **Not built yet** for the hones
 - Test (single): `mvn test -Dtest=ClassName#methodName -pl <module>` (add `-am` if deps are stale)
 - Run (jar): `java -jar jclaw-app/target/jclaw-app-0.1.0-SNAPSHOT.jar <command>`
 - Static analysis (opt-in): `mvn -Panalysis verify` — see below
+- Coverage: any `mvn verify`; `./scripts/coverage.sh` prints the total
 - Source-integrity guard: `./scripts/byte-verify.sh scan`
 - Licence-header guard: `./scripts/license-check.sh`
 - Browser-UI key handling: `./scripts/web-ui-keys.sh` (needs a local Chrome; not in `mvn test`)
@@ -105,6 +106,11 @@ no Docker socket — so PostgreSQL coverage is something a person runs, not some
 guarantees. Wiring a `docker:dind` service into that job would close it. **On a non-default Docker socket** (OrbStack, Colima, rootless) Testcontainers may
 negotiate too old an API version and report "Could not find a valid Docker environment"; the fix
 is `DOCKER_HOST=unix://$HOME/.orbstack/run/docker.sock` plus `-DargLine="-Dapi.version=1.44"`.
+**That second flag now costs the coverage report**: JaCoCo's agent reaches surefire through the
+`argLine` property, and a command-line `-DargLine` replaces it rather than adding to it, so the
+run produces an empty report and no warning. Put `api.version=1.44` in
+`~/.testcontainers.properties` instead, or add `-Djacoco.skip=true` and accept that one run
+measures nothing.
 
 ### Native image
 
@@ -589,8 +595,18 @@ the Anthropic SDK, and tool lanes may not read the process environment.
   token POST shared in shape by `OidcLogin` and `McpOAuth`, and the HTTP send in the two
   OpenAI-compatible providers — are left duplicated on purpose: about a dozen lines each, and
   folding them together would couple an identity flow to an MCP flow to save less than it costs.
+- **Coverage is in the ordinary build, and the number has one source.** JaCoCo runs on every
+  `mvn verify`; `report-aggregate` in jclaw-app produces the whole-tree figure, which works
+  because that module depends on every other one, so no module exists solely to hold a report.
+  Read the aggregate and ignore the per-module figures: most of `contracts`, `kernel` and
+  `tools` is exercised by integration tests that live in `jclaw-app`, so their own reports say
+  5-16% while the aggregate — which credits a class wherever it was executed — says 73%.
+  `scripts/coverage.sh` prints the single line both pipelines publish — GitLab scrapes it with
+  the `coverage:` keyword for the MR widget and the badge, GitHub appends it to the run summary
+  — so the two cannot report different numbers. The script pins `LC_ALL=C`, because awk formats
+  73.3 as "73,3" under an Italian locale and the GitLab regex expects a dot.
 - **Two CI pipelines, kept in step by hand.** `.gitlab-ci.yml` (the live remote) and
-  `.github/workflows/ci.yml` run the same five jobs; a change to one needs the same change to
+  `.github/workflows/ci.yml` run the same six jobs; a change to one needs the same change to
   the other, and nothing checks that. Where they differ it is deliberate and commented at the
   step: GitHub's runners have a Docker socket, so the dind service and its three cleared TLS
   variables are absent; its `postgres` service gates on `pg_isready`, so the `/dev/tcp` wait

@@ -140,6 +140,26 @@
           </execution>
         </executions>
       </plugin>
+      <!--
+        The whole-tree coverage number. `report-aggregate` folds in every module this one depends
+        on, which is all of them — jclaw-app is the composition root, so aggregating here needs no
+        extra module whose only job is to hold a report.
+      -->
+      <plugin>
+        <groupId>org.jacoco</groupId>
+        <artifactId>jacoco-maven-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>jacoco-aggregate</id>
+            <phase>verify</phase>
+            <goals><goal>report-aggregate</goal></goals>
+            <configuration>
+              <includeCurrentProject>true</includeCurrentProject>
+              <title>jclaw</title>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-jar-plugin</artifactId>

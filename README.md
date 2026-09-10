@@ -163,18 +163,21 @@ source. The tree is clean under all three and each fails the build. Their filter
 [`config/pmd-ruleset.xml`](config/pmd-ruleset.xml) — give a reason in prose for every exclusion,
 because an exclusion nobody can audit is worse than no filter at all.
 
-Test totals by module (verified on this checkout, with a Docker daemon so the PostgreSQL test runs rather than skipping): domain 166 · app 160 · storage 43 · providers 28 · kernel 14 · contracts 14 · tools 7 = **432, 0 failures**. `DependencyLawTest` in `jclaw-app` machine-checks the layer ladder with ArchUnit; the rules were confirmed to fire by planting deliberate violations.
+Test totals by module (verified on this checkout, with a Docker daemon so the PostgreSQL test runs rather than skipping): domain 166 · app 160 · storage 43 · providers 28 · kernel 14 · contracts 14 · tools 7 = **432, 0 failures**.
+
+Coverage comes from JaCoCo in the ordinary build — `mvn verify` writes a per-module report and an aggregate one under `jclaw-app/target/site/jacoco-aggregate`, and `./scripts/coverage.sh` prints the one-line total both pipelines publish. On this checkout: **73.3% of instructions, 55.3% of branches, 72.3% of lines**. GitLab shows the percentage on the merge request and the project badge; GitHub writes it to the run summary, and both keep the browsable HTML report as an artifact. `DependencyLawTest` in `jclaw-app` machine-checks the layer ladder with ArchUnit; the rules were confirmed to fire by planting deliberate violations.
 
 ### Continuous integration
 
-Two pipelines, one shape. `.gitlab-ci.yml` and `.github/workflows/ci.yml` run the same five
+Two pipelines, one shape. `.gitlab-ci.yml` and `.github/workflows/ci.yml` run the same six
 pieces of work in the same order; whichever remote you push to gives the same verdict.
 
 | Job | What it does |
 |---|---|
 | `byte-verify` | `scripts/byte-verify.sh scan` — refuses stray control bytes in sources. |
 | `license-verify` | `scripts/license-check.sh` — SPDX header on every source file, plus `LICENSE`, `NOTICE`, and the POM's `<licenses>` block. Runs before any toolchain exists, so a missing header fails in seconds. |
-| `build-test` | `mvn verify` on Temurin 21, with a real Docker daemon so `PostgresStorageIntegrationTest` runs against PostgreSQL rather than skipping. Publishes the test reports and the uber jar. Maven's local repository is cached per pom hash. |
+| `build-test` | `mvn verify` on Temurin 21, with a real Docker daemon so `PostgresStorageIntegrationTest` runs against PostgreSQL rather than skipping. Publishes the test reports, the coverage report and the uber jar. Maven's local repository is cached per pom hash. |
+| `static-analysis` / `analysis` | `mvn -Panalysis verify -DskipTests` — javac `-Xlint:all` with `failOnWarning`, SpotBugs with FindSecBugs, and PMD. Runs beside `build-test` rather than after it, and all three fail the job. |
 | `native-image` | Builds the GraalVM binary and smoke-tests it against embedded H2 *and* a live PostgreSQL — the vault's AES-GCM, Ed25519 extension signing, triggers, MCP records, loop families, spans. Mandatory on every run: a broken native build fails the pipeline like a broken test. Needs several GB of memory. |
 | `release` | Tags only. Publishes the native binary (`jclaw-linux-<arch>`), the uber jar, and `SHA256SUMS`. |
 

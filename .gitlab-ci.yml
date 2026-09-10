@@ -2,7 +2,7 @@
 #
 # Stages
 #   verify   source-integrity and licence-header scans (no toolchain needed)
-#   build    compile + full test suite, publishes JUnit reports and the uber jar
+#   build    compile + full test suite (with coverage), and static analysis alongside it
 #   native   GraalVM native image, built and smoke-tested on every pipeline; a broken native
 #            build fails the pipeline the same way a broken test does
 #   release  on tags only: publishes the native binary (and the uber jar) as a GitLab Release
@@ -96,11 +96,16 @@ build-test:
     - java -version && mvn -version
     - 'timeout 30 bash -c "until (echo > /dev/tcp/dind/2375) 2>/dev/null; do sleep 1; done" && echo "dind reachable" || echo "dind NOT reachable"'
     - mvn $MAVEN_CLI_OPTS verify
+  # Scraped from the job log by the `coverage` keyword, which is what puts the number on the MR
+  # widget, the pipeline page and the project badge. The line comes from scripts/coverage.sh so
+  # that the two pipelines cannot disagree about what the project's coverage is.
+  coverage: '/TOTAL coverage: (\d+\.\d+)%/'
   after_script:
     # One-line summary in the job log. Counts <testcase> elements in the XML reports: the
     # .txt files report 0 for classes whose tests live in @Nested classes, and the
     # testsuite "tests" attribute can undercount them by one.
     - |
+      ./scripts/coverage.sh || true
       if ls */target/surefire-reports/TEST-*.xml >/dev/null 2>&1; then
         printf 'TOTAL testcases=%s failures=%s errors=%s skipped=%s\n' \
           "$(grep -h -c '<testcase ' */target/surefire-reports/TEST-*.xml | awk '{s+=$1} END{print s}')" \
@@ -116,6 +121,32 @@ build-test:
     paths:
       - jclaw-app/target/jclaw-app-*.jar
       - "*/target/surefire-reports/"
+      # Browsable in the job's artifacts, which is where the per-class detail behind the
+      # percentage lives. GitLab renders coverage on the diff itself only from a Cobertura
+      # report, and getting one out of JaCoCo means a Python converter and an apt-get in this
+      # job — a lot of machinery for diff highlighting, so it is deliberately not here.
+      - jclaw-app/target/site/jacoco-aggregate/
+
+static-analysis:
+  stage: build
+  image: maven:3.9.11-eclipse-temurin-21
+  # Beside build-test rather than after it: nothing here needs the test results, and the two
+  # together are still shorter than running them in sequence. `-DskipTests` skips *running* the
+  # tests, not compiling them — the lint gate has an opinion about test sources too, and
+  # `maven.test.skip` would hide them from it.
+  #
+  # This is the profile documented in AGENTS.md: javac -Xlint:all with failOnWarning, SpotBugs
+  # with FindSecBugs, and PMD. All three fail the build, so a finding here is a red pipeline and
+  # not a report nobody opens.
+  <<: *maven-cache
+  script:
+    - mvn $MAVEN_CLI_OPTS -Panalysis verify -DskipTests
+  artifacts:
+    when: always
+    expire_in: 2 weeks
+    paths:
+      - "*/target/spotbugsXml.xml"
+      - "*/target/pmd.xml"
 
 native-image:
   stage: native

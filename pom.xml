@@ -46,6 +46,7 @@
     <jline.version>4.4.3</jline.version>
     <!-- Native image: the GraalVM toolchain is JDK 25+, while we target release 21 bytecode. -->
     <native.maven.plugin.imageName>jclaw</native.maven.plugin.imageName>
+    <jacoco.version>0.8.15</jacoco.version>
     <!-- Static analysis, used only by the `analysis` profile at the bottom of this file. -->
     <spotbugs.plugin.version>4.10.4.1</spotbugs.plugin.version>
     <findsecbugs.version>1.14.0</findsecbugs.version>
@@ -144,6 +145,37 @@
   </dependencyManagement>
 
   <build>
+    <plugins>
+      <!--
+        Coverage, in the default build rather than behind a flag: a number that only exists when
+        somebody remembers to ask for it is a number nobody looks at. The agent costs a few
+        seconds on a full run, and `-Djacoco.skip=true` turns it off.
+
+        `prepare-agent` sets the `argLine` property that surefire passes to the forked JVM. Anything
+        that sets `argLine` on the command line replaces it and silently produces an empty report —
+        `-DargLine=...` becomes `-Djacoco.skip=true -DargLine=...` or it becomes no coverage at all.
+
+        Per-module reports land in `<module>/target/site/jacoco`; the whole-tree number comes from
+        `report-aggregate` in jclaw-app, which is the one module that depends on every other.
+      -->
+      <plugin>
+        <groupId>org.jacoco</groupId>
+        <artifactId>jacoco-maven-plugin</artifactId>
+        <version>${jacoco.version}</version>
+        <executions>
+          <execution>
+            <id>jacoco-prepare-agent</id>
+            <goals><goal>prepare-agent</goal></goals>
+          </execution>
+          <execution>
+            <id>jacoco-report</id>
+            <phase>test</phase>
+            <goals><goal>report</goal></goals>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+
     <pluginManagement>
       <plugins>
         <plugin>
@@ -191,7 +223,7 @@
               <!-- The tree compiles clean under the lint set below, so a new warning is a
                    regression rather than background noise. Opt-in, because a dependency upgrade
                    should not be able to fail `mvn test` on a deprecation — and overridable with
-                   -Dmaven.compiler.failOnWarning=false while working through one.  -->
+                   -Djclaw.failOnWarning=false while working through one. -->
               <failOnWarning>${jclaw.failOnWarning}</failOnWarning>
               <compilerArgs>
                 <arg>-parameters</arg>

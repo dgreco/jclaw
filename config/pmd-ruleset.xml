@@ -36,8 +36,9 @@
     <!-- try/finally where the resource is not the thing being closed (releasing a file lock,
          destroying a process), or where the resource outlives the block. -->
     <exclude name="UseTryWithResources"/>
-    <!-- Tests are not analysed; this fires on a `mcp test` subcommand class named Test. -->
-    <exclude name="JUnitTestsShouldIncludeAssert"/>
+    <!-- Tests are not analysed; this fires on a `mcp test` subcommand class named Test.
+         PMD 7 renamed it from JUnitTestsShouldIncludeAssert, and naming the old one too made
+         every run print a warning about an exclude that matches nothing. -->
     <exclude name="UnitTestShouldIncludeAssert"/>
     <!-- 127.0.0.1 is the deliberate default bind address: loopback unless an operator says
          otherwise. -->
