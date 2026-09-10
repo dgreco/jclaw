@@ -396,17 +396,26 @@ coverage-wiki:
 
       if git -c credential.helper="$helper" clone --quiet "$remote" wiki 2>clone.err; then
         branch="$(git -C wiki symbolic-ref --short HEAD 2>/dev/null || echo main)"
-      else
-        # Do not guess. A wiki that does not exist yet and a wiki this token may not read fail
-        # the same way from here, and only one of them is fixed by pushing.
-        echo "coverage-wiki: could not clone the wiki. git said:"
+      elif grep -q '403' clone.err; then
+        # Refused, not absent. Pushing cannot fix a permission, and attempting it buries the real
+        # message under a second failure — which is what happened the first time this ran.
+        echo "coverage-wiki: WIKI_TOKEN is not allowed to read this wiki. git said:"
         sed 's/^/    /' clone.err
         echo
-        echo "  If it says 404: the wiki has no page yet, or the feature is off —"
-        echo "    Settings > General > Visibility, project features, permissions > Wiki"
-        echo "  If it says 403: WIKI_TOKEN is missing the write_repository scope."
+        echo "  A project access token needs BOTH of these, and the role is the one usually missed:"
+        echo "    scope: write_repository   (Settings > Access tokens)"
+        echo "    role:  Developer or above — Guest and Reporter are refused with this exact"
+        echo "           message, however the scopes are ticked"
+        exit 1
+      else
+        # Absent rather than refused: a wiki has no git repository until it has a page, and
+        # GitLab creates one on the first push.
+        echo "coverage-wiki: no wiki repository yet. git said:"
+        sed 's/^/    /' clone.err
         echo
-        echo "  Trying to create it by pushing anyway."
+        echo "  If that is a 404, this is the first page and the push below creates the wiki."
+        echo "  If the wiki is switched off entirely, turn it on at"
+        echo "    Settings > General > Visibility, project features, permissions > Wiki"
         rm -rf wiki && mkdir -p wiki && git -C wiki init --quiet --initial-branch=main
         branch=main
       fi
