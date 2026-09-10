@@ -23,7 +23,7 @@ jclaw is a Java/Spring Boot reimplementation of the **architecture** of
 untrusted-`LoopExit` trust model, and the `CapabilityHost` authority boundary are faithful; the
 feature surface is a fraction of IronClaw's. See **Not built yet** for the honest list.
 
-416 tests pass across 9 modules, including 15 machine-checked architecture rules.
+429 tests pass across 9 modules, including 15 machine-checked architecture rules.
 
 ## Commands
 
@@ -32,6 +32,7 @@ feature surface is a fraction of IronClaw's. See **Not built yet** for the hones
 - Test (single): `mvn test -Dtest=ClassName#methodName -pl <module>` (add `-am` if deps are stale)
 - Run (jar): `java -jar jclaw-app/target/jclaw-app-0.1.0-SNAPSHOT.jar <command>`
 - Source-integrity guard: `./scripts/byte-verify.sh scan`
+- Browser-UI key handling: `./scripts/web-ui-keys.sh` (needs a local Chrome; not in `mvn test`)
 
 ### PostgreSQL
 
@@ -467,6 +468,22 @@ the Anthropic SDK, and tool lanes may not read the process environment.
 - **Startup-failure logging is suppressed** for two named Spring loggers so a config mistake prints
   one line instead of a 40-frame trace. Restore while debugging with
   `--logging.level.org.springframework.boot.SpringApplication=ERROR`.
+- **The browser UI sends on Enter, and that is a portability fix, not a preference.** The page
+  shipped advertising `Ctrl+Enter` while binding `ctrlKey || metaKey`. On a Mac the send chord is
+  `⌘↩`, so a user followed the placeholder, pressed a chord macOS routes into its own emacs-style
+  text bindings, and got nothing — the handler was fine and the label was wrong, which is
+  indistinguishable from a broken UI. Binding plain Enter (Shift+Enter for a newline, as every chat
+  client does) deletes the platform question; `⌘↩` and `Ctrl+Enter` still work because neither sets
+  `shiftKey`. Once plain Enter is bound, `isComposing` **and** `keyCode === 229` must both be
+  checked first, or Enter committing an IME candidate also submits the half-typed message.
+  `WebUiTest` pins the decisions in the source; `./scripts/web-ui-keys.sh` dispatches real
+  `KeyboardEvent`s at the real served page in headless Chrome, and both were verified to fail with
+  the original handler planted back.
+- **The UI read every non-401 response as success.** `api()` threw on 401 and otherwise returned
+  `r.json()`, so a turn refused on a busy thread (409 `THREAD_BUSY`) cleared the textarea, reported
+  `run undefined queued`, and opened an event stream for a run that does not exist. Found by the
+  browser harness above, not by reading. It now throws on any non-`ok` status, and `send()` clears
+  the box only after the post succeeds — clearing first loses what the user typed on every refusal.
 - **picocli collection-typed `@Parameters` fail under Spring singletons** with a bare
   `UnsupportedOperationException`. Use arrays (`String[]`), as `RunCommand` does.
 - **`@DefaultValue("")` on a `List` property binds to `[""]`, not `[]`.** Filter blank entries.

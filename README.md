@@ -548,7 +548,7 @@ jclaw serve --concurrency 4 --per-user 1 \
 
 | Route | Does |
 |---|---|
-| `GET /` | A small browser UI: pick a thread, read the transcript, send turns, watch the run's events, approve or deny gates. Pure HTML and script over the routes below. |
+| `GET /` | A small browser UI: pick a thread, read the transcript, send turns, watch the run's events, approve or deny gates. Pure HTML and script over the routes below. **Enter** sends, **Shift+Enter** makes a new line; `⌘↩` and `Ctrl+Enter` send too. |
 | `POST /v1/chat/completions`, `GET /v1/models` | The OpenAI chat-completions shape, buffered or `"stream": true`, so any OpenAI SDK or tool can drive the agent (`base_url=http://127.0.0.1:8080/v1`, `api_key=<serve-token>`). Executes in the request. A stateless client's earlier turns are replayed into a fresh thread; send `X-Jclaw-Thread: <id>` to keep a persistent one. Client `system` messages are ignored: the operator's prompt governs. A parked run comes back as a completion explaining the gate, with `X-Jclaw-Run`, `X-Jclaw-Status`, and `X-Jclaw-Gate` headers. |
 | `POST /threads/{thread}/turns` `{"text": "…", "attachments": [{"mediaType": "image/png", "data": "<base64>"}]}` | Enqueues a turn and returns `202 {"run": "run_…"}` at once; nothing executes in the request thread. |
 | `GET /runs/{run}` | The run's projection folded from its events (status, timings, model calls and tokens, capability calls, injection findings, the open gate, failure) plus `reply` once completed. |

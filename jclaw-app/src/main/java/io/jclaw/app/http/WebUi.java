@@ -62,7 +62,7 @@ final class WebUi {
               </aside>
             </main>
             <footer>
-              <textarea id="text" placeholder="Ask the agent… (Ctrl+Enter to send)"></textarea>
+              <textarea id="text" placeholder="Ask the agent… (Enter to send, Shift+Enter for a new line)"></textarea>
               <button id="send">send</button>
             </footer>
             <script>
@@ -91,7 +91,13 @@ final class WebUi {
             async function api(path, options) {
               const r = await fetch(path, Object.assign({ headers: headers() }, options || {}));
               if (r.status === 401) { status("unauthorized: set the token"); throw new Error("401"); }
-              return r.json();
+              const body = await r.json().catch(() => ({}));
+              // A refusal is not a result. This used to return the body for any status but 401, so
+              // a turn refused on a busy thread (409 THREAD_BUSY) read as success: the box was
+              // cleared, the status line claimed "run undefined queued", and the stream followed a
+              // run that does not exist.
+              if (!r.ok) throw new Error(body.error || ("http " + r.status));
+              return body;
             }
 
             async function loadMessages() {
@@ -117,7 +123,15 @@ final class WebUi {
                 const row = div.lastElementChild;
                 for (const [label, approved] of [["approve", true], ["deny", false]]) {
                   const b = document.createElement("button"); b.textContent = label;
-                  b.onclick = async () => { await api("/approvals/" + g.id, { method: "POST", body: JSON.stringify({ approved }) }); status(label + "d " + g.id); loadGates(); };
+                  b.onclick = async () => {
+                    try {
+                      await api("/approvals/" + g.id, { method: "POST", body: JSON.stringify({ approved }) });
+                      status(label + "d " + g.id);
+                    } catch (e) {
+                      if (String(e && e.message) !== "401") status("could not " + label + ": " + (e && e.message ? e.message : e));
+                    }
+                    loadGates();
+                  };
                   row.appendChild(b);
                 }
                 box.appendChild(div);
@@ -136,19 +150,51 @@ final class WebUi {
               es.onerror = () => { es.close(); status("stream closed"); loadMessages(); };
             }
 
+            // One turn at a time. Enter is easy to hit twice, and a second submission on a live
+            // thread is refused THREAD_BUSY — correct, but it reads as the UI eating a message.
+            let sending = false;
+
             async function send() {
+              if (sending) return;
               const text = $("text").value.trim();
               if (!text) return;
-              $("text").value = "";
+              sending = true;
               status("queuing…");
-              const r = await api("/threads/" + encodeURIComponent(thread()) + "/turns", { method: "POST", body: JSON.stringify({ text }) });
-              status("run " + r.run + " queued");
-              await loadMessages();
-              follow(r.run);
+              try {
+                const r = await api("/threads/" + encodeURIComponent(thread()) + "/turns", { method: "POST", body: JSON.stringify({ text }) });
+                // Cleared only once the turn is durable. Clearing first — which this did — loses
+                // what you typed whenever the post fails, leaving a status line and no way back.
+                $("text").value = "";
+                status("run " + r.run + " queued");
+                await loadMessages();
+                follow(r.run);
+              } catch (e) {
+                // api() already explained a 401. Anything else was an unhandled rejection before,
+                // so a refused turn looked exactly like a key binding that does not work.
+                if (String(e && e.message) !== "401") status("not sent: " + (e && e.message ? e.message : e));
+              } finally {
+                sending = false;
+              }
             }
 
             $("send").onclick = send;
-            $("text").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) send(); });
+            // Enter sends, Shift+Enter makes a new line — the convention every chat UI uses, and
+            // the reason this now works on a Mac. Ctrl+Enter is a Windows/Linux chord: the macOS
+            // equivalent is ⌘↩, and Ctrl+Return there lands among the system's emacs-style text
+            // bindings instead. The old handler did accept metaKey, but the placeholder advertised
+            // Ctrl+Enter and nothing bound the plain key, so a Mac user pressed what the page told
+            // them to press and the page did nothing. Binding Enter itself removes the question:
+            // ⌘↩ and Ctrl+Enter still send, because neither sets shiftKey.
+            //
+            // isComposing must be checked first. With an IME, Enter commits the candidate text and
+            // must not also submit — Safari and older Chrome signal that as keyCode 229 without
+            // setting the flag, so both are tested. Only relevant now that plain Enter is bound.
+            $("text").addEventListener("keydown", (e) => {
+              if (e.key !== "Enter" || e.isComposing || e.keyCode === 229) return;
+              if (e.shiftKey) return;
+              e.preventDefault();   // or the keystroke also drops a newline into the cleared box
+              send();
+            });
             $("reload").onclick = () => { loadMessages(); loadGates(); };
             $("thread").addEventListener("change", () => { loadMessages(); });
             loadMessages().catch(() => {}); loadGates().catch(() => {});
