@@ -61,21 +61,53 @@ public final class WasmLane {
 
     private final WasmModule module;
     private final WasmSpec spec;
+    private final int initialPages;
 
-    private WasmLane(WasmModule module, WasmSpec spec) {
+    private WasmLane(WasmModule module, WasmSpec spec, int initialPages) {
         this.module = module;
         this.spec = spec;
+        this.initialPages = initialPages;
     }
 
-    /** Parses a module. Rejects one the runtime cannot read, before anything is granted. */
+    /**
+     * Parses a module. Rejects one the runtime cannot read, before anything is granted, and one
+     * that wants more memory than the operator allows, before it is ever called.
+     */
     public static Result<WasmLane, String> load(byte[] wasm, WasmSpec spec) {
         Objects.requireNonNull(wasm, "wasm");
         Objects.requireNonNull(spec, "spec");
+        WasmModule parsed;
         try {
-            return Result.ok(new WasmLane(Parser.parse(wasm), spec));
+            parsed = Parser.parse(wasm);
         } catch (RuntimeException e) {
             return Result.err("module_unparseable");
         }
+        int initialPages = declaredInitialPages(parsed);
+        if (initialPages > spec.maxMemoryPages()) {
+            // Refused here rather than clamped. A module is laid out for the memory it declared;
+            // handing it less does not make it smaller, it makes it trap on its own data.
+            return Result.err("module_memory_exceeds_limit");
+        }
+        return Result.ok(new WasmLane(parsed, spec, initialPages));
+    }
+
+    /**
+     * The initial memory the module asks for, in pages, or one when it declares none.
+     *
+     * <p>This has to be the module's own figure and not a constant. The cap belongs to the
+     * operator, but the starting size belongs to the module: a toolchain lays out a shadow stack,
+     * then static data, then whatever the module manages itself, and it emits a minimum that
+     * covers the lot. Rust puts a one-megabyte stack there by default, so a module built by any
+     * ordinary toolchain declares seventeen pages before it holds a single byte of its own.
+     * Starting such a module at one page does not constrain it — it makes instantiation fail on
+     * the first data segment that lands above 64 KiB, which surfaces as {@code
+     * module_not_instantiable} and reads exactly like a missing import.
+     */
+    private static int declaredInitialPages(WasmModule module) {
+        return module.memorySection()
+                .filter(section -> section.memoryCount() > 0)
+                .map(section -> section.getMemory(0).limits().initialPages())
+                .orElse(1);
     }
 
     /**
@@ -94,7 +126,7 @@ public final class WasmLane {
         Instance instance;
         try {
             instance = Instance.builder(module)
-                    .withMemoryLimits(new MemoryLimits(1, spec.maxMemoryPages()))
+                    .withMemoryLimits(new MemoryLimits(initialPages, spec.maxMemoryPages()))
                     .withImportValues(imports(output, services))
                     // Counting every instruction is what turns "please do not loop forever" into
                     // an arithmetic fact.

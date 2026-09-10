@@ -70,6 +70,48 @@ class WasmLaneTest {
         assertEquals("{\"echoed\":true}", lane.call("{}", new Recording()).orElseThrow());
     }
 
+    /**
+     * A module shaped like something a toolchain produces: it declares eighteen pages of memory
+     * and puts its data above the first one. In WebAssembly text:
+     *
+     * <pre>
+     *   (module
+     *     (memory (export "memory") 18)
+     *     (data (i32.const 1114112) "{\"big\":true}")
+     *     (func (export "jclaw_alloc") (param i32) (result i32) i32.const 1048576)
+     *     (func (export "jclaw_call") (param i32 i32) (result i64) i64.const ...))
+     * </pre>
+     */
+    private static final String WIDE_MODULE =
+            "AGFzbQEAAAABDAJgAX8Bf2ACf38BfgMDAgABBQMBABIHJQMGbWVtb3J5AgALamNsYXdfYWxsb2MA"
+            + "AApqY2xhd19jYWxsAAEKFQIHAEGAgMAACwsAQoyAgICAgMAICwsVAQBBgIDEAAsMeyJiaWciOnRy"
+            + "dWV9";
+
+    @Test
+    @DisplayName("a module keeps the initial memory it declared, not one page")
+    void honoursDeclaredMemory() {
+        // Every toolchain lays out a shadow stack before the module's own data — Rust puts a
+        // megabyte there by default — so a real module declares seventeen or more pages before
+        // it holds a byte of its own. Starting it at one page does not constrain it; it makes
+        // instantiation fail on the first data segment above 64 KiB, which is indistinguishable
+        // from an ungranted import. Verified to fail by pinning the initial size back to 1.
+        WasmLane lane = WasmLane.load(Base64.getDecoder().decode(WIDE_MODULE), WasmSpec.defaults())
+                .orElseThrow();
+        assertEquals("{\"big\":true}", lane.call("{}", new Recording()).orElseThrow());
+    }
+
+    @Test
+    @DisplayName("a module wanting more memory than the cap is refused at load, not mid-turn")
+    void refusesAModuleTooLargeForTheCap() {
+        // Refused rather than clamped: a module is laid out for the memory it declared, so
+        // handing it less only moves the failure to its own first data segment. Catching it at
+        // load means a broken package costs a warning at startup rather than a failed tool call.
+        WasmSpec narrow = new WasmSpec(4, 1_000_000L, 1024, java.time.Duration.ofSeconds(1), Set.of());
+        assertEquals("module_memory_exceeds_limit",
+                WasmLane.load(Base64.getDecoder().decode(WIDE_MODULE), narrow)
+                        .errorAsOptional().orElseThrow());
+    }
+
     @Test
     @DisplayName("bytes that are not a module are refused before anything is granted")
     void refusesRubbish() {

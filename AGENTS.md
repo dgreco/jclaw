@@ -511,6 +511,16 @@ the Anthropic SDK, and tool lanes may not read the process environment.
   actually reaches a consumer of the jar. It searches only the first five lines: an SPDX string
   further down a file is a coincidence (a fixture, a javadoc quote), not a header. Verified to
   fire by stripping a real header, not just by passing.
+- **A WASM module keeps the initial memory it declared.** `WasmLane` used to instantiate every
+  module with `MemoryLimits(1, maxMemoryPages)`, which overrides the *initial* size, not just the
+  cap. Every toolchain lays out a shadow stack before the module's own data — Rust's default is
+  1 MiB — so a real module declares 17+ pages before holding a byte of its own, and starting it
+  at one page fails on the first data segment above 64 KiB. That surfaces as
+  `module_not_instantiable`, which reads exactly like an ungranted import, so the wrong thing
+  gets debugged. It shipped green because the only test module was hand-assembled and fitted in
+  one page: **no module any toolchain produced could run**.
+  `WasmLaneTest.honoursDeclaredMemory` pins it against a module shaped the way a toolchain emits
+  one, and was verified to fail with the initial size pinned back to 1.
 - **Two CI pipelines, kept in step by hand.** `.gitlab-ci.yml` (the live remote) and
   `.github/workflows/ci.yml` run the same five jobs; a change to one needs the same change to
   the other, and nothing checks that. Where they differ it is deliberate and commented at the
