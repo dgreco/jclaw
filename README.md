@@ -372,10 +372,16 @@ The CLI container and the `serve` container are two processes on one database, w
 **The native image on PostgreSQL** is `docker-compose.native.yml`, which brings its own PostgreSQL so nothing has to be combined:
 
 ```bash
-docker compose -f docker-compose.native.yml build                    # minutes, once
+docker compose -f docker-compose.native.yml build                # minutes, once
+docker compose -f docker-compose.native.yml up -d postgres       # start the database first
+docker compose -f docker-compose.native.yml run --rm jclaw doctor
 docker compose -f docker-compose.native.yml run --rm jclaw run "hello"
-docker compose -f docker-compose.native.yml --profile serve up       # HTTP on :8081
+docker compose -f docker-compose.native.yml exec postgres psql -U jclaw -d jclaw -c '\dt'
+docker compose -f docker-compose.native.yml --profile serve up   # HTTP on :8081
+docker compose -f docker-compose.native.yml down -v              # and throw it all away
 ```
+
+The same ordering caveat applies as above, for the same reason: `exec` attaches to a running container and starts nothing, so the database has to be up before that line and the tables only exist once jclaw has applied its migrations. This stack uses its own ports — 8081 for `serve`, 55432 for PostgreSQL — so it can run alongside the jar one without a collision.
 
 Measured in the same container shape, the binary starts in **61 ms** against the jar's **1.48 s**. Two choices in `Dockerfile.native` are worth knowing. The runtime base is `debian:12-slim`, not distroless: `builtin.shell` runs `/bin/sh -c`, so an image without a shell would ship an agent with one of its own tools permanently broken. And it is glibc rather than Alpine because the image is not statically linked.
 
