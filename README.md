@@ -361,7 +361,7 @@ docker compose up -d postgres                                  # start the datab
 docker compose run --rm jclaw doctor
 docker compose run --rm jclaw run "hello"
 docker compose exec postgres psql -U jclaw -d jclaw -c '\dt'   # twelve tables, once jclaw has run
-docker compose --profile serve up                              # the HTTP surface on :8080
+docker compose --profile serve up                              # serves on host port 8080
 # then open http://localhost:8080/?access_token=local-operator-token
 docker compose --profile "*" down -v                           # and throw it all away
 ```
@@ -384,12 +384,30 @@ docker compose -f docker-compose.native.yml up -d postgres       # start the dat
 docker compose -f docker-compose.native.yml run --rm jclaw doctor
 docker compose -f docker-compose.native.yml run --rm jclaw run "hello"
 docker compose -f docker-compose.native.yml exec postgres psql -U jclaw -d jclaw -c '\dt'
-docker compose -f docker-compose.native.yml --profile serve up   # HTTP on :8081
+docker compose -f docker-compose.native.yml --profile serve up   # serves on host port 8081, not 8080
 # then open http://localhost:8081/?access_token=local-operator-token
 docker compose -f docker-compose.native.yml --profile "*" down -v
 ```
 
-The same ordering caveat applies as above, for the same reason: `exec` attaches to a running container and starts nothing, so the database has to be up before that line and the tables only exist once jclaw has applied its migrations. This stack uses its own ports — 8081 for `serve`, 55432 for PostgreSQL — so it can run alongside the jar one without a collision.
+The same ordering caveat applies as above, for the same reason: `exec` attaches to a running container and starts nothing, so the database has to be up before that line and the tables only exist once jclaw has applied its migrations.
+
+#### Connecting to `serve`
+
+**Inside the container, `serve` always listens on 8080** — that is the `--port 8080` in both `command:` lines, and it is not the port to connect to. The *host* port is what compose publishes, and the two stacks publish different ones deliberately, so both can run at the same time without colliding:
+
+| Stack | Open this | PostgreSQL on | Published as |
+|---|---|---|---|
+| `docker-compose.yml` (jar) | `http://localhost:8080/?access_token=local-operator-token` | `localhost:5432` | `8080:8080` |
+| `docker-compose.native.yml` | `http://localhost:8081/?access_token=local-operator-token` | `localhost:55432` | `8081:8080` |
+
+Reaching for 8080 while the native stack is the one running gets `Failed to connect to localhost port 8080` — nothing is listening there, because that stack published 8081. Ask the running stack rather than remembering:
+
+```bash
+docker compose -f docker-compose.native.yml ps --format '{{.Service}}\t{{.Ports}}'
+# serve   0.0.0.0:8081->8080/tcp      <- host 8081, container 8080
+```
+
+The token is `local-operator-token` unless you set `JCLAW_SERVE_TOKEN`, and it is needed on every route including `/`; see **Open the UI with the token in the URL** above for why it goes in the query string.
 
 Measured in the same container shape, the binary starts in **61 ms** against the jar's **1.48 s**. Two choices in `Dockerfile.native` are worth knowing. The runtime base is `debian:12-slim`, not distroless: `builtin.shell` runs `/bin/sh -c`, so an image without a shell would ship an agent with one of its own tools permanently broken. And it is glibc rather than Alpine because the image is not statically linked.
 
