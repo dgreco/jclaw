@@ -4,6 +4,7 @@
 package io.jclaw.tools.mcp;
 
 import io.jclaw.contracts.Result;
+import io.jclaw.contracts.observability.TraceContext;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.io.BufferedReader;
@@ -16,11 +17,13 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 
 /**
  * A remote server over MCP's streamable HTTP transport.
@@ -48,7 +51,7 @@ public final class HttpTransport implements McpTransport {
     private final JsonMapper mapper = JsonMapper.builder().build();
     private final HttpClient client;
     private final URI endpoint;
-    private final java.util.function.Supplier<Optional<String>> authorization;
+    private final Supplier<Optional<String>> authorization;
     private final AtomicReference<String> sessionId = new AtomicReference<>();
     private volatile boolean closed;
     private volatile ServerRequests serverRequests;
@@ -68,7 +71,7 @@ public final class HttpTransport implements McpTransport {
      *                      expires: the credential has to be re-read, not captured once at
      *                      construction and used until the server starts answering 401
      */
-    public HttpTransport(URI endpoint, java.util.function.Supplier<Optional<String>> authorization) {
+    public HttpTransport(URI endpoint, Supplier<Optional<String>> authorization) {
         this.endpoint = Objects.requireNonNull(endpoint, "endpoint");
         this.authorization = Objects.requireNonNull(authorization, "authorization");
         this.client = HttpClient.newBuilder()
@@ -93,7 +96,7 @@ public final class HttpTransport implements McpTransport {
                         mapper.writeValueAsString(envelope), StandardCharsets.UTF_8));
         authorization.get().ifPresent(value -> request.header("Authorization", value));
         // The run's trace, when one is current, so an MCP server's own spans join jclaw's.
-        io.jclaw.contracts.observability.TraceContext.current()
+        TraceContext.current()
                 .ifPresent(trace -> request.header("traceparent", trace.traceparent()));
         String session = sessionId.get();
         if (session != null) {
@@ -223,7 +226,7 @@ public final class HttpTransport implements McpTransport {
     @SuppressWarnings("unchecked")
     private void answerServer(String method, Map<String, Object> request) {
         ServerRequests handler = serverRequests;
-        Map<String, Object> reply = new java.util.LinkedHashMap<>();
+        Map<String, Object> reply = new LinkedHashMap<>();
         reply.put("jsonrpc", "2.0");
         reply.put("id", request.get("id"));
         if (handler == null) {

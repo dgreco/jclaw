@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Host-mediated outbound network policy. Every outbound URL passes through here.
@@ -99,7 +100,7 @@ public final class EgressGuard {
         return hosts.stream()
                 .map(host -> host.trim().toLowerCase(Locale.ROOT))
                 .filter(host -> !host.isEmpty())
-                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+                .collect(Collectors.toUnmodifiableSet());
     }
 
     /** Exact match, or a {@code *.suffix} entry matching any host below that suffix. */

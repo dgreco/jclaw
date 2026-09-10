@@ -5,6 +5,7 @@ package io.jclaw.app.mcp;
 
 import io.jclaw.contracts.Result;
 import io.jclaw.contracts.event.EventLog;
+import io.jclaw.contracts.event.JclawEvent;
 import io.jclaw.contracts.model.ModelExchange.ModelRequest;
 import io.jclaw.contracts.model.ModelExchange.ModelResponse;
 import io.jclaw.contracts.model.ModelProvider;
@@ -100,7 +101,7 @@ public final class McpSampling implements McpTransport.ServerRequests {
         // Audited like any other model call, under a synthetic run id naming the server. A
         // sampled call has no run of its own, and leaving it out of the log would make an MCP
         // server the one caller whose spending does not appear anywhere.
-        events.append(new io.jclaw.contracts.event.JclawEvent.ModelCalled(
+        events.append(new JclawEvent.ModelCalled(
                 clock.instant(), samplingRun(server), provider.id(), response.modelId(),
                 response.usage(), elapsed));
         log.debug("mcp sampling: {} sampled {} in {} ms ({} of {} calls)",

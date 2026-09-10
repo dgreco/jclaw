@@ -14,8 +14,14 @@ import io.jclaw.contracts.capability.TrustClass;
 import io.jclaw.tools.Schemas;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.io.IOException;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.time.Duration;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -39,10 +45,10 @@ public final class WasmCapabilityHandler implements CapabilityHandler {
     private static final int MAX_FETCH_BYTES = 64 * 1024;
 
     /** Redirects are never followed: each hop would need the guard's opinion, and this has one. */
-    private static final java.net.http.HttpClient HTTP = java.net.http.HttpClient.newBuilder()
-            .version(java.net.http.HttpClient.Version.HTTP_1_1)
-            .followRedirects(java.net.http.HttpClient.Redirect.NEVER)
-            .connectTimeout(java.time.Duration.ofSeconds(10))
+    private static final HttpClient HTTP = HttpClient.newBuilder()
+            .version(HttpClient.Version.HTTP_1_1)
+            .followRedirects(HttpClient.Redirect.NEVER)
+            .connectTimeout(Duration.ofSeconds(10))
             .build();
 
     private final WasmLane lane;
@@ -81,7 +87,7 @@ public final class WasmCapabilityHandler implements CapabilityHandler {
 
     @Override
     public Result<String, HandlerError> execute(CapabilityInvocation invocation, HandlerContext context) {
-        Map<String, Object> call = new java.util.LinkedHashMap<>();
+        Map<String, Object> call = new LinkedHashMap<>();
         call.put("tool", tool);
         call.put("arguments", invocation.arguments());
         return lane.call(mapper.writeValueAsString(call), services(context)).mapErr(HandlerError::failed);
@@ -104,7 +110,7 @@ public final class WasmCapabilityHandler implements CapabilityHandler {
                 return context.resolvePath(path).toOptional().flatMap(resolved -> {
                     try {
                         return Optional.of(Files.readString(resolved, StandardCharsets.UTF_8));
-                    } catch (java.io.IOException e) {
+                    } catch (IOException e) {
                         return Optional.empty();
                     }
                 });
@@ -118,18 +124,18 @@ public final class WasmCapabilityHandler implements CapabilityHandler {
                 // Guarded first, fetched second, bounded third. A module never holds the client.
                 return context.checkEgress(url).toOptional().flatMap(uri -> {
                     try {
-                        var response = HTTP.send(java.net.http.HttpRequest.newBuilder(uri)
-                                        .timeout(java.time.Duration.ofSeconds(15))
+                        var response = HTTP.send(HttpRequest.newBuilder(uri)
+                                        .timeout(Duration.ofSeconds(15))
                                         .header("User-Agent", "jclaw-wasm/0.1")
                                         .GET().build(),
-                                java.net.http.HttpResponse.BodyHandlers.ofString());
+                                HttpResponse.BodyHandlers.ofString());
                         if (response.statusCode() >= 300) {
                             return Optional.empty();
                         }
                         String body = response.body();
                         return Optional.of(body.length() > MAX_FETCH_BYTES
                                 ? body.substring(0, MAX_FETCH_BYTES) : body);
-                    } catch (java.io.IOException e) {
+                    } catch (IOException e) {
                         return Optional.empty();
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();

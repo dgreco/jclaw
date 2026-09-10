@@ -6,6 +6,7 @@ package io.jclaw.app.channel;
 import io.jclaw.contracts.Result;
 import io.jclaw.contracts.channel.ChannelAdapter;
 import io.jclaw.contracts.channel.ReplyTarget;
+import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.io.IOException;
@@ -88,7 +89,7 @@ public final class TelegramAdapter implements ChannelAdapter {
 
         Map<String, Object> update;
         try {
-            update = mapper.readValue(body, Map.class);
+            update = mapper.readValue(body, new TypeReference<Map<String, Object>>() { });
         } catch (RuntimeException e) {
             return Result.err("body_malformed");
         }
@@ -147,7 +148,7 @@ public final class TelegramAdapter implements ChannelAdapter {
         }
         Map<String, Object> answer;
         try {
-            answer = mapper.readValue(response.body(), Map.class);
+            answer = mapper.readValue(response.body(), new TypeReference<Map<String, Object>>() { });
         } catch (RuntimeException e) {
             return Result.err("telegram_response_malformed");
         }

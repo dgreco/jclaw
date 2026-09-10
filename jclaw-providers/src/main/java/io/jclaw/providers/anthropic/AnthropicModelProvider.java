@@ -7,15 +7,17 @@ import com.anthropic.client.AnthropicClient;
 import com.anthropic.client.okhttp.AnthropicOkHttpClient;
 import com.anthropic.core.JsonValue;
 import com.anthropic.core.http.StreamResponse;
-import com.anthropic.helpers.MessageAccumulator;
 import com.anthropic.errors.AnthropicServiceException;
 import com.anthropic.errors.BadRequestException;
 import com.anthropic.errors.NotFoundException;
 import com.anthropic.errors.PermissionDeniedException;
 import com.anthropic.errors.RateLimitException;
 import com.anthropic.errors.UnauthorizedException;
+import com.anthropic.helpers.MessageAccumulator;
+import com.anthropic.models.messages.Base64ImageSource;
 import com.anthropic.models.messages.ContentBlock;
 import com.anthropic.models.messages.ContentBlockParam;
+import com.anthropic.models.messages.ImageBlockParam;
 import com.anthropic.models.messages.Message;
 import com.anthropic.models.messages.MessageCreateParams;
 import com.anthropic.models.messages.MessageParam;
@@ -34,14 +36,20 @@ import io.jclaw.contracts.model.ModelExchange.ToolSpec;
 import io.jclaw.contracts.model.ModelExchange.Usage;
 import io.jclaw.contracts.model.ModelProvider;
 import io.jclaw.contracts.model.ToolNames;
+import io.jclaw.contracts.observability.TraceContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
+import java.net.SocketException;
+import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.concurrent.TimeoutException;
 import java.util.function.Consumer;
 
 /**
@@ -166,10 +174,10 @@ public final class AnthropicModelProvider implements ModelProvider {
         boolean serialization = root.getClass().getName().startsWith("com.fasterxml.jackson")
                 || root.getClass().getName().startsWith("tools.jackson");
         boolean connectivity = !serialization
-                && (root instanceof java.io.IOException
-                || root instanceof java.net.SocketException
-                || root instanceof java.net.UnknownHostException
-                || root instanceof java.util.concurrent.TimeoutException);
+                && (root instanceof IOException
+                || root instanceof SocketException
+                || root instanceof UnknownHostException
+                || root instanceof TimeoutException);
 
         String type = root.getClass().getSimpleName();
         return connectivity
@@ -247,7 +255,7 @@ public final class AnthropicModelProvider implements ModelProvider {
         // W3C trace context, when the interpreter opened a scope for this call. Two opaque
         // identifiers and nothing else, so a gateway or proxy in front of the API can join its
         // trace of the request to jclaw's trace of the run.
-        io.jclaw.contracts.observability.TraceContext.current().ifPresent(trace ->
+        TraceContext.current().ifPresent(trace ->
                 builder.putAdditionalHeader("traceparent", trace.traceparent()));
 
         if (!request.system().isBlank()) {
@@ -294,9 +302,13 @@ public final class AnthropicModelProvider implements ModelProvider {
      * <p>Returns empty for a message that produced no blocks — the API rejects empty content, and
      * a system message here would be misplaced (it travels in the top-level {@code system} field).
      */
-    private static java.util.Optional<MessageParam> toMessageParam(ChatMessage message) {
+    // The SDK's ToolUseBlockParam.Builder.input takes a raw type, so passing a JsonValue built
+    // from Map<String, Object> is an unchecked call. Nothing here is cast; the warning is the
+    // vendor's signature, not a hole in this conversion.
+    @SuppressWarnings("unchecked")
+    private static Optional<MessageParam> toMessageParam(ChatMessage message) {
         if (message.role() == ChatMessage.Role.SYSTEM) {
-            return java.util.Optional.empty();
+            return Optional.empty();
         }
         List<ContentBlockParam> blocks = new ArrayList<>();
         for (io.jclaw.contracts.model.ContentBlock block : message.content()) {
@@ -322,9 +334,9 @@ public final class AnthropicModelProvider implements ModelProvider {
                                 .isError(result.isError())
                                 .build()));
                 case io.jclaw.contracts.model.ContentBlock.Image image -> blocks.add(
-                        ContentBlockParam.ofImage(com.anthropic.models.messages.ImageBlockParam.builder()
-                                .source(com.anthropic.models.messages.Base64ImageSource.builder()
-                                        .mediaType(com.anthropic.models.messages.Base64ImageSource.MediaType.of(
+                        ContentBlockParam.ofImage(ImageBlockParam.builder()
+                                .source(Base64ImageSource.builder()
+                                        .mediaType(Base64ImageSource.MediaType.of(
                                                 image.mediaType()))
                                         .data(image.data())
                                         .build())
@@ -335,14 +347,14 @@ public final class AnthropicModelProvider implements ModelProvider {
             }
         }
         if (blocks.isEmpty()) {
-            return java.util.Optional.empty();
+            return Optional.empty();
         }
         // Tool results travel in a user-role message, which is what the API expects.
         MessageParam.Role role = switch (message.role()) {
             case ASSISTANT -> MessageParam.Role.ASSISTANT;
             case USER, TOOL, SYSTEM -> MessageParam.Role.USER;
         };
-        return java.util.Optional.of(MessageParam.builder()
+        return Optional.of(MessageParam.builder()
                 .role(role)
                 .contentOfBlockParams(blocks)
                 .build());

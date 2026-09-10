@@ -11,11 +11,12 @@ import io.jclaw.contracts.capability.EffectClass;
 import io.jclaw.contracts.capability.HandlerError;
 import io.jclaw.contracts.routine.RoutineStore;
 import io.jclaw.contracts.turn.ThreadId;
-import io.jclaw.domain.trigger.Trigger;
 import io.jclaw.domain.cron.RoutineSchedule;
+import io.jclaw.domain.trigger.Trigger;
 
 import java.time.ZoneId;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.stream.Collectors;
 
@@ -99,7 +100,7 @@ public final class TriggerTools {
 
             RoutineStore.Routine routine = store.create(
                     invocation.scope(), name, expression, zone, prompt,
-                    new ThreadId(name.replaceAll("\\s+", "-").toLowerCase(java.util.Locale.ROOT)));
+                    new ThreadId(name.replaceAll("\\s+", "-").toLowerCase(Locale.ROOT)));
 
             if (!RoutineSchedule.canFire(routine)) {
                 // A schedule that can never match would sit there looking configured forever.

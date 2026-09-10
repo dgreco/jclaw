@@ -153,9 +153,17 @@ mvn test -Dtest=TurnMachineTest -pl jclaw-domain           # one class
 mvn test -Dtest='ApprovalResumeIntegrationTest#resumeWithoutDecisionParksAgain' -pl jclaw-app -am
 ./scripts/byte-verify.sh scan                              # no stray control bytes in sources
 ./scripts/byte-verify.sh install && ./scripts/byte-verify.sh validate   # manifest drift check
+mvn -Panalysis verify                                      # javac -Xlint, SpotBugs, PMD
 ```
 
-Test totals by module (verified on this checkout): contracts 8 · domain 116 · kernel 14 · providers 25 · storage 12 · app 65 = **240, 0 failures**. `DependencyLawTest` in `jclaw-app` machine-checks the layer ladder with ArchUnit; the rules were confirmed to fire by planting deliberate violations.
+The `analysis` profile is opt-in and adds three layers that see different things: `javac
+-Xlint:all` with `failOnWarning`, SpotBugs with FindSecBugs over the bytecode, and PMD 7 over the
+source. The tree is clean under all three and each fails the build. Their filter files —
+[`config/spotbugs-exclude.xml`](config/spotbugs-exclude.xml) and
+[`config/pmd-ruleset.xml`](config/pmd-ruleset.xml) — give a reason in prose for every exclusion,
+because an exclusion nobody can audit is worse than no filter at all.
+
+Test totals by module (verified on this checkout, with a Docker daemon so the PostgreSQL test runs rather than skipping): domain 166 · app 160 · storage 43 · providers 28 · kernel 14 · contracts 14 · tools 7 = **432, 0 failures**. `DependencyLawTest` in `jclaw-app` machine-checks the layer ladder with ArchUnit; the rules were confirmed to fire by planting deliberate violations.
 
 ### Continuous integration
 

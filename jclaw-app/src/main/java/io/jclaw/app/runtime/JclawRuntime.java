@@ -11,11 +11,13 @@ import io.jclaw.contracts.event.EventLog;
 import io.jclaw.contracts.event.JclawEvent;
 import io.jclaw.contracts.loop.CheckpointStore;
 import io.jclaw.contracts.loop.FailureKind;
-import io.jclaw.contracts.loop.LoopHook;
 import io.jclaw.contracts.loop.LoopExit;
+import io.jclaw.contracts.loop.LoopHook;
 import io.jclaw.contracts.model.ChatMessage;
 import io.jclaw.contracts.model.ModelExchange.ToolSpec;
 import io.jclaw.contracts.model.ModelProvider;
+import io.jclaw.contracts.secret.SecretVault;
+import io.jclaw.contracts.skill.SkillCatalog;
 import io.jclaw.contracts.thread.ThreadService;
 import io.jclaw.contracts.turn.RunStore;
 import io.jclaw.contracts.turn.ThreadId;
@@ -28,23 +30,25 @@ import io.jclaw.domain.budget.Budget;
 import io.jclaw.domain.loop.LoopExecutionState;
 import io.jclaw.domain.loop.LoopPolicy;
 import io.jclaw.domain.loop.LoopStateCodec;
+import io.jclaw.domain.projection.RunProjection;
 import io.jclaw.domain.prompt.ContextCompaction;
 import io.jclaw.domain.prompt.ContextPolicy;
 import io.jclaw.domain.prompt.PromptAssembly;
-import io.jclaw.contracts.secret.SecretVault;
-import io.jclaw.contracts.skill.SkillCatalog;
 import io.jclaw.kernel.guard.WorkspaceGuard;
 import io.jclaw.loop.EffectInterpreter;
+import io.jclaw.storage.projection.RunProjectionCache;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
-import java.util.UUID;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
@@ -74,13 +78,13 @@ public class JclawRuntime {
     private final ThreadLock threadLocks;
     private final LoopStateCodec codec;
     private final EventLog events;
-    private final io.jclaw.storage.projection.RunProjectionCache projections;
-    private final java.util.List<io.jclaw.contracts.loop.LoopHook> loopHooks;
+    private final RunProjectionCache projections;
+    private final List<LoopHook> loopHooks;
     private final JclawProperties properties;
     private final WorkspaceGuard workspace;
     private final SkillCatalog skills;
     private final SecretVault vault;
-    private java.util.Optional<TenantLedger> ledger = java.util.Optional.empty();
+    private Optional<TenantLedger> ledger = Optional.empty();
     private final Clock clock;
 
     /**
@@ -109,8 +113,8 @@ public class JclawRuntime {
             WorkspaceGuard workspace,
             SkillCatalog skills,
             SecretVault vault,
-            io.jclaw.storage.projection.RunProjectionCache projections,
-            java.util.List<io.jclaw.contracts.loop.LoopHook> loopHooks,
+            RunProjectionCache projections,
+            List<LoopHook> loopHooks,
             Clock clock) {
         this.interpreter = Objects.requireNonNull(interpreter, "interpreter");
         this.vault = Objects.requireNonNull(vault, "vault");
@@ -126,7 +130,7 @@ public class JclawRuntime {
         this.workspace = Objects.requireNonNull(workspace, "workspace");
         this.skills = Objects.requireNonNull(skills, "skills");
         this.projections = Objects.requireNonNull(projections, "projections");
-        this.loopHooks = java.util.List.copyOf(Objects.requireNonNull(loopHooks, "loopHooks"));
+        this.loopHooks = List.copyOf(Objects.requireNonNull(loopHooks, "loopHooks"));
         this.clock = Objects.requireNonNull(clock, "clock");
     }
 
@@ -256,7 +260,8 @@ public class JclawRuntime {
                     run.value(), thread.value());
             return threadBusy(run, thread);
         }
-        try (ThreadLock.Held ignored = held.get()) {
+        ThreadLock.Held lock = held.get();
+        try (lock) {
             return admit(run, scope, thread, inbound, policy, cancelled, streamSink);
         }
     }
@@ -331,7 +336,8 @@ public class JclawRuntime {
                     run.value(), record.scope().thread().value());
             return threadBusy(run, record.scope().thread());
         }
-        try (ThreadLock.Held ignored = held.get()) {
+        ThreadLock.Held lock = held.get();
+        try (lock) {
             return resumeHeld(run, record, cancelled);
         }
     }
@@ -445,7 +451,7 @@ public class JclawRuntime {
      * than a message the model has already seemingly answered.
      */
     private List<ChatMessage> conversationAsOf(RunStore.RunRecord record) {
-        List<ChatMessage> earlier = new java.util.ArrayList<>();
+        List<ChatMessage> earlier = new ArrayList<>();
         ThreadService.ThreadMessage own = null;
         for (ThreadService.ThreadMessage message : threads.history(record.scope().thread(), Integer.MAX_VALUE)) {
             if (message.message().role() != ChatMessage.Role.USER) {
@@ -600,7 +606,7 @@ public class JclawRuntime {
             return;
         }
         try {
-            projections.put(io.jclaw.domain.projection.RunProjection.fold(run,
+            projections.put(RunProjection.fold(run,
                     events.readRun(run).stream().map(EventLog.Entry::event).toList()));
         } catch (RuntimeException e) {
             // A projection is a convenience. Failing to store one must never fail a run that
@@ -768,7 +774,7 @@ public class JclawRuntime {
      * configured value is often relative ({@code .}), whose file name is not a usable identifier.
      */
     private String projectName() {
-        java.nio.file.Path name = workspace.root().getFileName();
+        Path name = workspace.root().getFileName();
         if (name == null) {
             return "default";
         }
@@ -797,7 +803,7 @@ public class JclawRuntime {
      * runtime writes to and a constructor cycle would be the price of doing it the other way.
      */
     public void withLedger(TenantLedger ledger) {
-        this.ledger = java.util.Optional.ofNullable(ledger);
+        this.ledger = Optional.ofNullable(ledger);
     }
 
     /**

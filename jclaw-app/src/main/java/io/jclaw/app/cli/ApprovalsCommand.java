@@ -13,6 +13,7 @@ import picocli.CommandLine.Option;
 import picocli.CommandLine.Parameters;
 
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -73,7 +74,7 @@ public class ApprovalsCommand implements Runnable {
             for (ApprovalStore.Gate gate : pending) {
                 System.out.printf("%s  %s  %s  [%s]%s%n",
                         gate.id().value(), gate.raisedAt(), gate.capability().value(),
-                        gate.kind().name().toLowerCase(java.util.Locale.ROOT),
+                        gate.kind().name().toLowerCase(Locale.ROOT),
                         approvals.expired(gate) ? "  (expired " + gate.expiresAt() + ")" : "");
                 System.out.println("    run:    " + gate.run().value());
                 System.out.println("    scope:  " + gate.scope().lockKey());

@@ -11,6 +11,7 @@ import io.jclaw.contracts.turn.TurnRunId;
 import io.jclaw.contracts.turn.TurnScope;
 
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * An execution-stage hook: host code that observes, narrows, or vetoes the loop's two kinds of
@@ -112,7 +113,7 @@ public interface LoopHook {
      *                   capability's, such as a provider auth failure
      * @param prompt     what the human will be shown
      */
-    record GateRequest(GateKind kind, java.util.Optional<String> capability, String prompt) {
+    record GateRequest(GateKind kind, Optional<String> capability, String prompt) {
         public GateRequest {
             Objects.requireNonNull(kind, "kind");
             Objects.requireNonNull(capability, "capability");

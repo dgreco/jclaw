@@ -11,6 +11,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * Explicit mapping between {@link ChatMessage} and JSON-ready maps.
@@ -42,7 +43,7 @@ public final class MessageCodec {
         return out;
     }
 
-    private static java.util.Optional<Map<String, Object>> encodeBlock(ContentBlock block) {
+    private static Optional<Map<String, Object>> encodeBlock(ContentBlock block) {
         Map<String, Object> out = new LinkedHashMap<>();
         switch (block) {
             case ContentBlock.Text text -> {
@@ -67,10 +68,10 @@ public final class MessageCodec {
                 out.put("data", image.data());
             }
             case ContentBlock.Thinking ignored -> {
-                return java.util.Optional.empty(); // never persisted
+                return Optional.empty(); // never persisted
             }
         }
-        return java.util.Optional.of(out);
+        return Optional.of(out);
     }
 
     /** Decodes a message. Unknown block kinds are skipped for forward compatibility. */
@@ -92,9 +93,9 @@ public final class MessageCodec {
     }
 
     @SuppressWarnings("unchecked")
-    private static java.util.Optional<ContentBlock> decodeBlock(Map<String, Object> map) {
+    private static Optional<ContentBlock> decodeBlock(Map<String, Object> map) {
         String kind = String.valueOf(map.get("kind"));
-        return java.util.Optional.ofNullable(switch (kind) {
+        return Optional.ofNullable(switch (kind) {
             case "text" -> new ContentBlock.Text(String.valueOf(map.get("text")));
             case "tool_use" -> new ContentBlock.ToolUse(
                     String.valueOf(map.get("callId")),

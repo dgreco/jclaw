@@ -3,20 +3,45 @@
 
 package io.jclaw.app.runtime;
 
+import io.jclaw.app.mcp.McpOAuth;
+import io.jclaw.contracts.Result;
 import io.jclaw.contracts.capability.CapabilityHandler;
+import io.jclaw.contracts.capability.CapabilityId;
 import io.jclaw.contracts.capability.EffectClass;
 import io.jclaw.contracts.capability.TrustClass;
+import io.jclaw.contracts.extension.ExtensionRegistry;
 import io.jclaw.contracts.mcp.McpServerStore;
+import io.jclaw.contracts.secret.SecretVault;
+import io.jclaw.domain.sandbox.SandboxSpec;
+import io.jclaw.domain.secret.SecretInjection;
+import io.jclaw.kernel.guard.EgressGuard;
+import io.jclaw.storage.mcp.McpSurfaceCache;
+import io.jclaw.tools.mcp.HttpTransport;
 import io.jclaw.tools.mcp.McpCapabilityHandler;
 import io.jclaw.tools.mcp.McpClient;
+import io.jclaw.tools.mcp.McpSurfaceTools;
+import io.jclaw.tools.mcp.McpTransport;
+import io.jclaw.tools.mcp.StdioTransport;
 import jakarta.annotation.PreDestroy;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.time.Clock;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+import java.util.TreeSet;
+import java.util.function.Function;
 
 /**
  * Connects to enabled MCP servers at startup and registers their tools as capabilities.
@@ -32,24 +57,24 @@ import java.util.Objects;
 @Service
 public class McpRegistry {
 
-    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(McpRegistry.class);
+    private static final Logger log = LoggerFactory.getLogger(McpRegistry.class);
 
     private final List<McpClient> clients = new ArrayList<>();
     private final List<CapabilityHandler> handlers = new ArrayList<>();
-    private final io.jclaw.kernel.guard.EgressGuard egress;
-    private final io.jclaw.contracts.secret.SecretVault vault;
-    private final io.jclaw.storage.mcp.McpSurfaceCache cache;
-    private final java.time.Clock clock = java.time.Clock.systemUTC();
-    private java.util.function.Function<String, io.jclaw.tools.mcp.McpTransport.ServerRequests>
+    private final EgressGuard egress;
+    private final SecretVault vault;
+    private final McpSurfaceCache cache;
+    private final Clock clock = Clock.systemUTC();
+    private Function<String, McpTransport.ServerRequests>
             samplingFor = server -> null;
 
     public McpRegistry(McpServerStore servers, Path workspaceRoot) {
-        this(servers, workspaceRoot, java.util.Optional.empty());
+        this(servers, workspaceRoot, Optional.empty());
     }
 
     /** @param sandbox when present, every server process runs inside this container contract */
     public McpRegistry(McpServerStore servers, Path workspaceRoot,
-            java.util.Optional<io.jclaw.domain.sandbox.SandboxSpec> sandbox) {
+            Optional<SandboxSpec> sandbox) {
         this(servers, workspaceRoot, sandbox, null);
     }
 
@@ -59,10 +84,10 @@ public class McpRegistry {
      *                   installation earned
      */
     public McpRegistry(McpServerStore servers, Path workspaceRoot,
-            java.util.Optional<io.jclaw.domain.sandbox.SandboxSpec> sandbox,
-            io.jclaw.contracts.extension.ExtensionRegistry extensions) {
+            Optional<SandboxSpec> sandbox,
+            ExtensionRegistry extensions) {
         this(servers, workspaceRoot, sandbox, extensions, null,
-                io.jclaw.contracts.secret.SecretVault.empty(), null);
+                SecretVault.empty(), null);
     }
 
     /**
@@ -74,10 +99,10 @@ public class McpRegistry {
      *               the app layer sees the vault
      */
     public McpRegistry(McpServerStore servers, Path workspaceRoot,
-            java.util.Optional<io.jclaw.domain.sandbox.SandboxSpec> sandbox,
-            io.jclaw.contracts.extension.ExtensionRegistry extensions,
-            io.jclaw.kernel.guard.EgressGuard egress,
-            io.jclaw.contracts.secret.SecretVault vault) {
+            Optional<SandboxSpec> sandbox,
+            ExtensionRegistry extensions,
+            EgressGuard egress,
+            SecretVault vault) {
         this(servers, workspaceRoot, sandbox, extensions, egress, vault, null);
     }
 
@@ -87,11 +112,11 @@ public class McpRegistry {
      *              not started until one of them is invoked. Null discovers everything eagerly
      */
     public McpRegistry(McpServerStore servers, Path workspaceRoot,
-            java.util.Optional<io.jclaw.domain.sandbox.SandboxSpec> sandbox,
-            io.jclaw.contracts.extension.ExtensionRegistry extensions,
-            io.jclaw.kernel.guard.EgressGuard egress,
-            io.jclaw.contracts.secret.SecretVault vault,
-            io.jclaw.storage.mcp.McpSurfaceCache cache) {
+            Optional<SandboxSpec> sandbox,
+            ExtensionRegistry extensions,
+            EgressGuard egress,
+            SecretVault vault,
+            McpSurfaceCache cache) {
         Objects.requireNonNull(servers, "servers");
         Objects.requireNonNull(workspaceRoot, "workspaceRoot");
         Objects.requireNonNull(sandbox, "sandbox");
@@ -103,18 +128,18 @@ public class McpRegistry {
             if (!server.enabled()) {
                 continue;
             }
-            bring(server, workspaceRoot, sandbox, java.util.Set.of(),
+            bring(server, workspaceRoot, sandbox, Set.of(),
                     TrustClass.COMMUNITY, EffectClass.NETWORK);
         }
         if (extensions != null) {
             for (var installed : extensions.list()) {
-                if (!installed.enabled() || installed.manifest().kind() != io.jclaw.contracts.extension.ExtensionRegistry.Kind.MCP) {
+                if (!installed.enabled() || installed.manifest().kind() != ExtensionRegistry.Kind.MCP) {
                     continue;
                 }
                 McpServerStore.McpServer server = new McpServerStore.McpServer(
                         installed.name(), installed.manifest().command(), installed.secrets(), true);
                 // A verified package signed its host claim, so it is worth binding a secret to.
-                bring(server, workspaceRoot, sandbox, java.util.Set.copyOf(installed.manifest().hosts()),
+                bring(server, workspaceRoot, sandbox, Set.copyOf(installed.manifest().hosts()),
                         installed.trust(), installed.effectiveEffect());
             }
         }
@@ -128,54 +153,54 @@ public class McpRegistry {
      * and metadata rules apply. Its bearer token, when configured, is leased from the vault and
      * only if the secret's binding names {@code mcp.connect} and that endpoint's host.
      */
-    private io.jclaw.contracts.Result<io.jclaw.tools.mcp.McpTransport, String> transportFor(
+    private Result<McpTransport, String> transportFor(
             McpServerStore.McpServer server, Path workspaceRoot,
-            java.util.Optional<io.jclaw.domain.sandbox.SandboxSpec> sandbox,
-            java.util.Set<String> declaredHosts) {
+            Optional<SandboxSpec> sandbox,
+            Set<String> declaredHosts) {
 
         if (!server.isHttp()) {
             // The store holds secret names; the values are leased here and live only in the
             // environment of the process about to start.
             return McpCredentials.resolve(server.envSecrets(), declaredHosts, vault)
-                    .flatMap(environment -> io.jclaw.tools.mcp.StdioTransport.start(
+                    .flatMap(environment -> StdioTransport.start(
                             server.command(), environment, workspaceRoot, sandbox));
         }
         if (egress == null) {
-            return io.jclaw.contracts.Result.err("http_transport_needs_an_egress_guard");
+            return Result.err("http_transport_needs_an_egress_guard");
         }
-        io.jclaw.contracts.Result<java.net.URI, String> checked = egress.check(server.url());
+        Result<URI, String> checked = egress.check(server.url());
         if (checked.isErr()) {
-            return io.jclaw.contracts.Result.err("endpoint_" + checked.errorAsOptional().orElse("denied"));
+            return Result.err("endpoint_" + checked.errorAsOptional().orElse("denied"));
         }
-        java.net.URI endpoint = checked.orElseThrow();
+        URI endpoint = checked.orElseThrow();
 
         // OAuth 2.1, when configured: a supplier rather than a value, because an access token
         // expires and the header has to be current when the request is built.
         if (server.oauth().isPresent()) {
-            io.jclaw.app.mcp.McpOAuth oauth = new io.jclaw.app.mcp.McpOAuth(
+            McpOAuth oauth = new McpOAuth(
                     server.oauth().get(), server.url(), vault, egress, clock);
-            return io.jclaw.contracts.Result.ok(
-                    new io.jclaw.tools.mcp.HttpTransport(endpoint, oauth::header));
+            return Result.ok(
+                    new HttpTransport(endpoint, oauth::header));
         }
 
-        java.util.Optional<String> authorization;
+        Optional<String> authorization;
         if (server.authSecret().isBlank()) {
-            authorization = java.util.Optional.empty();
+            authorization = Optional.empty();
         } else {
-            var name = new io.jclaw.contracts.secret.SecretVault.SecretName(server.authSecret());
+            var name = new SecretVault.SecretName(server.authSecret());
             var lease = vault.lease(name);
             if (lease.isEmpty()) {
-                return io.jclaw.contracts.Result.err("auth_secret_unknown");
+                return Result.err("auth_secret_unknown");
             }
-            var refusal = io.jclaw.domain.secret.SecretInjection.refuse(
+            var refusal = SecretInjection.refuse(
                     lease.get().info().binding(), CONNECT,
-                    java.util.Set.of(endpoint.getHost() == null ? "" : endpoint.getHost()));
+                    Set.of(endpoint.getHost() == null ? "" : endpoint.getHost()));
             if (refusal.isPresent()) {
-                return io.jclaw.contracts.Result.err(refusal.get());
+                return Result.err(refusal.get());
             }
-            authorization = java.util.Optional.of("Bearer " + lease.get().value());
+            authorization = Optional.of("Bearer " + lease.get().value());
         }
-        return io.jclaw.contracts.Result.ok(new io.jclaw.tools.mcp.HttpTransport(endpoint, authorization));
+        return Result.ok(new HttpTransport(endpoint, authorization));
     }
 
     /**
@@ -185,13 +210,13 @@ public class McpRegistry {
      */
     private void bring(
             McpServerStore.McpServer server, Path workspaceRoot,
-            java.util.Optional<io.jclaw.domain.sandbox.SandboxSpec> sandbox,
-            java.util.Set<String> declaredHosts,
+            Optional<SandboxSpec> sandbox,
+            Set<String> declaredHosts,
             TrustClass trust, EffectClass effect) {
 
         String fingerprint = fingerprint(server);
         var cached = cache == null
-                ? java.util.Optional.<io.jclaw.storage.mcp.McpSurfaceCache.Surface>empty()
+                ? Optional.<McpSurfaceCache.Surface>empty()
                 : cache.find(server.name(), fingerprint);
         if (cached.isPresent()) {
             McpClient client = McpClient.deferred(server.name(), cached.get().offers(),
@@ -201,7 +226,7 @@ public class McpRegistry {
             for (Map<String, Object> tool : cached.get().tools()) {
                 handlers.add(new McpCapabilityHandler(client, toTool(tool), trust, effect));
             }
-            handlers.addAll(io.jclaw.tools.mcp.McpSurfaceTools.handlersFor(client, trust, effect));
+            handlers.addAll(McpSurfaceTools.handlersFor(client, trust, effect));
             log.debug("mcp: {} published {} tool(s) from cache; not started", server.name(),
                     cached.get().tools().size());
             return;
@@ -228,20 +253,20 @@ public class McpRegistry {
      * a loop should exhaust its own budget, not everyone's.
      */
     public void withSamplingHandlers(
-            java.util.function.Function<String, io.jclaw.tools.mcp.McpTransport.ServerRequests> factory) {
-        this.samplingFor = java.util.Objects.requireNonNull(factory, "factory");
+            Function<String, McpTransport.ServerRequests> factory) {
+        this.samplingFor = Objects.requireNonNull(factory, "factory");
     }
 
     private void withSampling(String server, McpClient client) {
-        io.jclaw.tools.mcp.McpTransport.ServerRequests handler = samplingFor.apply(server);
+        McpTransport.ServerRequests handler = samplingFor.apply(server);
         if (handler != null) {
             client.withSampling(handler);
         }
     }
 
-    private io.jclaw.contracts.Result<McpClient, String> connectWithSampling(
-            String server, io.jclaw.tools.mcp.McpTransport transport) {
-        io.jclaw.tools.mcp.McpTransport.ServerRequests handler = samplingFor.apply(server);
+    private Result<McpClient, String> connectWithSampling(
+            String server, McpTransport transport) {
+        McpTransport.ServerRequests handler = samplingFor.apply(server);
         if (handler != null) {
             // Installed before the handshake, because the handshake is what advertises it.
             transport.onServerRequest(handler);
@@ -257,17 +282,17 @@ public class McpRegistry {
     private static String fingerprint(McpServerStore.McpServer server) {
         String material = server.name() + '\u001f' + server.url() + '\u001f'
                 + String.join("\u001e", server.command()) + '\u001f'
-                + String.join("\u001e", new java.util.TreeSet<>(server.envSecrets().keySet())) + '\u001f'
+                + String.join("\u001e", new TreeSet<>(server.envSecrets().keySet())) + '\u001f'
                 + server.authSecret();
         try {
-            byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
-                    .digest(material.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(material.getBytes(StandardCharsets.UTF_8));
             StringBuilder hex = new StringBuilder();
             for (int i = 0; i < 16; i++) {
                 hex.append(String.format("%02x", digest[i]));
             }
             return hex.toString();
-        } catch (java.security.NoSuchAlgorithmException e) {
+        } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 is mandatory in every JDK", e);
         }
     }
@@ -281,7 +306,7 @@ public class McpRegistry {
     }
 
     private static Map<String, Object> fromTool(McpClient.McpTool tool) {
-        Map<String, Object> row = new java.util.LinkedHashMap<>();
+        Map<String, Object> row = new LinkedHashMap<>();
         row.put("name", tool.name());
         row.put("description", tool.description());
         row.put("inputSchema", tool.inputSchema());
@@ -289,8 +314,8 @@ public class McpRegistry {
     }
 
     /** The capability an MCP server's bearer token must be bound to in the vault. */
-    public static final io.jclaw.contracts.capability.CapabilityId CONNECT =
-            io.jclaw.contracts.capability.CapabilityId.of("mcp.connect");
+    public static final CapabilityId CONNECT =
+            CapabilityId.of("mcp.connect");
 
     private boolean register(McpServerStore.McpServer server, McpClient client, TrustClass trust, EffectClass effect) {
         return McpCapabilityHandler.handlersFor(client, trust, effect).fold(

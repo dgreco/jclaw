@@ -9,13 +9,14 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
-import javax.sql.DataSource;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.TreeMap;
+import javax.sql.DataSource;
 
 /**
  * The SQL schema and its migrations.
@@ -94,7 +95,7 @@ public final class SqlSchema {
         List<String> statements = new ArrayList<>();
         // Sorted so the DDL is applied in a stable order, which makes a failed migration's
         // partial state reproducible rather than dependent on map iteration.
-        new java.util.TreeMap<>(DEDICATED_TABLES).forEach((store, table) ->
+        new TreeMap<>(DEDICATED_TABLES).forEach((store, table) ->
                 statements.addAll(dedicate(store, table)));
         return List.copyOf(statements);
     }

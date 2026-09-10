@@ -5,8 +5,8 @@ package io.jclaw.app.cli;
 
 import io.jclaw.app.config.JclawProperties;
 import io.jclaw.app.runtime.JclawRuntime;
-import io.jclaw.contracts.model.ModelProvider;
 import io.jclaw.contracts.capability.ApprovalStore;
+import io.jclaw.contracts.model.ModelProvider;
 import io.jclaw.contracts.turn.GateId;
 import io.jclaw.contracts.turn.ThreadId;
 import io.jclaw.storage.approval.JsonlApprovalStore;
@@ -27,9 +27,10 @@ import picocli.CommandLine.Option;
 
 import java.io.IOException;
 import java.nio.file.Files;
-import java.util.Locale;
 import java.nio.file.Path;
+import java.util.Locale;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
@@ -211,7 +212,7 @@ public class ReplCommand implements Callable<Integer> {
                     terminal.writer().println("  " + descriptor.id().value()
                             + "  (" + descriptor.effect() + ", " + descriptor.trust() + ")"));
             case NEW -> {
-                thread = "t-" + java.util.UUID.randomUUID().toString().substring(0, 8);
+                thread = "t-" + UUID.randomUUID().toString().substring(0, 8);
                 terminal.writer().println("switched to fresh thread '" + thread + "'");
             }
             case THREAD -> {

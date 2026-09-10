@@ -14,7 +14,13 @@ import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.Parameters;
 
+import java.security.SecureRandom;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.util.Arrays;
+import java.util.HexFormat;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -92,7 +98,7 @@ public class RoutinesCommand implements Runnable {
         private String[] when = new String[0];
 
         @Option(names = "--zone", description = "IANA time zone. Defaults to the system zone.")
-        private String zone = java.time.ZoneId.systemDefault().getId();
+        private String zone = ZoneId.systemDefault().getId();
 
         @Option(names = "--thread", description = "Thread the routine runs in. Defaults to its name.")
         private String thread;
@@ -127,14 +133,14 @@ public class RoutinesCommand implements Runnable {
                 expression = "every " + every;
             } else if (webhook) {
                 byte[] bytes = new byte[24];
-                new java.security.SecureRandom().nextBytes(bytes);
-                secret = java.util.HexFormat.of().formatHex(bytes);
+                new SecureRandom().nextBytes(bytes);
+                secret = HexFormat.of().formatHex(bytes);
                 expression = "webhook sha256:" + Trigger.hashSecret(secret)
                         + (topic == null || topic.isBlank() ? "" : " topic=" + topic.trim());
             } else if (watch != null) {
                 expression = "watch " + watch;
             } else {
-                expression = "on " + on + java.util.Arrays.stream(when).map(w -> " " + w).reduce("", String::concat);
+                expression = "on " + on + Arrays.stream(when).map(w -> " " + w).reduce("", String::concat);
             }
             var parsed = Trigger.parse(expression);
             if (parsed.isErr()) {
@@ -142,7 +148,7 @@ public class RoutinesCommand implements Runnable {
                 return 1;
             }
             try {
-                java.time.ZoneId.of(zone);
+                ZoneId.of(zone);
             } catch (RuntimeException e) {
                 System.err.println("jclaw: unknown time zone: " + zone);
                 return 1;
@@ -154,7 +160,9 @@ public class RoutinesCommand implements Runnable {
                     expression,
                     zone,
                     String.join(" ", prompt),
-                    new ThreadId(thread == null ? name.replaceAll("\\s+", "-").toLowerCase() : thread));
+                    new ThreadId(thread == null
+                            ? name.replaceAll("\\s+", "-").toLowerCase(Locale.ROOT)
+                            : thread));
 
             if (!RoutineSchedule.canFire(routine)) {
                 System.err.println("jclaw: that schedule can never fire; routine not usable: " + expression);
@@ -168,7 +176,7 @@ public class RoutinesCommand implements Runnable {
                 case Trigger.Webhook hook -> "webhook"
                         + (hook.topic().isEmpty() ? "" : ", topic " + hook.topic());
                 case Trigger.Watch w -> "watch: " + w.glob();
-                case Trigger.OnEvent event -> "event: " + expression.substring("on ".length());
+                case Trigger.OnEvent ignored -> "event: " + expression.substring("on ".length());
             };
             System.out.println("Created " + routine.id().value() + " (" + form + ")");
             RoutineSchedule.nextFire(routine)
@@ -204,7 +212,7 @@ public class RoutinesCommand implements Runnable {
                 return 0;
             }
             for (RoutineStore.Routine routine : routines) {
-                boolean due = RoutineSchedule.due(List.of(routine), java.time.Instant.now()).size() == 1;
+                boolean due = RoutineSchedule.due(List.of(routine), Instant.now()).size() == 1;
                 if (dueOnly && !due) {
                     continue;
                 }

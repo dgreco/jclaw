@@ -14,24 +14,28 @@ import io.jclaw.contracts.loop.CheckpointStore;
 import io.jclaw.contracts.loop.FailureKind;
 import io.jclaw.contracts.loop.GateKind;
 import io.jclaw.contracts.loop.LoopExit;
-import io.jclaw.contracts.model.ModelExchange.ModelRequest;
 import io.jclaw.contracts.loop.LoopHook;
 import io.jclaw.contracts.model.ChatMessage;
 import io.jclaw.contracts.model.ContentBlock;
+import io.jclaw.contracts.model.ModelExchange.ModelRequest;
 import io.jclaw.contracts.model.ModelExchange.ModelResponse;
 import io.jclaw.contracts.model.ModelProvider;
+import io.jclaw.contracts.observability.TraceContext;
 import io.jclaw.contracts.thread.ThreadService;
 import io.jclaw.contracts.turn.TurnRef.LoopCheckpointStateRef;
 import io.jclaw.contracts.turn.TurnRef.LoopGateRef;
 import io.jclaw.contracts.turn.TurnRef.LoopMessageRef;
 import io.jclaw.contracts.turn.TurnRunId;
 import io.jclaw.contracts.turn.TurnScope;
+import io.jclaw.contracts.turn.TurnStatus;
 import io.jclaw.domain.loop.LoopDecision;
 import io.jclaw.domain.loop.LoopExecutionState;
+import io.jclaw.domain.loop.LoopFamilyRegistry;
 import io.jclaw.domain.loop.LoopPolicy;
 import io.jclaw.domain.loop.LoopStateCodec;
 import io.jclaw.domain.loop.Observation;
 import io.jclaw.domain.loop.TurnMachine;
+import io.jclaw.domain.observability.RunTrace;
 import io.jclaw.domain.redact.Redaction;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -39,10 +43,12 @@ import org.slf4j.LoggerFactory;
 import java.time.Clock;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 /**
  * The single effect interpreter: the only component that turns a {@link LoopDecision} into a real
@@ -127,8 +133,8 @@ public final class EffectInterpreter {
     private final EventLog events;
     private final LoopStateCodec codec;
     private final List<LoopHook> loopHooks;
-    private io.jclaw.domain.loop.LoopFamilyRegistry families =
-            io.jclaw.domain.loop.LoopFamilyRegistry.builtIn();
+    private LoopFamilyRegistry families =
+            LoopFamilyRegistry.builtIn();
     private final Clock clock;
 
     public EffectInterpreter(
@@ -291,29 +297,30 @@ public final class EffectInterpreter {
     }
 
     /**
-     * Runs {@code work} with W3C trace context current, so an outbound call can carry it.
-     *
-     * <p>The scope is closed whatever happens, including on an exception, which is the property
-     * that keeps a failed call from leaving the next one attributed to it.
-     */
-    /**
      * The families this interpreter can drive a run with.
      *
      * <p>A setter rather than a constructor parameter: the registry is optional (the built-ins
      * are the default) and the interpreter has several call sites that would otherwise all gain
      * an argument for a case most of them do not use. Set once at wiring, before any run.
      */
-    public void withFamilies(io.jclaw.domain.loop.LoopFamilyRegistry registry) {
-        this.families = java.util.Objects.requireNonNull(registry, "registry");
+    public void withFamilies(LoopFamilyRegistry registry) {
+        this.families = Objects.requireNonNull(registry, "registry");
     }
 
-    private static <T> T withTrace(TurnRunId run, int iteration, java.util.function.Supplier<T> work) {
-        io.jclaw.contracts.observability.TraceContext context =
-                new io.jclaw.contracts.observability.TraceContext(
-                        io.jclaw.domain.observability.RunTrace.traceId(run),
-                        io.jclaw.domain.observability.RunTrace.spanId(run, iteration + 1),
+    /**
+     * Runs {@code work} with W3C trace context current, so an outbound call can carry it.
+     *
+     * <p>The scope is closed whatever happens, including on an exception, which is the property
+     * that keeps a failed call from leaving the next one attributed to it.
+     */
+    private static <T> T withTrace(TurnRunId run, int iteration, Supplier<T> work) {
+        TraceContext context =
+                new TraceContext(
+                        RunTrace.traceId(run),
+                        RunTrace.spanId(run, iteration + 1),
                         true);
-        try (var scope = io.jclaw.contracts.observability.TraceContext.open(context)) {
+        var scope = TraceContext.open(context);
+        try (scope) {
             return work.get();
         }
     }
@@ -519,10 +526,10 @@ public final class EffectInterpreter {
         events.append(new JclawEvent.RunFinished(
                 clock.instant(),
                 run,
-                exit.claimedStatus().isTerminal() ? exit.claimedStatus() : io.jclaw.contracts.turn.TurnStatus.COMPLETED,
+                exit.claimedStatus().isTerminal() ? exit.claimedStatus() : TurnStatus.COMPLETED,
                 exit instanceof LoopExit.Failed failed
-                        ? java.util.Optional.of(failed.kind())
-                        : java.util.Optional.empty(),
+                        ? Optional.of(failed.kind())
+                        : Optional.empty(),
                 state.budget().spent(),
                 state.iteration()));
     }
@@ -567,7 +574,7 @@ public final class EffectInterpreter {
 
     /** One message as a TRACE line: role plus its blocks, text redacted and bounded. */
     private static String describe(ChatMessage message) {
-        StringBuilder text = new StringBuilder(message.role().name().toLowerCase(java.util.Locale.ROOT));
+        StringBuilder text = new StringBuilder(message.role().name().toLowerCase(Locale.ROOT));
         text.append(':');
         for (ContentBlock block : message.content()) {
             text.append(' ').append(switch (block) {
@@ -590,7 +597,7 @@ public final class EffectInterpreter {
      * Redaction happens at the call site — this is presentation only.
      */
     private static String boundForTrace(String text) {
-        return Redaction.bound(text, TRACE_TEXT_BOUND).replace("\n", "\\n");
+        return Redaction.bound(text, TRACE_TEXT_BOUND).replaceAll("\\R", "\\\\n");
     }
 
     /** Maps a provider's failure category onto the loop's public failure vocabulary. */

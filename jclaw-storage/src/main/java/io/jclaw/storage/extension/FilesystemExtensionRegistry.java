@@ -10,6 +10,7 @@ import io.jclaw.contracts.extension.ExtensionRegistry;
 import io.jclaw.domain.extension.ExtensionSignature;
 import io.jclaw.domain.extension.ManifestParser;
 import io.jclaw.domain.extension.PackageDigest;
+import io.jclaw.domain.wasm.WasmSpec;
 import io.jclaw.storage.rows.RowStore;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -127,8 +128,11 @@ public final class FilesystemExtensionRegistry implements ExtensionRegistry {
         }
         if (manifest.kind() == Kind.WASM) {
             try {
-                io.jclaw.domain.wasm.WasmSpec.defaults()
-                        .withPermissions(io.jclaw.domain.wasm.WasmSpec.parsePermissions(manifest.permissions()));
+                // Building the spec is the validation — WasmSpec's constructor is what rejects a
+                // permission the host does not implement, and parsePermissions only normalises.
+                // The result is discarded on purpose: the spec a call actually runs under is
+                // built later from the operator's configuration, not from the manifest.
+                WasmSpec.defaults().withPermissions(WasmSpec.parsePermissions(manifest.permissions()));
             } catch (IllegalArgumentException e) {
                 return Result.err("wasm_permission_unknown");
             }

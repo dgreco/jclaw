@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code (claude.ai/code) or other agentic coding harnesses when working with code in this repository.
 
 ## Status
 
@@ -23,7 +23,7 @@ jclaw is a Java/Spring Boot reimplementation of the **architecture** of
 untrusted-`LoopExit` trust model, and the `CapabilityHost` authority boundary are faithful; the
 feature surface is a fraction of IronClaw's. See **Not built yet** for the honest list.
 
-429 tests pass across 9 modules, including 15 machine-checked architecture rules.
+432 tests pass across seven modules with tests, including 16 machine-checked architecture rules.
 
 ## Commands
 
@@ -31,9 +31,42 @@ feature surface is a fraction of IronClaw's. See **Not built yet** for the hones
 - Test (full suite): `mvn test`
 - Test (single): `mvn test -Dtest=ClassName#methodName -pl <module>` (add `-am` if deps are stale)
 - Run (jar): `java -jar jclaw-app/target/jclaw-app-0.1.0-SNAPSHOT.jar <command>`
+- Static analysis (opt-in): `mvn -Panalysis verify` — see below
 - Source-integrity guard: `./scripts/byte-verify.sh scan`
 - Licence-header guard: `./scripts/license-check.sh`
 - Browser-UI key handling: `./scripts/web-ui-keys.sh` (needs a local Chrome; not in `mvn test`)
+
+### Static analysis
+
+`mvn -Panalysis verify` adds three layers to the ordinary build. They are a profile rather than
+the default because they are slow, and because a dependency upgrade should not be able to fail
+`mvn test` on somebody else's deprecation.
+
+| | sees | configured by |
+|---|---|---|
+| `javac -Xlint:all,-serial,-processing` | the compiler's own opinion, always current with the language | the profile, with `failOnWarning` |
+| SpotBugs + FindSecBugs | bytecode patterns: null paths, dead stores, injection and crypto families | `config/spotbugs-exclude.xml` |
+| PMD 7 | source patterns javac has no opinion about, including dead code | `config/pmd-ruleset.xml` |
+
+**The tree is clean under all three, and the guards fail the build.** Both filter files justify
+every exclusion in prose: an exclusion without a reason is indistinguishable from a finding
+somebody got tired of. Add to them only with the reason attached.
+
+Four things about the wiring are load-bearing, and three of them fail silently:
+
+- **A child module's `<compilerArgs>` replaces the parent's, it does not extend it.**
+  `jclaw-app` declares its own for the picocli annotation processor, so the lint flags never
+  reached the module with the most code in it — the profile passed while linting seven modules out
+  of eight. Fixed with `combine.children="append"` in `jclaw-app/pom.xml`; check with
+  `mvn -Panalysis help:effective-pom -pl jclaw-app`, not by reading the parent.
+- **`${maven.multiModuleProjectDirectory}` resolves to `$HOME`** without a `.mvn` directory at the
+  root, so the config paths use `${session.executionRootDirectory}`. Run the profile from the
+  repository root.
+- **SpotBugs needs the 4.10 line** to read class files from a JDK newer than 25; 4.9 dies with
+  `Unsupported class file major version` on the JDK's own classes, not on ours.
+- **PMD's `UnusedLocalVariable` stays quiet when the initializer is a method call**, which makes it
+  a poor choice for proving the ruleset fires. `EmptyCatchBlock` and `UnusedPrivateMethod` are the
+  ones to plant.
 
 ### PostgreSQL
 
@@ -549,6 +582,13 @@ the Anthropic SDK, and tool lanes may not read the process environment.
   "Simplifying" it to the parse call alone silently deleted the check, and only
   `WasmExtensionIntegrationTest.refusals` noticed. The javadoc that invited the mistake said
   parsing rejected unknown permissions; it now says what it does.
+- **CPD finds three duplications and two of them stay.** `LoopFamilies.REFLECTIVE` was a
+  copy of what `reviewing(id, instruction)` builds and is now a call to it — but note the ordering
+  trap that made the copy tempting: the constant it passes has to be declared *above* the field,
+  or the initializer reads it as null and class initialization throws. The other two — the OAuth
+  token POST shared in shape by `OidcLogin` and `McpOAuth`, and the HTTP send in the two
+  OpenAI-compatible providers — are left duplicated on purpose: about a dozen lines each, and
+  folding them together would couple an identity flow to an MCP flow to save less than it costs.
 - **Two CI pipelines, kept in step by hand.** `.gitlab-ci.yml` (the live remote) and
   `.github/workflows/ci.yml` run the same five jobs; a change to one needs the same change to
   the other, and nothing checks that. Where they differ it is deliberate and commented at the

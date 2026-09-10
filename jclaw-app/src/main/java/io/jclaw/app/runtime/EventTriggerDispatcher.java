@@ -65,8 +65,13 @@ public class EventTriggerDispatcher {
         }
     }
 
-    /** The routines this dispatcher would fire for an event, in scope order. */
-    void onEvent(JclawEvent event) {
+    /**
+     * The routines this dispatcher would fire for an event, in scope order.
+     *
+     * <p>Final because the constructor subscribes it: a subclass overriding this would be handed
+     * events before its own fields were assigned.
+     */
+    final void onEvent(JclawEvent event) {
         String type = event.type();
         if (!Trigger.EVENT_TYPES.contains(type)) {
             return;

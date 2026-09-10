@@ -3,7 +3,10 @@
 
 package io.jclaw.app.cli;
 
+import io.jclaw.app.runtime.Attachments;
 import io.jclaw.app.runtime.JclawRuntime;
+import io.jclaw.contracts.Result;
+import io.jclaw.contracts.model.ChatMessage;
 import io.jclaw.contracts.turn.ThreadId;
 import io.jclaw.contracts.turn.TurnRunId;
 import org.springframework.stereotype.Component;
@@ -11,6 +14,8 @@ import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.Parameters;
 
+import java.nio.file.Path;
+import java.util.List;
 import java.util.concurrent.Callable;
 
 /**
@@ -38,7 +43,7 @@ public class SubmitCommand implements Callable<Integer> {
     private String thread = "default";
 
     @Option(names = "--attach", description = "Attach a file: an image or a UTF-8 text file. Repeatable.")
-    private java.nio.file.Path[] attach = new java.nio.file.Path[0];
+    private Path[] attach = new Path[0];
 
     public SubmitCommand(JclawRuntime runtime) {
         this.runtime = runtime;
@@ -46,14 +51,14 @@ public class SubmitCommand implements Callable<Integer> {
 
     @Override
     public Integer call() {
-        io.jclaw.contracts.Result<io.jclaw.contracts.model.ChatMessage, String> inbound =
-                io.jclaw.app.runtime.Attachments.userMessage(String.join(" ", prompt), java.util.List.of(attach));
-        if (inbound instanceof io.jclaw.contracts.Result.Err<io.jclaw.contracts.model.ChatMessage, String> err) {
+        Result<ChatMessage, String> inbound =
+                Attachments.userMessage(String.join(" ", prompt), List.of(attach));
+        if (inbound instanceof Result.Err<ChatMessage, String> err) {
             System.err.println("jclaw: " + err.error());
             return 1;
         }
         TurnRunId run = runtime.enqueue(new ThreadId(thread),
-                ((io.jclaw.contracts.Result.Ok<io.jclaw.contracts.model.ChatMessage, String>) inbound).value());
+                ((Result.Ok<ChatMessage, String>) inbound).value());
         System.out.println(run.value());
         return 0;
     }

@@ -3,17 +3,25 @@
 
 package io.jclaw.app.cli;
 
+import io.jclaw.app.config.JclawConfiguration;
 import io.jclaw.app.config.JclawProperties;
+import io.jclaw.app.runtime.McpCredentials;
 import io.jclaw.contracts.mcp.McpServerStore;
+import io.jclaw.contracts.secret.SecretVault;
 import io.jclaw.kernel.guard.WorkspaceGuard;
+import io.jclaw.storage.mcp.McpSurfaceCache;
 import io.jclaw.tools.mcp.McpClient;
 import org.springframework.stereotype.Component;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.Parameters;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.Callable;
 
 /**
@@ -123,13 +131,13 @@ public class McpCommand implements Runnable {
                         + "(the name of a vault entry, not the value)");
                 return 1;
             }
-            java.util.Optional<McpServerStore.OAuth> oauth = oauthClientId == null
-                    ? java.util.Optional.empty()
-                    : java.util.Optional.of(new McpServerStore.OAuth(
+            Optional<McpServerStore.OAuth> oauth = oauthClientId == null
+                    ? Optional.empty()
+                    : Optional.of(new McpServerStore.OAuth(
                             oauthClientId.trim(), oauthClientSecret.trim(),
                             oauthTokenUrl == null ? "" : oauthTokenUrl.trim(),
                             oauthScope == null ? "" : oauthScope.trim()));
-            java.util.Map<String, String> envSecrets = new java.util.LinkedHashMap<>();
+            Map<String, String> envSecrets = new LinkedHashMap<>();
             for (String pair : secrets) {
                 int eq = pair.indexOf('=');
                 if (eq <= 0) {
@@ -187,12 +195,12 @@ public class McpCommand implements Runnable {
             mixinStandardHelpOptions = true)
     public static class Refresh implements Callable<Integer> {
 
-        private final io.jclaw.storage.mcp.McpSurfaceCache cache;
+        private final McpSurfaceCache cache;
 
         @Parameters(index = "0", arity = "0..1", description = "Server name. Omit for all.")
         private String name;
 
-        public Refresh(io.jclaw.storage.mcp.McpSurfaceCache cache) {
+        public Refresh(McpSurfaceCache cache) {
             this.cache = cache;
         }
 
@@ -206,11 +214,11 @@ public class McpCommand implements Runnable {
                 System.err.println("jclaw: nothing cached for '" + name + "'");
                 return 1;
             }
-            java.util.Set<String> names = cache.names();
+            Set<String> names = cache.names();
             names.forEach(cache::drop);
             System.out.println(names.isEmpty()
                     ? "(nothing cached)"
-                    : "forgot " + names.size() + " cached surface(s): " + String.join(", ", new java.util.TreeSet<>(names)));
+                    : "forgot " + names.size() + " cached surface(s): " + String.join(", ", new TreeSet<>(names)));
             return 0;
         }
     }
@@ -280,10 +288,10 @@ public class McpCommand implements Runnable {
         private String name;
 
         private final JclawProperties properties;
-        private final io.jclaw.contracts.secret.SecretVault vault;
+        private final SecretVault vault;
 
         public Test(McpServerStore store, WorkspaceGuard workspace, JclawProperties properties,
-                io.jclaw.contracts.secret.SecretVault vault) {
+                SecretVault vault) {
             this.store = store;
             this.workspace = workspace;
             this.properties = properties;
@@ -302,14 +310,14 @@ public class McpCommand implements Runnable {
 
         private int probe(McpServerStore.McpServer server) {
             System.out.println("Starting " + server.commandLine() + " ...");
-            var environment = io.jclaw.app.runtime.McpCredentials.resolve(
-                    server.envSecrets(), java.util.Set.of(), vault);
+            var environment = McpCredentials.resolve(
+                    server.envSecrets(), Set.of(), vault);
             if (environment.isErr()) {
                 System.err.println("jclaw: cannot start server (" + environment.errorAsOptional().orElse("?") + ")");
                 return 1;
             }
             return McpClient.start(server.name(), server.command(), environment.orElseThrow(), workspace.root(),
-                            io.jclaw.app.config.JclawConfiguration.mcpSandboxSpec(properties))
+                            JclawConfiguration.mcpSandboxSpec(properties))
                     .fold(
                             client -> {
                                 try {

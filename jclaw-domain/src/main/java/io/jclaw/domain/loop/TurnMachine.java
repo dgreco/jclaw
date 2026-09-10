@@ -12,6 +12,7 @@ import io.jclaw.contracts.model.ChatMessage;
 import io.jclaw.contracts.model.ContentBlock;
 import io.jclaw.contracts.model.ModelExchange.ModelRequest;
 import io.jclaw.contracts.model.ModelExchange.ModelResponse;
+import io.jclaw.contracts.turn.TurnRef;
 import io.jclaw.domain.budget.Budget;
 import io.jclaw.domain.loop.LoopExecutionState.Phase;
 import io.jclaw.domain.prompt.ContextCompaction;
@@ -294,7 +295,7 @@ public final class TurnMachine {
         }
 
         List<ContentBlock.ToolResult> results = new ArrayList<>();
-        List<io.jclaw.contracts.turn.TurnRef.LoopResultRef> refs = new ArrayList<>();
+        List<TurnRef.LoopResultRef> refs = new ArrayList<>();
         for (Observation.CallOutcome outcome : completed.outcomes()) {
             results.add(new ContentBlock.ToolResult(
                     outcome.callId(),

@@ -13,6 +13,7 @@ import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.Callable;
 
 /**
@@ -83,7 +84,7 @@ public class ModelsCommand implements Callable<Integer> {
                         List.of(ChatMessage.user("Reply with the single word: ok")),
                         List.of(),
                         PROBE_MAX_TOKENS,
-                        java.util.Optional.empty()))
+                        Optional.empty()))
                 .fold(
                         response -> {
                             System.out.println("  ok - served by " + response.modelId()

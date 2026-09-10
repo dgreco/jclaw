@@ -4,6 +4,7 @@
 package io.jclaw.contracts;
 
 import java.util.NoSuchElementException;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -23,13 +24,13 @@ public sealed interface Result<T, E> {
 
     record Ok<T, E>(T value) implements Result<T, E> {
         public Ok {
-            java.util.Objects.requireNonNull(value, "value");
+            Objects.requireNonNull(value, "value");
         }
     }
 
     record Err<T, E>(E error) implements Result<T, E> {
         public Err {
-            java.util.Objects.requireNonNull(error, "error");
+            Objects.requireNonNull(error, "error");
         }
     }
 

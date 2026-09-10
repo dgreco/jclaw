@@ -13,6 +13,7 @@ import io.jclaw.contracts.model.ModelExchange.ToolSpec;
 import io.jclaw.contracts.model.ModelExchange.Usage;
 import io.jclaw.contracts.model.ModelProvider;
 import io.jclaw.contracts.model.ToolNames;
+import io.jclaw.contracts.observability.TraceContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tools.jackson.databind.json.JsonMapper;
@@ -318,7 +319,7 @@ public final class OpenAiCompatibleModelProvider implements ModelProvider {
         // W3C trace context, when the interpreter opened a scope for this call. It carries only
         // two opaque identifiers — no prompt, no credential, nothing about the workspace — and
         // it is what lets a gateway's trace of the request join jclaw's trace of the run.
-        io.jclaw.contracts.observability.TraceContext.current()
+        TraceContext.current()
                 .ifPresent(trace -> http.header("traceparent", trace.traceparent()));
         extraHeaders.forEach(http::header);
         return Result.ok(new Prepared(toolNames, http.build()));
@@ -771,7 +772,7 @@ public final class OpenAiCompatibleModelProvider implements ModelProvider {
     /** Bounds wire payloads for TRACE lines and folds newlines so one log line stays one line. */
     private static String boundForTrace(String text) {
         String bounded = text.length() > 4000 ? text.substring(0, 4000) + "…" : text;
-        return bounded.replace("\n", "\\n");
+        return bounded.replaceAll("\\R", "\\\\n");
     }
 
 }

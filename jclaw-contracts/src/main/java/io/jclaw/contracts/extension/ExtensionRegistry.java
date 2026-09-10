@@ -3,6 +3,7 @@
 
 package io.jclaw.contracts.extension;
 
+import io.jclaw.contracts.Result;
 import io.jclaw.contracts.capability.EffectClass;
 import io.jclaw.contracts.capability.TrustClass;
 
@@ -127,7 +128,7 @@ public interface ExtensionRegistry {
      * @return the installation, or a reason it was refused: an unreadable or invalid manifest, a
      *         signature that does not verify, or a required variable with no secret named for it
      */
-    io.jclaw.contracts.Result<Installed, String> install(Path packageDir, Map<String, String> secrets);
+    Result<Installed, String> install(Path packageDir, Map<String, String> secrets);
 
     List<Installed> list();
 

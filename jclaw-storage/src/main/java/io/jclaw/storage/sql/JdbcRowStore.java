@@ -5,16 +5,17 @@ package io.jclaw.storage.sql;
 
 import io.jclaw.storage.rows.RowStore;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowCallbackHandler;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.json.JsonMapper;
 
-import javax.sql.DataSource;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.regex.Pattern;
+import javax.sql.DataSource;
 
 /**
  * One store's rows in SQL.
@@ -84,7 +85,7 @@ public final class JdbcRowStore implements RowStore {
     @SuppressWarnings("unchecked")
     public List<Map<String, Object>> readAll() {
         List<Map<String, Object>> rows = new ArrayList<>();
-        org.springframework.jdbc.core.RowCallbackHandler handler = rs -> {
+        RowCallbackHandler handler = rs -> {
             try {
                 rows.add(mapper.readValue(rs.getString(1), Map.class));
             } catch (RuntimeException e) {

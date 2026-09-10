@@ -5,6 +5,10 @@ package io.jclaw.contracts.capability;
 
 import io.jclaw.contracts.Result;
 
+import java.net.URI;
+import java.nio.file.Path;
+import java.util.Map;
+
 /**
  * A runtime lane: the code that actually performs a capability.
  *
@@ -49,13 +53,13 @@ public interface CapabilityHandler {
          * Resolves a caller-supplied path inside the workspace, or returns a denial reason.
          * The only sanctioned way for a lane to turn a string into a filesystem path.
          */
-        Result<java.nio.file.Path, String> resolvePath(String candidate);
+        Result<Path, String> resolvePath(String candidate);
 
         /** Validates an outbound URL against host egress policy. */
-        Result<java.net.URI, String> checkEgress(String url);
+        Result<URI, String> checkEgress(String url);
 
         /** Renders a path for display without leaking the host layout. */
-        String displayPath(java.nio.file.Path path);
+        String displayPath(Path path);
 
         /** Maximum bytes a lane should return; larger payloads are truncated by the kernel. */
         int maxOutputBytes();
@@ -72,8 +76,8 @@ public interface CapabilityHandler {
          *
          * <p>Empty for every lane that does not spawn anything, which is nearly all of them.
          */
-        default java.util.Map<String, String> stagedEnvironment() {
-            return java.util.Map.of();
+        default Map<String, String> stagedEnvironment() {
+            return Map.of();
         }
     }
 }

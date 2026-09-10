@@ -4,8 +4,10 @@
 package io.jclaw.app.cli;
 
 import io.jclaw.app.config.JclawProperties;
-import io.jclaw.contracts.extension.ExtensionRegistry;
+import io.jclaw.app.extension.ExtensionCatalog;
+import io.jclaw.contracts.capability.TrustClass;
 import io.jclaw.contracts.extension.ExtensionRegistry.Installed;
+import io.jclaw.contracts.extension.ExtensionRegistry;
 import io.jclaw.domain.extension.ExtensionSignature;
 import io.jclaw.storage.extension.FilesystemExtensionRegistry;
 import io.jclaw.storage.extension.PublisherKeys;
@@ -19,10 +21,18 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.Callable;
+import java.util.stream.Collectors;
 
 /**
  * Installs, lists, and signs extension packages.
@@ -62,7 +72,7 @@ public class ExtensionsCommand implements Runnable {
     static void describe(Installed installed) {
         var m = installed.manifest();
         System.out.printf("%-20s %-8s %-6s %-9s %s%n", m.name(), m.version(),
-                m.kind().name().toLowerCase(java.util.Locale.ROOT), installed.trust(),
+                m.kind().name().toLowerCase(Locale.ROOT), installed.trust(),
                 installed.enabled() ? "enabled" : "disabled");
         if (!m.description().isBlank()) {
             System.out.println("    " + m.description());
@@ -74,7 +84,7 @@ public class ExtensionsCommand implements Runnable {
         if (!m.env().isEmpty()) {
             System.out.println("    env: " + m.env().stream()
                     .map(name -> name + " <- secret " + installed.secrets().getOrDefault(name, "(unset)"))
-                    .collect(java.util.stream.Collectors.joining(", ")));
+                    .collect(Collectors.joining(", ")));
         }
         if (!m.hosts().isEmpty()) {
             System.out.println("    declares reaching: " + String.join(", ", m.hosts()));
@@ -83,7 +93,7 @@ public class ExtensionsCommand implements Runnable {
     }
 
 
-    static void describeListing(io.jclaw.app.extension.ExtensionCatalog.Listing listing) {
+    static void describeListing(ExtensionCatalog.Listing listing) {
         System.out.printf("%-20s %-8s %-6s %s%n", listing.name(), listing.version(),
                 listing.kind(), listing.registry());
         if (!listing.description().isBlank()) {
@@ -106,10 +116,10 @@ public class ExtensionsCommand implements Runnable {
      * <p>A name the profile lists but nothing has installed is reported rather than treated as an
      * error. The profile is a statement of intent that may run ahead of what is on this machine.
      */
-    static Applied applyProfile(ExtensionRegistry registry, java.util.Set<String> wanted) {
-        List<String> enabled = new java.util.ArrayList<>();
-        List<String> disabled = new java.util.ArrayList<>();
-        var missing = new java.util.LinkedHashSet<>(wanted);
+    static Applied applyProfile(ExtensionRegistry registry, Set<String> wanted) {
+        List<String> enabled = new ArrayList<>();
+        List<String> disabled = new ArrayList<>();
+        var missing = new LinkedHashSet<>(wanted);
         for (Installed installed : registry.list()) {
             missing.remove(installed.name());
             boolean shouldRun = wanted.contains(installed.name());
@@ -120,17 +130,24 @@ public class ExtensionsCommand implements Runnable {
         return new Applied(List.copyOf(enabled), List.copyOf(disabled), List.copyOf(missing));
     }
 
-    static Map<String, String> parseSecrets(String[] pairs) {
+    /**
+     * Parses {@code --secret NAME=secret-name} pairs, or empty when one is malformed.
+     *
+     * <p>Empty means "refused, and the reason is already on stderr" — distinct from a parse that
+     * succeeded and found nothing, which is an empty map. Returning {@code null} for the first
+     * left the two a single mistyped {@code ==} apart at every call site.
+     */
+    static Optional<Map<String, String>> parseSecrets(String[] pairs) {
         Map<String, String> named = new LinkedHashMap<>();
         for (String pair : pairs) {
             int eq = pair.indexOf('=');
             if (eq <= 0) {
                 System.err.println("jclaw: --secret expects NAME=secret-name, got '" + pair + "'");
-                return null;
+                return Optional.empty();
             }
             named.put(pair.substring(0, eq), pair.substring(eq + 1));
         }
-        return named;
+        return Optional.of(named);
     }
 
     /**
@@ -142,8 +159,8 @@ public class ExtensionsCommand implements Runnable {
      * lying about where someone could install it by hand.
      */
     static int installFrom(
-            ExtensionRegistry registry, io.jclaw.app.extension.ExtensionCatalog catalog,
-            JclawProperties properties, io.jclaw.app.extension.ExtensionCatalog.Listing listing,
+            ExtensionRegistry registry, ExtensionCatalog catalog,
+            JclawProperties properties, ExtensionCatalog.Listing listing,
             Map<String, String> secrets) {
         Path scratch;
         try {
@@ -164,7 +181,7 @@ public class ExtensionsCommand implements Runnable {
                     installed -> {
                         System.out.println("installed from " + listing.registry() + ":");
                         describe(installed);
-                        if (installed.trust() != io.jclaw.contracts.capability.TrustClass.VERIFIED) {
+                        if (installed.trust() != TrustClass.VERIFIED) {
                             System.out.println("    unsigned or unverified: COMMUNITY trust; every tool call will gate");
                         }
                         return 0;
@@ -180,7 +197,7 @@ public class ExtensionsCommand implements Runnable {
 
     private static void deleteTree(Path root) {
         try (var walk = Files.walk(root)) {
-            walk.sorted(java.util.Comparator.reverseOrder()).forEach(path -> {
+            walk.sorted(Comparator.reverseOrder()).forEach(path -> {
                 try {
                     Files.deleteIfExists(path);
                 } catch (IOException ignored) {
@@ -212,15 +229,16 @@ public class ExtensionsCommand implements Runnable {
 
         @Override
         public Integer call() {
-            Map<String, String> named = parseSecrets(secrets);
-            if (named == null) {
+            Optional<Map<String, String>> parsed = parseSecrets(secrets);
+            if (parsed.isEmpty()) {
                 return 1;
             }
+            Map<String, String> named = parsed.get();
             return registry.install(packageDir, named).fold(
                     installed -> {
                         System.out.println("installed:");
                         describe(installed);
-                        if (installed.trust() != io.jclaw.contracts.capability.TrustClass.VERIFIED) {
+                        if (installed.trust() != TrustClass.VERIFIED) {
                             System.out.println("    unsigned or unverified: COMMUNITY trust; every tool call will gate");
                         }
                         return 0;
@@ -395,12 +413,12 @@ public class ExtensionsCommand implements Runnable {
     @Command(name = "search", description = "Search the configured registries.", mixinStandardHelpOptions = true)
     public static class Search implements Callable<Integer> {
 
-        private final io.jclaw.app.extension.ExtensionCatalog catalog;
+        private final ExtensionCatalog catalog;
 
         @Parameters(index = "0", arity = "0..1", description = "Text to look for. Omit to list everything.")
         private String query;
 
-        public Search(io.jclaw.app.extension.ExtensionCatalog catalog) {
+        public Search(ExtensionCatalog catalog) {
             this.catalog = catalog;
         }
 
@@ -426,7 +444,7 @@ public class ExtensionsCommand implements Runnable {
     public static class Add implements Callable<Integer> {
 
         private final ExtensionRegistry registry;
-        private final io.jclaw.app.extension.ExtensionCatalog catalog;
+        private final ExtensionCatalog catalog;
         private final JclawProperties properties;
 
         @Parameters(index = "0", description = "Package name, optionally name@version.")
@@ -436,7 +454,7 @@ public class ExtensionsCommand implements Runnable {
                 description = "NAME=secret-name, as for install. Repeatable.")
         private String[] secrets = new String[0];
 
-        public Add(ExtensionRegistry registry, io.jclaw.app.extension.ExtensionCatalog catalog,
+        public Add(ExtensionRegistry registry, ExtensionCatalog catalog,
                 JclawProperties properties) {
             this.registry = registry;
             this.catalog = catalog;
@@ -449,14 +467,15 @@ public class ExtensionsCommand implements Runnable {
                 System.err.println("jclaw: no registries configured (set jclaw.extension-registries)");
                 return 1;
             }
-            Map<String, String> named = parseSecrets(secrets);
-            if (named == null) {
+            Optional<Map<String, String>> parsed = parseSecrets(secrets);
+            if (parsed.isEmpty()) {
                 return 1;
             }
+            Map<String, String> named = parsed.get();
             int at = coordinate.indexOf('@');
             String name = at < 0 ? coordinate : coordinate.substring(0, at);
-            var version = at < 0 ? java.util.Optional.<String>empty()
-                    : java.util.Optional.of(coordinate.substring(at + 1));
+            var version = at < 0 ? Optional.<String>empty()
+                    : Optional.of(coordinate.substring(at + 1));
             var listing = catalog.resolve(name, version);
             if (listing.isEmpty()) {
                 System.err.println("jclaw: no registry offers " + coordinate);
@@ -472,9 +491,9 @@ public class ExtensionsCommand implements Runnable {
     public static class Outdated implements Callable<Integer> {
 
         private final ExtensionRegistry registry;
-        private final io.jclaw.app.extension.ExtensionCatalog catalog;
+        private final ExtensionCatalog catalog;
 
-        public Outdated(ExtensionRegistry registry, io.jclaw.app.extension.ExtensionCatalog catalog) {
+        public Outdated(ExtensionRegistry registry, ExtensionCatalog catalog) {
             this.registry = registry;
             this.catalog = catalog;
         }
@@ -505,7 +524,7 @@ public class ExtensionsCommand implements Runnable {
     public static class Upgrade implements Callable<Integer> {
 
         private final ExtensionRegistry registry;
-        private final io.jclaw.app.extension.ExtensionCatalog catalog;
+        private final ExtensionCatalog catalog;
         private final JclawProperties properties;
 
         @Parameters(index = "0", arity = "0..1", description = "Extension to upgrade. Omit for all of them.")
@@ -514,7 +533,7 @@ public class ExtensionsCommand implements Runnable {
         @Option(names = "--dry-run", description = "Report what would be upgraded and change nothing.")
         private boolean dryRun;
 
-        public Upgrade(ExtensionRegistry registry, io.jclaw.app.extension.ExtensionCatalog catalog,
+        public Upgrade(ExtensionRegistry registry, ExtensionCatalog catalog,
                 JclawProperties properties) {
             this.registry = registry;
             this.catalog = catalog;
@@ -588,9 +607,9 @@ public class ExtensionsCommand implements Runnable {
                 System.err.println("jclaw: no profile named '" + name + "'");
                 return 1;
             }
-            var wanted = java.util.Arrays.stream(members.split(","))
+            var wanted = Arrays.stream(members.split(","))
                     .map(String::trim).filter(member -> !member.isEmpty())
-                    .collect(java.util.stream.Collectors.toCollection(java.util.LinkedHashSet::new));
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
             Applied applied = applyProfile(registry, wanted);
             applied.enabled().forEach(extension -> System.out.println("enabled  " + extension));
             applied.disabled().forEach(extension -> System.out.println("disabled " + extension));

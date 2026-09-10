@@ -1,0 +1,108 @@
+<?xml version="1.0"?>
+<ruleset name="jclaw"
+         xmlns="http://pmd.sourceforge.net/ruleset/2.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://pmd.sourceforge.net/ruleset/2.0.0 https://pmd.sourceforge.io/ruleset_2_0_0.xsd">
+
+  <description>
+    Four categories, minus the rules that argue with decisions this codebase has already made.
+    Each exclusion names the decision — a silent one is indistinguishable from a finding somebody
+    got tired of. `codestyle` and `design` are left out entirely: they are opinions about shape,
+    and this project states its own in the package-info files.
+  </description>
+
+  <rule ref="category/java/bestpractices.xml">
+    <!-- The CLI's whole job is to print to a terminal. -->
+    <exclude name="SystemPrintln"/>
+    <!-- A record's compact constructor reassigns its parameters to normalise them. That is the
+         idiom the language provides, not an accident. -->
+    <exclude name="AvoidReassigningParameters"/>
+    <!-- Logging is parameterized (`log.debug("{}", x)`), which is the guard this asks for. -->
+    <exclude name="GuardLogStatement"/>
+    <!-- Stack traces are dropped deliberately: an exception's text can carry paths, arguments or
+         credentials, and Result/HandlerError carry a stable category instead. -->
+    <exclude name="PreserveStackTrace"/>
+    <!-- `"literal".equals(x)` guards against a null this codebase does not produce: values are
+         records with Objects.requireNonNull in the constructor. -->
+    <exclude name="LiteralsFirstInComparisons"/>
+    <!-- `while ((line = reader.readLine()) != null)` is the idiom, not a puzzle. -->
+    <exclude name="AvoidStringBufferField"/>
+    <!-- picocli fills a String[] from the command line; varargs would invite a call shape that
+         does not exist. -->
+    <exclude name="UseVarargs"/>
+    <!-- These interfaces are ports. Being single-method today is incidental, and annotating
+         them would promise a shape they do not promise. -->
+    <exclude name="ImplicitFunctionalInterface"/>
+    <!-- try/finally where the resource is not the thing being closed (releasing a file lock,
+         destroying a process), or where the resource outlives the block. -->
+    <exclude name="UseTryWithResources"/>
+    <!-- Tests are not analysed; this fires on a `mcp test` subcommand class named Test. -->
+    <exclude name="JUnitTestsShouldIncludeAssert"/>
+    <exclude name="UnitTestShouldIncludeAssert"/>
+    <!-- 127.0.0.1 is the deliberate default bind address: loopback unless an operator says
+         otherwise. -->
+    <exclude name="AvoidUsingHardCodedIP"/>
+  </rule>
+
+  <rule ref="category/java/errorprone.xml">
+    <!-- Both fire on ordinary constants and would bury the real findings. -->
+    <exclude name="AvoidDuplicateLiterals"/>
+    <exclude name="AvoidLiteralsInIfCondition"/>
+    <!-- Absence is expressed with Optional where it is a value; the remaining nulls are adapter
+         boundaries where null is the API. -->
+    <exclude name="NullAssignment"/>
+    <!-- Containment at a boundary is the design: a lane that throws must become a value, or the
+         capability host has nothing to report. -->
+    <exclude name="AvoidCatchingGenericException"/>
+    <exclude name="AvoidCatchingNPE"/>
+    <!-- A record component and its accessor share a name by construction. -->
+    <exclude name="AvoidFieldNameMatchingMethodName"/>
+    <!-- `while ((line = in.readLine()) != null)`. -->
+    <exclude name="AssignmentInOperand"/>
+    <!-- Nothing here is serialized; the exceptions are control flow within one process. -->
+    <exclude name="MissingSerialVersionUID"/>
+    <!-- Identity comparison is the question being asked: "did the hook hand back a different
+         object?", "is this exception its own cause?". -->
+    <exclude name="CompareObjectsWithEquals"/>
+    <!-- Resources that outlive the block: a Spring context closed by SpringApplication.exit, a
+         reader over System.in, a pooled MCP client, a Process destroyed explicitly. -->
+    <exclude name="CloseResource"/>
+    <!-- A guard loop that advances a candidate and retries reads better than the nested
+         alternative; see CronSpec.next. -->
+    <exclude name="AvoidBranchingStatementAsLastInLoop"/>
+    <!-- ModelExchange is a namespace for the records inside it, and has the private constructor
+         that says so. -->
+    <exclude name="MissingStaticMethodInNonInstantiatableClass"/>
+    <!-- `mcp test` is a subcommand class named Test. -->
+    <exclude name="TestClassWithoutTestCases"/>
+  </rule>
+
+  <rule ref="category/java/performance.xml">
+    <!-- Allocation in a loop is not a finding without a measurement. -->
+    <exclude name="AvoidInstantiatingObjectsInLoops"/>
+    <!-- StringBuilder micro-tuning, on builders that assemble a log line or a prompt once. -->
+    <exclude name="InsufficientStringBufferDeclaration"/>
+    <exclude name="ConsecutiveAppendsShouldReuse"/>
+    <exclude name="ConsecutiveLiteralAppends"/>
+  </rule>
+
+  <rule ref="category/java/multithreading.xml">
+    <!-- This is an agent harness with a scheduler in it: threads, `synchronized` and `volatile`
+         are the tools it is built from, not accidents. -->
+    <exclude name="DoNotUseThreads"/>
+    <exclude name="AvoidSynchronizedAtMethodLevel"/>
+    <exclude name="AvoidSynchronizedStatement"/>
+    <exclude name="AvoidUsingVolatile"/>
+    <!-- Most maps here are local or immutable; the shared ones are already concurrent. -->
+    <exclude name="UseConcurrentHashMap"/>
+  </rule>
+
+  <rule ref="category/java/security.xml"/>
+
+  <!-- Empty catch blocks are a real smell, but a commented one is a decision. -->
+  <rule ref="category/java/errorprone.xml/EmptyCatchBlock">
+    <properties>
+      <property name="allowCommentedBlocks" value="true"/>
+    </properties>
+  </rule>
+</ruleset>

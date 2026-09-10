@@ -12,6 +12,7 @@ import io.jclaw.contracts.capability.EffectClass;
 import io.jclaw.contracts.capability.HandlerError;
 import io.jclaw.contracts.capability.TrustClass;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
@@ -116,7 +117,7 @@ public final class McpCapabilityHandler implements CapabilityHandler {
         // Resources and prompts are additive: a server that offers them gets a few more
         // capabilities, and one that does not is never asked.
         return tools.map(discovered -> {
-            List<CapabilityHandler> all = new java.util.ArrayList<>(discovered);
+            List<CapabilityHandler> all = new ArrayList<>(discovered);
             all.addAll(McpSurfaceTools.handlersFor(client, trust, effect));
             return List.copyOf(all);
         });

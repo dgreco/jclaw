@@ -3,26 +3,61 @@
 
 package io.jclaw.app.config;
 
+import com.zaxxer.hikari.HikariConfig;
+import com.zaxxer.hikari.HikariDataSource;
+import io.jclaw.app.channel.ChannelService;
+import io.jclaw.app.channel.SlackAdapter;
+import io.jclaw.app.channel.TelegramAdapter;
+import io.jclaw.app.extension.ExtensionCatalog;
+import io.jclaw.app.identity.LoginProvider;
+import io.jclaw.app.identity.OidcLogin;
+import io.jclaw.app.mcp.McpSampling;
+import io.jclaw.app.observability.ObservedEventLog;
+import io.jclaw.app.observability.OtlpExporter;
+import io.jclaw.app.observability.Telemetry;
+import io.jclaw.app.runtime.BudgetNoticeHook;
+import io.jclaw.app.runtime.JclawRuntime;
+import io.jclaw.app.runtime.McpRegistry;
+import io.jclaw.app.runtime.SecretLeakHook;
+import io.jclaw.app.runtime.TenantLedger;
+import io.jclaw.app.runtime.TenantVaults;
+import io.jclaw.app.runtime.WasmExtensionHost;
+import io.jclaw.app.runtime.WatchTriggerScanner;
 import io.jclaw.contracts.capability.ApprovalStore;
 import io.jclaw.contracts.capability.CapabilityHandler;
 import io.jclaw.contracts.capability.CapabilityHost;
 import io.jclaw.contracts.capability.CapabilityId;
 import io.jclaw.contracts.capability.CapabilityResultStore;
 import io.jclaw.contracts.capability.EffectClass;
+import io.jclaw.contracts.capability.SubagentHost;
+import io.jclaw.contracts.channel.ChannelAdapter;
+import io.jclaw.contracts.channel.ChannelBindingStore;
 import io.jclaw.contracts.event.EventLog;
+import io.jclaw.contracts.extension.ExtensionRegistry;
+import io.jclaw.contracts.identity.SessionStore;
+import io.jclaw.contracts.inbound.InboundReviewStore;
 import io.jclaw.contracts.loop.CheckpointStore;
-import io.jclaw.app.runtime.McpRegistry;
+import io.jclaw.contracts.loop.LoopHook;
 import io.jclaw.contracts.mcp.McpServerStore;
 import io.jclaw.contracts.memory.EmbeddingProvider;
 import io.jclaw.contracts.memory.MemoryStore;
 import io.jclaw.contracts.model.ModelProvider;
 import io.jclaw.contracts.routine.RoutineStore;
-import io.jclaw.contracts.capability.SubagentHost;
+import io.jclaw.contracts.secret.SecretVault;
 import io.jclaw.contracts.skill.SkillCatalog;
 import io.jclaw.contracts.thread.ThreadService;
+import io.jclaw.contracts.turn.RunStore;
+import io.jclaw.contracts.turn.ThreadLock;
+import io.jclaw.domain.loop.LoopFamilies;
+import io.jclaw.domain.loop.LoopFamily;
+import io.jclaw.domain.loop.LoopFamilyRegistry;
 import io.jclaw.domain.loop.LoopStateCodec;
 import io.jclaw.domain.policy.RateLimit;
+import io.jclaw.domain.safety.InboundPolicy;
+import io.jclaw.domain.sandbox.SandboxSpec;
+import io.jclaw.domain.wasm.WasmSpec;
 import io.jclaw.kernel.capability.CapabilityPolicy;
+import io.jclaw.kernel.capability.CapabilityPolicyResolver;
 import io.jclaw.kernel.capability.DefaultCapabilityHost;
 import io.jclaw.kernel.capability.GuardedHandlerContext;
 import io.jclaw.kernel.capability.InjectionPolicy;
@@ -34,53 +69,58 @@ import io.jclaw.providers.failover.FailoverModelProvider;
 import io.jclaw.providers.mock.MockModelProvider;
 import io.jclaw.providers.openai.OpenAiCompatibleEmbeddingProvider;
 import io.jclaw.providers.openai.OpenAiCompatibleModelProvider;
-import io.jclaw.contracts.turn.RunStore;
-import io.jclaw.contracts.turn.ThreadLock;
 import io.jclaw.storage.approval.JsonlApprovalStore;
-import io.jclaw.storage.checkpoint.JsonlCheckpointStore;
+import io.jclaw.storage.channel.JsonlChannelBindingStore;
 import io.jclaw.storage.checkpoint.JsonLoopStateCodec;
+import io.jclaw.storage.checkpoint.JsonlCheckpointStore;
 import io.jclaw.storage.event.JsonlEventLog;
+import io.jclaw.storage.extension.FilesystemExtensionRegistry;
+import io.jclaw.storage.identity.JsonlSessionStore;
+import io.jclaw.storage.inbound.JsonlInboundReviewStore;
 import io.jclaw.storage.lock.FileThreadLock;
+import io.jclaw.storage.lock.SqlThreadLock;
 import io.jclaw.storage.mcp.JsonlMcpServerStore;
 import io.jclaw.storage.mcp.McpSurfaceCache;
 import io.jclaw.storage.memory.JsonlMemoryStore;
-import io.jclaw.storage.skill.FilesystemSkillCatalog;
+import io.jclaw.storage.projection.JdbcRunProjectionCache;
+import io.jclaw.storage.projection.RunProjectionCache;
 import io.jclaw.storage.result.JsonlCapabilityResultStore;
 import io.jclaw.storage.routine.JsonlRoutineStore;
-import io.jclaw.storage.run.JsonlRunStore;
-import io.jclaw.storage.extension.FilesystemExtensionRegistry;
-import io.jclaw.contracts.loop.LoopHook;
-import io.jclaw.kernel.capability.CapabilityPolicyResolver;
-import io.jclaw.app.observability.ObservedEventLog;
-import io.jclaw.app.observability.OtlpExporter;
-import io.jclaw.app.observability.Telemetry;
-import io.jclaw.app.runtime.BudgetNoticeHook;
-import io.jclaw.contracts.extension.ExtensionRegistry;
 import io.jclaw.storage.rows.RowStore;
-import io.jclaw.storage.sql.SqlSchema;
+import io.jclaw.storage.run.JsonlRunStore;
 import io.jclaw.storage.secret.FileSecretVault;
 import io.jclaw.storage.secret.VaultKey;
-import io.jclaw.contracts.secret.SecretVault;
+import io.jclaw.storage.skill.FilesystemSkillCatalog;
+import io.jclaw.storage.sql.SqlSchema;
 import io.jclaw.storage.thread.JsonlThreadService;
 import io.jclaw.tools.CoreTools;
 import io.jclaw.tools.FileTools;
 import io.jclaw.tools.HttpTool;
 import io.jclaw.tools.MemoryTools;
+import io.jclaw.tools.ShellTool;
 import io.jclaw.tools.SkillTools;
 import io.jclaw.tools.SubagentTool;
 import io.jclaw.tools.TriggerTools;
-import io.jclaw.tools.ShellTool;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import tools.jackson.databind.json.JsonMapper;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 
 /**
  * The composition root. The only place in jclaw where concrete adapters are chosen and wired.
@@ -95,7 +135,7 @@ import java.util.Set;
 @EnableConfigurationProperties(JclawProperties.class)
 public class JclawConfiguration {
 
-    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(JclawConfiguration.class);
+    private static final Logger log = LoggerFactory.getLogger(JclawConfiguration.class);
 
     /**
      * The single clock. Injected everywhere rather than read statically, so time is one
@@ -142,7 +182,7 @@ public class JclawConfiguration {
             JclawProperties properties, Clock clock, MemoryStore memoryStore,
             EmbeddingProvider embeddingProvider, SkillCatalog skillCatalog, SubagentHost subagentHost,
             RoutineStore routineStore, McpRegistry mcp,
-            io.jclaw.app.runtime.WasmExtensionHost wasmExtensions) {
+            WasmExtensionHost wasmExtensions) {
         List<CapabilityHandler> handlers = new ArrayList<>(CoreTools.all(clock));
         handlers.addAll(FileTools.all());
         handlers.addAll(MemoryTools.all(memoryStore, clock, embeddingProvider));
@@ -167,10 +207,10 @@ public class JclawConfiguration {
      * posture for anything that runs commands the operator does not read first. A misspelt
      * backend fails startup rather than silently running on the host.
      */
-    static java.util.Optional<io.jclaw.domain.sandbox.SandboxSpec> sandboxSpec(JclawProperties properties) {
+    static Optional<SandboxSpec> sandboxSpec(JclawProperties properties) {
         return switch (properties.shellBackend()) {
-            case "host" -> java.util.Optional.empty();
-            case "docker" -> java.util.Optional.of(new io.jclaw.domain.sandbox.SandboxSpec(
+            case "host" -> Optional.empty();
+            case "docker" -> Optional.of(new SandboxSpec(
                     properties.sandboxDocker(), properties.sandboxImage(), properties.sandboxNetwork(),
                     properties.sandboxMemory(), properties.sandboxCpus(), properties.sandboxPidsLimit(), true));
             default -> throw new IllegalArgumentException(
@@ -186,10 +226,10 @@ public class JclawConfiguration {
      * contract, with its own image and network setting since servers usually need a runtime
      * (node, python) and sometimes the network the tool exists to reach.
      */
-    public static java.util.Optional<io.jclaw.domain.sandbox.SandboxSpec> mcpSandboxSpec(JclawProperties properties) {
+    public static Optional<SandboxSpec> mcpSandboxSpec(JclawProperties properties) {
         return switch (properties.mcpBackend()) {
-            case "host" -> java.util.Optional.empty();
-            case "docker" -> java.util.Optional.of(new io.jclaw.domain.sandbox.SandboxSpec(
+            case "host" -> Optional.empty();
+            case "docker" -> Optional.of(new SandboxSpec(
                     properties.sandboxDocker(),
                     properties.mcpSandboxImage().isBlank() ? properties.sandboxImage() : properties.mcpSandboxImage(),
                     properties.mcpSandboxNetwork().isBlank() ? properties.sandboxNetwork() : properties.mcpSandboxNetwork(),
@@ -228,7 +268,7 @@ public class JclawConfiguration {
         // third-party code can make the host spend money. Off unless the operator sets a cap,
         // and the cap is what the client advertises the capability for at all.
         if (properties.mcpSampling() > 0) {
-            registry.withSamplingHandlers(server -> new io.jclaw.app.mcp.McpSampling(
+            registry.withSamplingHandlers(server -> new McpSampling(
                     server, modelProvider, eventLog, clock,
                     properties.model(), 4096, properties.mcpSampling()));
         }
@@ -245,15 +285,15 @@ public class JclawConfiguration {
     @Bean
     public CapabilityPolicyResolver capabilityPolicyResolver(
             JclawProperties properties, CapabilityPolicy capabilityPolicy) {
-        java.util.Map<String, CapabilityPolicy> byTenant = new java.util.LinkedHashMap<>();
+        Map<String, CapabilityPolicy> byTenant = new LinkedHashMap<>();
         properties.tenantPolicies().forEach((tenant, tenantPolicy) -> {
             CapabilityPolicy posture = tenantPolicy.approvalMode().isBlank()
                     ? capabilityPolicy
                     : posture(tenantPolicy.approvalMode());
-            java.util.Set<io.jclaw.contracts.capability.CapabilityId> denied =
-                    new java.util.LinkedHashSet<>(capabilityPolicy.denied());
+            Set<CapabilityId> denied =
+                    new LinkedHashSet<>(capabilityPolicy.denied());
             JclawProperties.nonBlank(tenantPolicy.deniedCapabilities())
-                    .forEach(id -> denied.add(io.jclaw.contracts.capability.CapabilityId.of(id)));
+                    .forEach(id -> denied.add(CapabilityId.of(id)));
             byTenant.put(tenant, posture
                     .withDenied(denied)
                     .withRateLimits(capabilityPolicy.rateLimits())
@@ -280,9 +320,9 @@ public class JclawConfiguration {
 
     /** Tokens spent per tenant, and whether a tenant may start another turn. */
     @Bean
-    public io.jclaw.app.runtime.TenantLedger tenantLedger(
+    public TenantLedger tenantLedger(
             EventLog eventLog, RunStore runStore, JclawProperties properties) {
-        return new io.jclaw.app.runtime.TenantLedger(eventLog, runStore, properties.tenantTokenBudget());
+        return new TenantLedger(eventLog, runStore, properties.tenantTokenBudget());
     }
 
     /**
@@ -293,7 +333,7 @@ public class JclawConfiguration {
      */
     @Bean
     public LedgerWiring ledgerWiring(
-            io.jclaw.app.runtime.JclawRuntime runtime, io.jclaw.app.runtime.TenantLedger tenantLedger) {
+            JclawRuntime runtime, TenantLedger tenantLedger) {
         runtime.withLedger(tenantLedger);
         return new LedgerWiring();
     }
@@ -309,20 +349,20 @@ public class JclawConfiguration {
      * each already behind a guard.
      */
     @Bean
-    public io.jclaw.app.runtime.WasmExtensionHost wasmExtensionHost(
+    public WasmExtensionHost wasmExtensionHost(
             ExtensionRegistry extensionRegistry, JclawProperties properties) {
-        io.jclaw.domain.wasm.WasmSpec spec = new io.jclaw.domain.wasm.WasmSpec(
+        WasmSpec spec = new WasmSpec(
                 properties.wasmMaxMemoryPages(), properties.wasmMaxInstructions(),
-                properties.wasmMaxOutputBytes(), properties.wasmTimeout(), java.util.Set.of());
-        return new io.jclaw.app.runtime.WasmExtensionHost(
+                properties.wasmMaxOutputBytes(), properties.wasmTimeout(), Set.of());
+        return new WasmExtensionHost(
                 extensionRegistry, properties.extensionsPath(), spec);
     }
 
     /** Sessions issued by logging in, stored as hashes. */
     @Bean
-    public io.jclaw.contracts.identity.SessionStore sessionStore(
+    public SessionStore sessionStore(
             JclawProperties properties, StorageBackend backend, Clock clock) {
-        return new io.jclaw.storage.identity.JsonlSessionStore(
+        return new JsonlSessionStore(
                 backend.open("sessions", properties.sessionsPath()), clock);
     }
 
@@ -333,11 +373,11 @@ public class JclawConfiguration {
      * because a bean method may not return one; that class explains why.
      */
     @Bean
-    public io.jclaw.app.identity.LoginProvider oidcLogin(JclawProperties properties, Clock clock) {
+    public LoginProvider oidcLogin(JclawProperties properties, Clock clock) {
         return properties.oidcConfigured()
-                ? io.jclaw.app.identity.LoginProvider.of(new io.jclaw.app.identity.OidcLogin(
+                ? LoginProvider.of(new OidcLogin(
                         properties.oidcIssuer(), properties.oidcClientId(), clock))
-                : io.jclaw.app.identity.LoginProvider.none();
+                : LoginProvider.none();
     }
 
     /**
@@ -347,9 +387,9 @@ public class JclawConfiguration {
      * installation from reaching the network to answer {@code extensions list}.
      */
     @Bean
-    public io.jclaw.app.extension.ExtensionCatalog extensionCatalog(
+    public ExtensionCatalog extensionCatalog(
             JclawProperties properties, EgressGuard egressGuard) {
-        return new io.jclaw.app.extension.ExtensionCatalog(properties.extensionRegistries(), egressGuard);
+        return new ExtensionCatalog(properties.extensionRegistries(), egressGuard);
     }
 
     /**
@@ -360,8 +400,8 @@ public class JclawConfiguration {
      * rather than at the first run that selects it.
      */
     @Bean
-    public io.jclaw.domain.loop.LoopFamilyRegistry loopFamilyRegistry(JclawProperties properties) {
-        List<io.jclaw.domain.loop.LoopFamily> defined = new ArrayList<>();
+    public LoopFamilyRegistry loopFamilyRegistry(JclawProperties properties) {
+        List<LoopFamily> defined = new ArrayList<>();
         properties.loopFamilies().forEach((id, spec) -> {
             if (!"reflective".equals(spec.base())) {
                 throw new IllegalArgumentException("loop family '" + id + "': base must be "
@@ -372,10 +412,10 @@ public class JclawConfiguration {
                 throw new IllegalArgumentException("loop family '" + id
                         + "': review-instruction is required for a reflective family");
             }
-            defined.add(io.jclaw.domain.loop.LoopFamilies.reviewing(id, spec.reviewInstruction()));
+            defined.add(LoopFamilies.reviewing(id, spec.reviewInstruction()));
         });
-        io.jclaw.domain.loop.LoopFamilyRegistry registry =
-                io.jclaw.domain.loop.LoopFamilyRegistry.of(defined);
+        LoopFamilyRegistry registry =
+                LoopFamilyRegistry.of(defined);
         if (!registry.knows(properties.loopFamily())) {
             throw new IllegalArgumentException("unknown loop family '" + properties.loopFamily()
                     + "' in jclaw.loop-family; known: " + registry.ids());
@@ -402,11 +442,11 @@ public class JclawConfiguration {
      * there are several; naming the one it wants is clearer than a qualifier.
      */
     @Bean
-    public io.jclaw.app.runtime.WatchTriggerScanner watchTriggerScanner(
-            io.jclaw.contracts.routine.RoutineStore routineStore,
-            io.jclaw.app.runtime.JclawRuntime jclawRuntime,
+    public WatchTriggerScanner watchTriggerScanner(
+            RoutineStore routineStore,
+            JclawRuntime jclawRuntime,
             WorkspaceGuard workspaceGuard, RowStore watchStateFile, Clock clock) {
-        return new io.jclaw.app.runtime.WatchTriggerScanner(
+        return new WatchTriggerScanner(
                 routineStore, jclawRuntime, workspaceGuard, watchStateFile, clock);
     }
 
@@ -417,24 +457,24 @@ public class JclawConfiguration {
      * one setting is a store nobody notices is missing until they change the setting.
      */
     @Bean
-    public io.jclaw.contracts.inbound.InboundReviewStore inboundReviewStore(
+    public InboundReviewStore inboundReviewStore(
             JclawProperties properties, StorageBackend backend, Clock clock) {
-        return new io.jclaw.storage.inbound.JsonlInboundReviewStore(
+        return new JsonlInboundReviewStore(
                 backend.open("inbound", properties.inboundReviewPath()), clock);
     }
 
     /** The messaging channels jclaw can be talked to from. Empty unless configured. */
     @Bean
-    public java.util.List<io.jclaw.contracts.channel.ChannelAdapter> channelAdapters(Clock clock) {
-        return java.util.List.of(
-                new io.jclaw.app.channel.SlackAdapter(clock),
-                new io.jclaw.app.channel.TelegramAdapter());
+    public List<ChannelAdapter> channelAdapters(Clock clock) {
+        return List.of(
+                new SlackAdapter(clock),
+                new TelegramAdapter());
     }
 
     @Bean
-    public io.jclaw.contracts.channel.ChannelBindingStore channelBindingStore(
+    public ChannelBindingStore channelBindingStore(
             JclawProperties properties, StorageBackend backend, Clock clock) {
-        return new io.jclaw.storage.channel.JsonlChannelBindingStore(
+        return new JsonlChannelBindingStore(
                 backend.open("channel-bindings", properties.channelBindingsPath()), clock);
     }
 
@@ -443,27 +483,27 @@ public class JclawConfiguration {
      * reply after the run that produced it finishes, however long that took.
      */
     @Bean
-    public io.jclaw.app.channel.ChannelService channelService(
-            java.util.List<io.jclaw.contracts.channel.ChannelAdapter> channelAdapters,
+    public ChannelService channelService(
+            List<ChannelAdapter> channelAdapters,
             JclawProperties properties,
-            io.jclaw.contracts.channel.ChannelBindingStore channelBindingStore,
-            io.jclaw.app.runtime.JclawRuntime runtime, ThreadService threadService, RunStore runStore,
+            ChannelBindingStore channelBindingStore,
+            JclawRuntime runtime, ThreadService threadService, RunStore runStore,
             SecretVault secretVault, EgressGuard egressGuard, EventLog eventLog,
-            io.jclaw.contracts.inbound.InboundReviewStore inboundReviewStore) {
+            InboundReviewStore inboundReviewStore) {
 
-        java.util.Map<String, io.jclaw.app.channel.ChannelService.Credentials> credentials =
-                new java.util.LinkedHashMap<>();
+        Map<String, ChannelService.Credentials> credentials =
+                new LinkedHashMap<>();
         properties.channels().forEach((id, secrets) -> {
             if (!secrets.complete()) {
                 throw new IllegalArgumentException(
                         "jclaw.channels." + id + " needs both verify-secret and token");
             }
-            credentials.put(id, new io.jclaw.app.channel.ChannelService.Credentials(
+            credentials.put(id, new ChannelService.Credentials(
                     secrets.verifySecret(), secrets.token()));
         });
-        return new io.jclaw.app.channel.ChannelService(channelAdapters, credentials, channelBindingStore,
+        return new ChannelService(channelAdapters, credentials, channelBindingStore,
                 runtime, threadService, runStore, secretVault, egressGuard, eventLog,
-                inboundReviewStore, io.jclaw.domain.safety.InboundPolicy.parse(properties.inboundPolicy()));
+                inboundReviewStore, InboundPolicy.parse(properties.inboundPolicy()));
     }
 
     /** What each MCP server offered last time, so the next start need not ask again. */
@@ -483,7 +523,7 @@ public class JclawConfiguration {
                 properties.extensionsPath(),
                 backend.open("extensions", properties.extensionsJsonlPath()),
                 properties.trustedPublishers(),
-                java.util.Optional.of(skillCatalog.root()),
+                Optional.of(skillCatalog.root()),
                 clock);
     }
 
@@ -542,7 +582,7 @@ public class JclawConfiguration {
         CapabilityPolicy posture = posture(properties.approvalMode());
         // Hard denials from configuration. Validated at startup: a typo here must fail loudly
         // rather than silently deny nothing.
-        Set<CapabilityId> denied = new java.util.LinkedHashSet<>();
+        Set<CapabilityId> denied = new LinkedHashSet<>();
         for (String id : JclawProperties.nonBlank(properties.deniedCapabilities())) {
             try {
                 denied.add(CapabilityId.of(id));
@@ -552,11 +592,11 @@ public class JclawConfiguration {
                                 + "(expected e.g. builtin.shell)", e);
             }
         }
-        Map<CapabilityId, Set<String>> toolEgress = new java.util.LinkedHashMap<>();
+        Map<CapabilityId, Set<String>> toolEgress = new LinkedHashMap<>();
         properties.toolEgress().forEach((capability, hosts) -> toolEgress.put(
                 capabilityId("jclaw.tool-egress", capability),
                 Set.copyOf(JclawProperties.nonBlank(List.of(hosts.split(","))))));
-        Map<CapabilityId, RateLimit> rateLimits = new java.util.LinkedHashMap<>();
+        Map<CapabilityId, RateLimit> rateLimits = new LinkedHashMap<>();
         properties.toolRateLimits().forEach((capability, spec) -> {
             try {
                 rateLimits.put(capabilityId("jclaw.tool-rate-limits", capability), RateLimit.parse(spec));
@@ -601,7 +641,7 @@ public class JclawConfiguration {
         // Pooled rather than a connection per call. For the CLI the difference is invisible —
         // one process, one turn — but `serve` runs several turns at once, and against
         // PostgreSQL each unpooled call costs a TCP round trip and a new backend process.
-        com.zaxxer.hikari.HikariConfig pool = new com.zaxxer.hikari.HikariConfig();
+        HikariConfig pool = new HikariConfig();
         pool.setJdbcUrl(url);
         pool.setUsername(properties.datasourceUsername());
         // Only when there is one. Forcing an empty password on an unset variable broke the
@@ -615,9 +655,9 @@ public class JclawConfiguration {
         pool.setMaximumPoolSize(Math.max(1, properties.datasourcePoolSize()));
         // A worker holding a connection while a model call is in flight would be a bug, not a
         // slow query, so a short timeout surfaces it as an error instead of a hang.
-        pool.setConnectionTimeout(java.time.Duration.ofSeconds(10).toMillis());
+        pool.setConnectionTimeout(Duration.ofSeconds(10).toMillis());
         pool.setPoolName("jclaw");
-        com.zaxxer.hikari.HikariDataSource dataSource = new com.zaxxer.hikari.HikariDataSource(pool);
+        HikariDataSource dataSource = new HikariDataSource(pool);
         int before = SqlSchema.migrate(dataSource);
         log.debug("storage: sql at {} (schema {} -> {}, pool max {})",
                 redactUrl(url), before, SqlSchema.currentVersion(), pool.getMaximumPoolSize());
@@ -649,12 +689,12 @@ public class JclawConfiguration {
     public OtlpExporters otlpExporter(JclawProperties properties) {
         String endpoint = properties.otlpEndpoint();
         return new OtlpExporters(endpoint == null || endpoint.isBlank()
-                ? java.util.Optional.empty()
-                : java.util.Optional.of(new OtlpExporter(endpoint.trim(), "jclaw")));
+                ? Optional.empty()
+                : Optional.of(new OtlpExporter(endpoint.trim(), "jclaw")));
     }
 
     /** Holds the optional exporter so Spring has a bean to close at shutdown. */
-    public record OtlpExporters(java.util.Optional<OtlpExporter> exporter) implements AutoCloseable {
+    public record OtlpExporters(Optional<OtlpExporter> exporter) implements AutoCloseable {
         @Override
         public void close() {
             exporter.ifPresent(OtlpExporter::close);
@@ -718,8 +758,8 @@ public class JclawConfiguration {
     @Bean
     public ThreadLock threadLock(JclawProperties properties, StorageBackend backend, Clock clock) {
         return backend.dataSource()
-                .<ThreadLock>map(source -> new io.jclaw.storage.lock.SqlThreadLock(
-                        source, "host-" + java.util.UUID.randomUUID().toString().substring(0, 8), clock))
+                .<ThreadLock>map(source -> new SqlThreadLock(
+                        source, "host-" + UUID.randomUUID().toString().substring(0, 8), clock))
                 .orElseGet(() -> new FileThreadLock(properties.locksPath()));
     }
 
@@ -736,11 +776,11 @@ public class JclawConfiguration {
      * command hold this bean: tool lanes and providers are barred from it by the dependency law.
      */
     @Bean
-    public io.jclaw.app.runtime.TenantVaults tenantVaults(
+    public TenantVaults tenantVaults(
             JclawProperties properties, StorageBackend backend, Clock clock) {
         byte[] key = VaultKey.parse(System.getenv("JCLAW_VAULT_KEY"))
                 .orElseGet(() -> VaultKey.loadOrCreate(properties.vaultKeyPath()));
-        return new io.jclaw.app.runtime.TenantVaults(backend, properties.secretsPath(), key, clock);
+        return new TenantVaults(backend, properties.secretsPath(), key, clock);
     }
 
     /**
@@ -750,7 +790,7 @@ public class JclawConfiguration {
      * of several, and the kernel picks per run from the scope rather than from this bean.
      */
     @Bean
-    public SecretVault secretVault(io.jclaw.app.runtime.TenantVaults vaults) {
+    public SecretVault secretVault(TenantVaults vaults) {
         return vaults.primary();
     }
 
@@ -762,12 +802,12 @@ public class JclawConfiguration {
      * answer there is to keep folding.
      */
     @Bean
-    public io.jclaw.storage.projection.RunProjectionCache runProjectionCache(
+    public RunProjectionCache runProjectionCache(
             StorageBackend backend, Clock clock) {
         return backend.dataSource()
-                .<io.jclaw.storage.projection.RunProjectionCache>map(source ->
-                        new io.jclaw.storage.projection.JdbcRunProjectionCache(source, clock))
-                .orElseGet(io.jclaw.storage.projection.RunProjectionCache::none);
+                .<RunProjectionCache>map(source ->
+                        new JdbcRunProjectionCache(source, clock))
+                .orElseGet(RunProjectionCache::none);
     }
 
     @Bean
@@ -778,7 +818,7 @@ public class JclawConfiguration {
             EventLog eventLog,
             CapabilityPolicyResolver capabilityPolicyResolver,
             CapabilityHandler.HandlerContext handlerContext,
-            io.jclaw.app.runtime.TenantVaults tenantVaults,
+            TenantVaults tenantVaults,
             List<LoopHook> loopHooks,
             Clock clock) {
 
@@ -826,7 +866,7 @@ public class JclawConfiguration {
 
             // Ollama needs no credentials and is expected to be on loopback.
             case "ollama" -> new OpenAiCompatibleModelProvider(
-                    "ollama", properties.ollamaBaseUrl(), java.util.Optional.empty());
+                    "ollama", properties.ollamaBaseUrl(), Optional.empty());
 
             // Any other local OpenAI-compatible server: LM Studio, vLLM, llama.cpp, LocalAI.
             // The base URL is required rather than defaulted because there is no port these
@@ -891,7 +931,7 @@ public class JclawConfiguration {
                     properties.localBaseUrl(), System.getenv("LOCAL_API_KEY")));
         }
         chain.add(new OpenAiCompatibleModelProvider(
-                "ollama", properties.ollamaBaseUrl(), java.util.Optional.empty()));
+                "ollama", properties.ollamaBaseUrl(), Optional.empty()));
         return new FailoverModelProvider(chain, clock);
     }
 
@@ -908,7 +948,7 @@ public class JclawConfiguration {
             LoopStateCodec loopStateCodec,
             Clock clock,
             List<LoopHook> loopHooks,
-            io.jclaw.domain.loop.LoopFamilyRegistry loopFamilyRegistry) {
+            LoopFamilyRegistry loopFamilyRegistry) {
 
         EffectInterpreter interpreter = new EffectInterpreter(
                 modelProvider, capabilityHost, approvalStore, threadService,
@@ -923,17 +963,17 @@ public class JclawConfiguration {
      * which is the seam a plugin uses.
      */
     @Bean
-    public List<LoopHook> loopHooks(JclawProperties properties, java.util.Optional<List<LoopHook>> extraHooks,
+    public List<LoopHook> loopHooks(JclawProperties properties, Optional<List<LoopHook>> extraHooks,
             SecretVault secretVault) {
         List<LoopHook> hooks = new ArrayList<>();
         for (String id : JclawProperties.nonBlank(properties.hooks())) {
             switch (id) {
                 case BudgetNoticeHook.ID -> hooks.add(new BudgetNoticeHook());
-                case io.jclaw.app.runtime.SecretLeakHook.ID ->
-                        hooks.add(new io.jclaw.app.runtime.SecretLeakHook(secretVault));
+                case SecretLeakHook.ID ->
+                        hooks.add(new SecretLeakHook(secretVault));
                 default -> throw new IllegalArgumentException(
                         "unknown hook '" + id + "' in jclaw.hooks; known: " + BudgetNoticeHook.ID
-                                + ", " + io.jclaw.app.runtime.SecretLeakHook.ID);
+                                + ", " + SecretLeakHook.ID);
             }
         }
         extraHooks.ifPresent(hooks::addAll);
@@ -962,7 +1002,7 @@ public class JclawConfiguration {
                 script.add(new MockModelProvider.Script.Text(entry.substring("text:".length())));
             } else if (entry.startsWith("tool:")) {
                 String[] parts = entry.substring("tool:".length()).split(":", 2);
-                java.util.Map<String, Object> arguments = new java.util.LinkedHashMap<>();
+                Map<String, Object> arguments = new LinkedHashMap<>();
                 if (parts.length == 2 && !parts[1].isBlank()) {
                     for (String pair : splitArguments(parts[1])) {
                         int equals = pair.indexOf('=');
@@ -1028,7 +1068,7 @@ public class JclawConfiguration {
             return value;
         }
         try {
-            return tools.jackson.databind.json.JsonMapper.builder().build()
+            return JsonMapper.builder().build()
                     .readValue(trimmed, Object.class);
         } catch (RuntimeException e) {
             throw new IllegalArgumentException(
@@ -1038,7 +1078,7 @@ public class JclawConfiguration {
 
     /** Known credential values, masked wherever they appear in tool output. */
     private static Set<String> credentialValues() {
-        Set<String> values = new java.util.LinkedHashSet<>();
+        Set<String> values = new LinkedHashSet<>();
         for (String name : List.of(
                 "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY", "OPENROUTER_API_KEY")) {
             String value = System.getenv(name);
@@ -1060,7 +1100,7 @@ public class JclawConfiguration {
         public StateDirectoryInitializer {
             try {
                 Files.createDirectories(stateDir);
-            } catch (java.io.IOException e) {
+            } catch (IOException e) {
                 throw new IllegalStateException("cannot create state directory " + stateDir, e);
             }
         }

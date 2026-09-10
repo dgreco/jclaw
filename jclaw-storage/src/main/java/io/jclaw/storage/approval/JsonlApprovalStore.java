@@ -20,6 +20,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -102,7 +103,7 @@ public final class JsonlApprovalStore implements ApprovalStore {
                 GateKind.AUTH,
                 run,
                 scope,
-                CapabilityId.of("model." + providerId.toLowerCase(java.util.Locale.ROOT)
+                CapabilityId.of("model." + providerId.toLowerCase(Locale.ROOT)
                         .replaceAll("[^a-z0-9_]", "_")),
                 credentialHint,
                 prompt,

@@ -3,16 +3,21 @@
 
 package io.jclaw.app;
 
+import org.springframework.boot.Banner;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.ExitCodeGenerator;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.builder.SpringApplicationBuilder;
+import org.springframework.context.ConfigurableApplicationContext;
+import picocli.CommandLine.IFactory;
 import picocli.CommandLine;
 
+import java.util.Arrays;
 import java.util.List;
-import picocli.CommandLine.IFactory;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Stream;
 
 /**
  * Process entry point and composition root.
@@ -30,7 +35,8 @@ public class JclawApplication implements CommandLineRunner, ExitCodeGenerator {
 
     private final IFactory factory;
     private final JclawCommand command;
-    private int exitCode;
+    /** Written by {@link #run}, read by {@link #getExitCode} — not necessarily on one thread. */
+    private volatile int exitCode;
 
     public JclawApplication(IFactory factory, JclawCommand command) {
         this.factory = factory;
@@ -41,13 +47,13 @@ public class JclawApplication implements CommandLineRunner, ExitCodeGenerator {
         // Set when the JVM is already exiting (Ctrl-C on a long-running command). A second
         // System.exit from inside a shutdown is at best a hang and at worst a stack trace after
         // "stopped."; returning lets the shutdown that is already under way finish.
-        java.util.concurrent.atomic.AtomicBoolean shuttingDown = new java.util.concurrent.atomic.AtomicBoolean(false);
+        AtomicBoolean shuttingDown = new AtomicBoolean(false);
         Runtime.getRuntime().addShutdownHook(new Thread(() -> shuttingDown.set(true), "jclaw-shutdown-flag"));
         try {
-            org.springframework.context.ConfigurableApplicationContext context =
+            ConfigurableApplicationContext context =
                     new SpringApplicationBuilder(JclawApplication.class)
                             .web(WebApplicationType.NONE)
-                            .bannerMode(org.springframework.boot.Banner.Mode.OFF)
+                            .bannerMode(Banner.Mode.OFF)
                             .logStartupInfo(false)
                             .run(expandVerbosityFlags(args));
             if (shuttingDown.get()) {
@@ -111,13 +117,13 @@ public class JclawApplication implements CommandLineRunner, ExitCodeGenerator {
      * here because {@code jclaw tools --verbose} already owns that name.
      */
     static String[] expandVerbosityFlags(String... args) {
-        return java.util.Arrays.stream(args)
+        return Arrays.stream(args)
                 .flatMap(arg -> switch (arg) {
-                    case "--trace" -> java.util.stream.Stream.of(
+                    case "--trace" -> Stream.of(
                             "--logging.level.io.jclaw=TRACE", VERBOSE_CONSOLE_PATTERN);
-                    case "--debug" -> java.util.stream.Stream.of(
+                    case "--debug" -> Stream.of(
                             "--logging.level.io.jclaw=DEBUG", VERBOSE_CONSOLE_PATTERN);
-                    default -> java.util.stream.Stream.of(arg);
+                    default -> Stream.of(arg);
                 })
                 .toArray(String[]::new);
     }
@@ -142,7 +148,7 @@ public class JclawApplication implements CommandLineRunner, ExitCodeGenerator {
      * {@code --jclaw.provider=anthropic} — the documented way to switch providers — unusable.
      */
     static String[] withoutSpringProperties(String... args) {
-        return java.util.Arrays.stream(args)
+        return Arrays.stream(args)
                 .filter(arg -> SPRING_PREFIXES.stream().noneMatch(arg::startsWith))
                 .toArray(String[]::new);
     }

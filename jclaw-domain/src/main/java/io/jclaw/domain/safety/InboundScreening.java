@@ -3,6 +3,7 @@
 
 package io.jclaw.domain.safety;
 
+import java.util.List;
 import java.util.Objects;
 
 /**
@@ -78,7 +79,7 @@ public final class InboundScreening {
         Objects.requireNonNull(policy, "policy");
 
         if (policy == InboundPolicy.OFF) {
-            return new Screened(text, new InjectionHeuristics.Assessment(java.util.List.of()), Decision.ALLOWED);
+            return new Screened(text, new InjectionHeuristics.Assessment(List.of()), Decision.ALLOWED);
         }
         InjectionHeuristics.Assessment assessment = InjectionHeuristics.scan(text);
         boolean high = assessment.highest()
@@ -86,7 +87,9 @@ public final class InboundScreening {
                 .isPresent();
 
         return switch (policy) {
-            case OFF -> new Screened(text, assessment, Decision.ALLOWED);
+            // Unreachable: OFF returns above, without scanning at all. Saying so beats repeating
+            // WARN's arm here, where it read as a second policy that happens to behave the same.
+            case OFF -> throw new IllegalStateException("OFF is handled before the scan");
             // Recorded but unframed: an operator who asked to be warned wants the signal, not a
             // rewritten message.
             case WARN -> new Screened(text, assessment, Decision.ALLOWED);

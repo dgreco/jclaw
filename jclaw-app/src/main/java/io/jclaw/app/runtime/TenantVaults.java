@@ -8,7 +8,10 @@ import io.jclaw.contracts.secret.SecretVault;
 import io.jclaw.contracts.secret.SecretVaults;
 import io.jclaw.storage.secret.FileSecretVault;
 
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
 import java.util.Map;
 import java.util.Objects;
@@ -94,14 +97,14 @@ public final class TenantVaults implements SecretVaults {
 
     private static String shortHash(String text) {
         try {
-            byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
-                    .digest(text.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(text.getBytes(StandardCharsets.UTF_8));
             StringBuilder hex = new StringBuilder();
             for (int i = 0; i < 6; i++) {
                 hex.append(String.format("%02x", digest[i]));
             }
             return hex.toString();
-        } catch (java.security.NoSuchAlgorithmException e) {
+        } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 is mandatory in every JDK", e);
         }
     }

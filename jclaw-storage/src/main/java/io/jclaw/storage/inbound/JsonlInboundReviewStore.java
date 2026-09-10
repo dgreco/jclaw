@@ -11,6 +11,7 @@ import io.jclaw.storage.rows.RowStore;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -74,7 +75,7 @@ public final class JsonlInboundReviewStore implements InboundReviewStore {
         return replay().values().stream()
                 .filter(Held::isPending)
                 .filter(held -> held.scope().tenant().equals(scope.tenant()))
-                .sorted(java.util.Comparator.comparing(Held::receivedAt))
+                .sorted(Comparator.comparing(Held::receivedAt))
                 .toList();
     }
 

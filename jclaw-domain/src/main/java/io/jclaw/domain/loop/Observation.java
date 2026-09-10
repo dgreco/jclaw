@@ -13,6 +13,7 @@ import io.jclaw.contracts.turn.TurnRef.LoopMessageRef;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * What the interpreter reports back after carrying out a {@link LoopDecision}.
@@ -50,7 +51,7 @@ public sealed interface Observation {
      *                  user with the failure itself, rather than only in the event log where they
      *                  have to know to go looking for it.
      */
-    record ModelFailed(FailureKind kind, boolean retryable, java.util.Optional<String> detail)
+    record ModelFailed(FailureKind kind, boolean retryable, Optional<String> detail)
             implements Observation {
 
         public ModelFailed {
@@ -59,7 +60,7 @@ public sealed interface Observation {
         }
 
         public ModelFailed(FailureKind kind, boolean retryable) {
-            this(kind, retryable, java.util.Optional.empty());
+            this(kind, retryable, Optional.empty());
         }
     }
 

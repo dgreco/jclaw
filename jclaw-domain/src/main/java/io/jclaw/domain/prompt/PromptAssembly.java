@@ -7,8 +7,10 @@ import io.jclaw.contracts.secret.SecretVault;
 import io.jclaw.contracts.skill.SkillCatalog;
 
 import java.nio.file.Path;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
+import java.util.TreeSet;
 
 /**
  * Pure assembly of the system prompt.
@@ -66,7 +68,7 @@ public final class PromptAssembly {
                     .append("Only their summaries are shown; call `builtin.skill_read` with a skill ")
                     .append("id to load its full instructions before following it.\n");
             skills.stream()
-                    .sorted(java.util.Comparator.comparing(SkillCatalog.Skill::id))
+                    .sorted(Comparator.comparing(SkillCatalog.Skill::id))
                     .forEach(skill -> prompt.append("\n- ").append(skill.summary()));
         }
 
@@ -76,10 +78,10 @@ public final class PromptAssembly {
                     .append("`{{secret:NAME}}` where the value belongs (for example in a header) and ")
                     .append("the host substitutes it, but only in the tool and for the hosts listed.\n");
             secrets.stream()
-                    .sorted(java.util.Comparator.comparing(info -> info.name().value()))
+                    .sorted(Comparator.comparing(info -> info.name().value()))
                     .forEach(info -> prompt.append("\n- `{{secret:").append(info.name().value())
                             .append("}}`: ").append(info.binding().capability().value())
-                            .append(" to ").append(String.join(", ", new java.util.TreeSet<>(info.binding().hosts()))));
+                            .append(" to ").append(String.join(", ", new TreeSet<>(info.binding().hosts()))));
         }
 
         return prompt.toString();

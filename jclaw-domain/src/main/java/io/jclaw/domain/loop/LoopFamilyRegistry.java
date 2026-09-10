@@ -3,6 +3,7 @@
 
 package io.jclaw.domain.loop;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -70,7 +71,7 @@ public final class LoopFamilyRegistry {
 
     /** Every id this registry answers to, built-ins first. */
     public List<String> ids() {
-        List<String> ids = new java.util.ArrayList<>(List.of("canonical", "reflective"));
+        List<String> ids = new ArrayList<>(List.of("canonical", "reflective"));
         ids.addAll(configured.keySet());
         return List.copyOf(ids);
     }

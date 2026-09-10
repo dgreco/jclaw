@@ -11,6 +11,8 @@ import io.jclaw.contracts.turn.TurnRunId;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.Consumer;
 
 /**
  * The event log, with metrics and trace export riding on every append.
@@ -25,8 +27,8 @@ public final class ObservedEventLog implements EventLog {
     private final EventLog delegate;
     private final Telemetry telemetry;
     private final Optional<OtlpExporter> exporter;
-    private final List<java.util.function.Consumer<JclawEvent>> listeners =
-            new java.util.concurrent.CopyOnWriteArrayList<>();
+    private final List<Consumer<JclawEvent>> listeners =
+            new CopyOnWriteArrayList<>();
 
     public ObservedEventLog(EventLog delegate, Telemetry telemetry, Optional<OtlpExporter> exporter) {
         this.delegate = Objects.requireNonNull(delegate, "delegate");
@@ -35,7 +37,7 @@ public final class ObservedEventLog implements EventLog {
     }
 
     /** Registers a listener called after every event is durable. Listeners must not block. */
-    public void addListener(java.util.function.Consumer<JclawEvent> listener) {
+    public void addListener(Consumer<JclawEvent> listener) {
         listeners.add(Objects.requireNonNull(listener, "listener"));
     }
 

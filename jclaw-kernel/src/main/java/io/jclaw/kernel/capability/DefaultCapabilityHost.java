@@ -34,17 +34,17 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayDeque;
+import java.util.Comparator;
 import java.util.Deque;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 
 /**
@@ -468,11 +468,6 @@ public final class DefaultCapabilityHost implements CapabilityHost {
     }
 
     /**
-     * The lane started something that finishes elsewhere. The run parks on a process gate keyed
-     * by the invocation, so a resume that re-dispatches the same call lands on the same gate until
-     * the lane reports an outcome.
-     */
-    /**
      * Runs the gate hooks, returning the prompt to ask or empty when one refused.
      *
      * <p>A hook that throws is treated as no opinion rather than as a refusal. Hooks are host
@@ -515,6 +510,11 @@ public final class DefaultCapabilityHost implements CapabilityHost {
         return Optional.of(current);
     }
 
+    /**
+     * The lane started something that finishes elsewhere. The run parks on a process gate keyed
+     * by the invocation, so a resume that re-dispatches the same call lands on the same gate until
+     * the lane reports an outcome.
+     */
     private CapabilityOutcome waitOn(
             CapabilityInvocation invocation, CapabilityDescriptor descriptor,
             HandlerError.Waiting waiting, long elapsed) {

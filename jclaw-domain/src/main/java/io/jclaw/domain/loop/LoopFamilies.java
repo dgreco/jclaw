@@ -34,6 +34,12 @@ public final class LoopFamilies {
         }
     };
 
+    /** The instruction {@link #REFLECTIVE} reviews with; a configured family supplies its own. */
+    static final String REVIEW_INSTRUCTION =
+            "Review your previous reply for correctness, completeness, and clarity against the "
+                    + "conversation so far. Then output only the final reply you stand behind, "
+                    + "revised if needed, with no commentary about the review.";
+
     /**
      * Reflect before replying: when the canonical machine would persist a final reply, this family
      * first asks the model, without tools and without streaming, to review that draft and return
@@ -44,34 +50,7 @@ public final class LoopFamilies {
      * exhausted, and falls back to the draft when it fails, so reflection can cost a call but
      * never a turn.
      */
-    public static final LoopFamily REFLECTIVE = new LoopFamily() {
-        @Override
-        public String id() {
-            return "reflective";
-        }
-
-        @Override
-        public LoopStep step(LoopExecutionState state, Observation observation, LoopPolicy policy, Instant now) {
-            if (state.phase() == Phase.AWAITING_REFLECTION) {
-                return onReflection(state, observation);
-            }
-            LoopStep canonical = TurnMachine.step(state, observation, policy, now);
-            if (canonical.decision() instanceof LoopDecision.PersistReply persist
-                    && !persist.draft()
-                    && state.phase() == Phase.AWAITING_MODEL
-                    && !canonical.state().budget().isExhausted(now)) {
-                LoopExecutionState reflecting = canonical.state().withPhase(Phase.AWAITING_REFLECTION);
-                return new LoopStep(reflecting,
-                        new LoopDecision.CallModel(reviewRequest(reflecting, policy, REVIEW_INSTRUCTION), false));
-            }
-            return canonical;
-        }
-    };
-
-    static final String REVIEW_INSTRUCTION =
-            "Review your previous reply for correctness, completeness, and clarity against the "
-                    + "conversation so far. Then output only the final reply you stand behind, "
-                    + "revised if needed, with no commentary about the review.";
+    public static final LoopFamily REFLECTIVE = reviewing("reflective", REVIEW_INSTRUCTION);
 
     private LoopFamilies() {
     }

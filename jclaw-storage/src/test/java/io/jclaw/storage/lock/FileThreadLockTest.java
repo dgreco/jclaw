@@ -62,7 +62,8 @@ class FileThreadLockTest {
         FileThreadLock locks = new FileThreadLock(dir);
         TurnScope otherProject = TurnScope.local("other", new ThreadId("a"));
         assertNotEquals(locks.lockFileFor(THREAD_A), locks.lockFileFor(otherProject));
-        try (ThreadLock.Held ignored = locks.tryAcquire(THREAD_A).orElseThrow()) {
+        ThreadLock.Held held = locks.tryAcquire(THREAD_A).orElseThrow();
+        try (held) {
             assertTrue(locks.tryAcquire(otherProject).isPresent());
         }
     }
@@ -115,11 +116,13 @@ class FileThreadLockTest {
         public static void main(String[] args) throws IOException, InterruptedException {
             Path file = Path.of(args[0]);
             try (FileChannel channel = FileChannel.open(
-                    file, StandardOpenOption.CREATE, StandardOpenOption.WRITE);
-                 FileLock ignored = channel.lock()) {
-                System.out.println("held");
-                System.out.flush();
-                Thread.sleep(60_000);
+                    file, StandardOpenOption.CREATE, StandardOpenOption.WRITE)) {
+                FileLock lock = channel.lock();
+                try (lock) {
+                    System.out.println("held");
+                    System.out.flush();
+                    Thread.sleep(60_000);
+                }
             }
         }
     }

@@ -8,6 +8,7 @@ import java.time.ZonedDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.BitSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -147,7 +148,7 @@ public record CronSpec(BitSet minutes, BitSet hours, BitSet daysOfMonth, BitSet 
     }
 
     private static String normalizeDayNames(String field) {
-        String upper = field.toUpperCase(java.util.Locale.ROOT);
+        String upper = field.toUpperCase(Locale.ROOT);
         List<String> names = List.of("SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT");
         for (int i = 0; i < names.size(); i++) {
             upper = upper.replace(names.get(i), Integer.toString(i));

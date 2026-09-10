@@ -46,6 +46,11 @@
     <jline.version>4.4.3</jline.version>
     <!-- Native image: the GraalVM toolchain is JDK 25+, while we target release 21 bytecode. -->
     <native.maven.plugin.imageName>jclaw</native.maven.plugin.imageName>
+    <!-- Static analysis, used only by the `analysis` profile at the bottom of this file. -->
+    <spotbugs.plugin.version>4.10.4.1</spotbugs.plugin.version>
+    <findsecbugs.version>1.14.0</findsecbugs.version>
+    <pmd.plugin.version>3.28.0</pmd.plugin.version>
+    <pmd.version>7.27.0</pmd.version>
   </properties>
 
   <modules>
@@ -155,4 +160,105 @@
       </plugins>
     </pluginManagement>
   </build>
+  <!--
+    Opt-in static analysis: `mvn -Panalysis verify`. Deliberately a profile rather than part of
+    the default build. These tools are slow, they are the kind of dependency that breaks on a new
+    JDK, and a developer running `mvn test` wants the tests. CI can ask for them by name.
+
+    Three layers, because they see different things:
+      javac -Xlint  the compiler's own opinion, free and always current with the language
+      SpotBugs      bytecode patterns, plus FindSecBugs for the injection/crypto families
+      PMD           source patterns the compiler has no opinion about, including dead code
+  -->
+  <profiles>
+    <profile>
+      <!-- Config paths use ${session.executionRootDirectory} — the directory mvn was invoked
+           from — because a relative path would resolve per module, and the obvious
+           ${maven.multiModuleProjectDirectory} silently resolves to $HOME without a .mvn
+           directory at the root. Run these from the repository root. -->
+      <id>analysis</id>
+      <properties>
+        <!-- -Djclaw.failOnWarning=false to see the whole list while working through one. -->
+        <jclaw.failOnWarning>true</jclaw.failOnWarning>
+      </properties>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-compiler-plugin</artifactId>
+            <configuration>
+              <showWarnings>true</showWarnings>
+              <!-- The tree compiles clean under the lint set below, so a new warning is a
+                   regression rather than background noise. Opt-in, because a dependency upgrade
+                   should not be able to fail `mvn test` on a deprecation — and overridable with
+                   -Dmaven.compiler.failOnWarning=false while working through one.  -->
+              <failOnWarning>${jclaw.failOnWarning}</failOnWarning>
+              <compilerArgs>
+                <arg>-parameters</arg>
+                <!-- Everything except `serial` (nothing here is serialized) and `processing`
+                     (the picocli annotation processor is expected to claim nothing). -->
+                <arg>-Xlint:all,-serial,-processing</arg>
+              </compilerArgs>
+            </configuration>
+          </plugin>
+          <plugin>
+            <groupId>com.github.spotbugs</groupId>
+            <artifactId>spotbugs-maven-plugin</artifactId>
+            <version>${spotbugs.plugin.version}</version>
+            <configuration>
+              <effort>Max</effort>
+              <threshold>Low</threshold>
+              <includeTests>false</includeTests>
+              <excludeFilterFile>${session.executionRootDirectory}/config/spotbugs-exclude.xml</excludeFilterFile>
+              <plugins>
+                <plugin>
+                  <groupId>com.h3xstream.findsecbugs</groupId>
+                  <artifactId>findsecbugs-plugin</artifactId>
+                  <version>${findsecbugs.version}</version>
+                </plugin>
+              </plugins>
+            </configuration>
+            <executions>
+              <execution>
+                <goals><goal>check</goal></goals>
+                <phase>verify</phase>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-pmd-plugin</artifactId>
+            <version>${pmd.plugin.version}</version>
+            <configuration>
+              <rulesets>
+                <ruleset>${session.executionRootDirectory}/config/pmd-ruleset.xml</ruleset>
+              </rulesets>
+              <includeTests>false</includeTests>
+              <printFailingErrors>true</printFailingErrors>
+              <failOnViolation>true</failOnViolation>
+            </configuration>
+            <dependencies>
+              <dependency>
+                <groupId>net.sourceforge.pmd</groupId>
+                <artifactId>pmd-core</artifactId>
+                <version>${pmd.version}</version>
+              </dependency>
+              <dependency>
+                <groupId>net.sourceforge.pmd</groupId>
+                <artifactId>pmd-java</artifactId>
+                <version>${pmd.version}</version>
+              </dependency>
+            </dependencies>
+            <executions>
+              <execution>
+                <goals><goal>check</goal></goals>
+                <phase>verify</phase>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
+
 </project>

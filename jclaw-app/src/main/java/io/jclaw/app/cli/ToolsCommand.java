@@ -52,10 +52,13 @@ public class ToolsCommand implements Callable<Integer> {
                 .max()
                 .orElse(20);
 
-        System.out.printf("%-" + widest + "s  %-12s  %-12s  %s%n",
-                "CAPABILITY", "EFFECT", "TRUST", "UNATTENDED");
+        // Built once: the width is the only variable in it, and two copies of a format string
+        // are two chances for the header to stop lining up with the rows under it.
+        String row = "%-" + widest + "s  %-12s  %-12s  %s%n";
+
+        System.out.printf(row, "CAPABILITY", "EFFECT", "TRUST", "UNATTENDED");
         for (CapabilityDescriptor descriptor : descriptors) {
-            System.out.printf("%-" + widest + "s  %-12s  %-12s  %s%n",
+            System.out.printf(row,
                     descriptor.id().value(),
                     descriptor.effect(),
                     descriptor.trust(),

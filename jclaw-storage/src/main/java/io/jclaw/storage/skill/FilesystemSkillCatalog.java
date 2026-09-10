@@ -14,6 +14,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -135,7 +136,7 @@ public final class FilesystemSkillCatalog implements SkillCatalog {
             int colon = line.indexOf(':');
             if (colon > 0) {
                 metadata.put(
-                        line.substring(0, colon).trim().toLowerCase(java.util.Locale.ROOT),
+                        line.substring(0, colon).trim().toLowerCase(Locale.ROOT),
                         line.substring(colon + 1).trim());
             }
         }

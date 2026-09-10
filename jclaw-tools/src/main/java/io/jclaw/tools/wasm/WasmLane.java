@@ -3,20 +3,22 @@
 
 package io.jclaw.tools.wasm;
 
+import io.jclaw.contracts.Result;
+import io.jclaw.domain.wasm.WasmSpec;
 import run.endive.runtime.HostFunction;
 import run.endive.runtime.ImportValues;
 import run.endive.runtime.Instance;
 import run.endive.wasm.Parser;
 import run.endive.wasm.WasmModule;
+import run.endive.wasm.types.FunctionType;
 import run.endive.wasm.types.MemoryLimits;
-import run.endive.wasm.types.ValueType;
-import io.jclaw.contracts.Result;
-import io.jclaw.domain.wasm.WasmSpec;
+import run.endive.wasm.types.ValType;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -53,10 +55,10 @@ public final class WasmLane {
         void log(String message);
 
         /** Reads a workspace file, or empty when the guard refuses or it does not exist. */
-        java.util.Optional<String> readFile(String path);
+        Optional<String> readFile(String path);
 
         /** Fetches a URL through the host's egress guard, or empty when refused. */
-        java.util.Optional<String> httpGet(String url);
+        Optional<String> httpGet(String url);
     }
 
     private final WasmModule module;
@@ -177,7 +179,7 @@ public final class WasmLane {
         List<HostFunction> granted = new ArrayList<>();
         if (spec.grants("log")) {
             granted.add(new HostFunction("jclaw", "log",
-                    List.of(ValueType.I32, ValueType.I32), List.of(),
+                    FunctionType.of(List.of(ValType.I32, ValType.I32), List.of()),
                     (instance, args) -> {
                         String message = read(instance, (int) args[0], (int) args[1]);
                         if (output.length() + message.length() <= spec.maxOutputBytes()) {
@@ -188,16 +190,18 @@ public final class WasmLane {
         }
         if (spec.grants("read_file")) {
             granted.add(new HostFunction("jclaw", "read_file",
-                    List.of(ValueType.I32, ValueType.I32, ValueType.I32, ValueType.I32),
-                    List.of(ValueType.I32),
+                    FunctionType.of(
+                            List.of(ValType.I32, ValType.I32, ValType.I32, ValType.I32),
+                            List.of(ValType.I32)),
                     (instance, args) -> new long[] {
                             copyOut(instance, services.readFile(read(instance, (int) args[0], (int) args[1])),
                                     (int) args[2], (int) args[3])}));
         }
         if (spec.grants("http_get")) {
             granted.add(new HostFunction("jclaw", "http_get",
-                    List.of(ValueType.I32, ValueType.I32, ValueType.I32, ValueType.I32),
-                    List.of(ValueType.I32),
+                    FunctionType.of(
+                            List.of(ValType.I32, ValType.I32, ValType.I32, ValType.I32),
+                            List.of(ValType.I32)),
                     (instance, args) -> new long[] {
                             copyOut(instance, services.httpGet(read(instance, (int) args[0], (int) args[1])),
                                     (int) args[2], (int) args[3])}));
@@ -213,7 +217,7 @@ public final class WasmLane {
     }
 
     /** Writes a host answer into the module's buffer, returning its length or -1 when refused. */
-    private static int copyOut(Instance instance, java.util.Optional<String> answer, int pointer, int capacity) {
+    private static int copyOut(Instance instance, Optional<String> answer, int pointer, int capacity) {
         if (answer.isEmpty() || pointer < 0 || capacity <= 0) {
             return -1;
         }

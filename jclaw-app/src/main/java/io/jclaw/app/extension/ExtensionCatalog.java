@@ -11,6 +11,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
@@ -25,6 +26,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -151,10 +153,10 @@ public final class ExtensionCatalog {
 
     /** Listings whose name or description contains {@code query}, case-insensitively. */
     public List<Listing> search(String query) {
-        String needle = Objects.requireNonNull(query, "query").toLowerCase(java.util.Locale.ROOT);
+        String needle = Objects.requireNonNull(query, "query").toLowerCase(Locale.ROOT);
         return list().stream()
-                .filter(listing -> listing.name().toLowerCase(java.util.Locale.ROOT).contains(needle)
-                        || listing.description().toLowerCase(java.util.Locale.ROOT).contains(needle))
+                .filter(listing -> listing.name().toLowerCase(Locale.ROOT).contains(needle)
+                        || listing.description().toLowerCase(Locale.ROOT).contains(needle))
                 .toList();
     }
 
@@ -203,7 +205,7 @@ public final class ExtensionCatalog {
     private Result<Map<String, byte[]>, String> unzip(byte[] archive, Path target) {
         Map<String, byte[]> files = new LinkedHashMap<>();
         Path root = target.toAbsolutePath().normalize();
-        try (ZipInputStream zip = new ZipInputStream(new java.io.ByteArrayInputStream(archive))) {
+        try (ZipInputStream zip = new ZipInputStream(new ByteArrayInputStream(archive))) {
             ZipEntry entry;
             long total = 0;
             int count = 0;
@@ -243,7 +245,7 @@ public final class ExtensionCatalog {
         if (checked.isErr()) {
             return Result.err("endpoint_" + checked.errorAsOptional().orElse("denied"));
         }
-        try (InputStream ignored = null) {
+        try {
             HttpResponse<byte[]> response = client.send(
                     HttpRequest.newBuilder(checked.orElseThrow())
                             .timeout(Duration.ofSeconds(30))

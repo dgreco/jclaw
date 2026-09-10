@@ -10,6 +10,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -63,7 +64,9 @@ public final class OtlpExporter implements AutoCloseable {
         Objects.requireNonNull(run, "run");
         Objects.requireNonNull(events, "events");
         String body = mapper.writeValueAsString(RunTrace.otlp(run, events, serviceName));
-        executor.submit(() -> send(run, body));
+        // execute, not submit: send() reports its own failures, so the Future would only be a
+        // handle nobody holds — and an ignored Future is how a silent failure gets its silence.
+        executor.execute(() -> send(run, body));
     }
 
     private void send(TurnRunId run, String body) {
@@ -74,7 +77,12 @@ public final class OtlpExporter implements AutoCloseable {
                     .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
                     .build(), HttpResponse.BodyHandlers.discarding());
             log.debug("otlp: exported trace for {} to {} ({})", run.value(), tracesEndpoint, response.statusCode());
-        } catch (Exception e) {
+        } catch (InterruptedException e) {
+            // Restore the flag: swallowing it leaves the pool's thread looking uninterrupted,
+            // and shutdown then waits for a thread that was already told to stop.
+            Thread.currentThread().interrupt();
+            log.debug("otlp: export of {} interrupted", run.value());
+        } catch (IOException | RuntimeException e) {
             log.debug("otlp: export of {} to {} failed ({})", run.value(), tracesEndpoint, e.getClass().getSimpleName());
         }
     }

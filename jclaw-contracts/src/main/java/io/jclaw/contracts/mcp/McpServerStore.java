@@ -12,25 +12,6 @@ import java.util.Optional;
 public interface McpServerStore {
 
     /**
-     * One configured server.
-     *
-     * @param command the process to run, argv-style. Stored as a list rather than a shell string
-     *                so nothing is ever passed through a shell — a server name containing
-     *                {@code ; rm -rf} must be inert, not clever.
-     * @param env     extra environment for the child, on top of a scrubbed allowlist
-     */
-    /**
-     * A registered server, reached one of two ways.
-     *
-     * @param command the child process to spawn, for a stdio server; empty for an HTTP one
-     * @param envSecrets environment the child process needs, as variable name to <em>vault secret
-     *                   name</em>. Values are never stored here: they are leased when the server
-     *                   starts, so a credential lives in the vault and nowhere else
-     * @param url     the endpoint of a remote server over streamable HTTP; blank for stdio
-     * @param authSecret name of a vault secret to send as a bearer token when connecting over
-     *                   HTTP; blank for none. The value never lives here
-     */
-    /**
      * OAuth 2.1 client credentials for a remote server.
      *
      * <p>The client-credentials grant, not the authorization-code flow the MCP specification
@@ -62,6 +43,19 @@ public interface McpServerStore {
         }
     }
 
+    /**
+     * A registered server, reached one of two ways.
+     *
+     * @param command the child process to spawn, for a stdio server; empty for an HTTP one.
+     *                Argv-style rather than a shell string, so nothing is ever passed through a
+     *                shell — a server name containing {@code ; rm -rf} must be inert, not clever
+     * @param envSecrets environment the child process needs, as variable name to <em>vault secret
+     *                   name</em>. Values are never stored here: they are leased when the server
+     *                   starts, so a credential lives in the vault and nowhere else
+     * @param url     the endpoint of a remote server over streamable HTTP; blank for stdio
+     * @param authSecret name of a vault secret to send as a bearer token when connecting over
+     *                   HTTP; blank for none. The value never lives here
+     */
     record McpServer(
             String name, List<String> command, Map<String, String> envSecrets,
             String url, String authSecret, Optional<OAuth> oauth, boolean enabled) {

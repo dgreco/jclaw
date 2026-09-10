@@ -13,6 +13,8 @@ import org.springframework.stereotype.Service;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -133,8 +135,8 @@ public class TurnRunScheduler {
      * both is counted once.
      */
     private Running running() {
-        Map<TurnRunId, String> threadByRun = new java.util.LinkedHashMap<>();
-        Map<TurnRunId, String> tenantByRun = new java.util.LinkedHashMap<>();
+        Map<TurnRunId, String> threadByRun = new LinkedHashMap<>();
+        Map<TurnRunId, String> tenantByRun = new LinkedHashMap<>();
         for (RunStore.RunRecord record : runs.byStatus(TurnStatus.RUNNING, Integer.MAX_VALUE)) {
             threadByRun.put(record.run(), record.scope().lockKey());
             tenantByRun.put(record.run(), record.scope().tenant());
@@ -143,7 +145,7 @@ public class TurnRunScheduler {
             threadByRun.put(entry.run(), key);
             tenantByRun.put(entry.run(), entry.tenant());
         });
-        Map<String, Integer> byTenant = new java.util.HashMap<>();
+        Map<String, Integer> byTenant = new HashMap<>();
         tenantByRun.values().forEach(tenant -> byTenant.merge(tenant, 1, Integer::sum));
         return new Running(Set.copyOf(threadByRun.values()), threadByRun.size(), byTenant);
     }

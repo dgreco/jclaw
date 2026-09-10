@@ -4,6 +4,7 @@
 package io.jclaw.app.runtime;
 
 import io.jclaw.contracts.routine.RoutineStore;
+import io.jclaw.contracts.turn.ThreadId;
 import io.jclaw.domain.cron.RoutineSchedule;
 import org.springframework.stereotype.Service;
 
@@ -56,7 +57,7 @@ public class RoutineRunner {
 
         Instant now = clock.instant();
         List<RoutineSchedule.Due> due = RoutineSchedule.due(
-                routines.list(runtime.scopeFor(new io.jclaw.contracts.turn.ThreadId("routines"))), now);
+                routines.list(runtime.scopeFor(new ThreadId("routines"))), now);
 
         List<Fired> fired = new ArrayList<>();
         for (RoutineSchedule.Due candidate : due) {
@@ -78,7 +79,7 @@ public class RoutineRunner {
     /** Routines currently due, without firing them. Backs {@code routines list --due}. */
     public List<RoutineSchedule.Due> peekDue() {
         return RoutineSchedule.due(
-                routines.list(runtime.scopeFor(new io.jclaw.contracts.turn.ThreadId("routines"))),
+                routines.list(runtime.scopeFor(new ThreadId("routines"))),
                 clock.instant());
     }
 }

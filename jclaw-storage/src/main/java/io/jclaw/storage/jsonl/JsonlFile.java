@@ -12,6 +12,7 @@ import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.List;
@@ -133,8 +134,8 @@ public final class JsonlFile implements RowStore {
             Path temp = path.resolveSibling(path.getFileName() + ".rewrite");
             try {
                 Files.writeString(temp, content.toString(), StandardCharsets.UTF_8);
-                Files.move(temp, path, java.nio.file.StandardCopyOption.REPLACE_EXISTING,
-                        java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+                Files.move(temp, path, StandardCopyOption.REPLACE_EXISTING,
+                        StandardCopyOption.ATOMIC_MOVE);
             } catch (IOException e) {
                 throw new UncheckedIOException("cannot rewrite " + path, e);
             }

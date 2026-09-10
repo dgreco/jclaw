@@ -13,6 +13,7 @@ import io.jclaw.contracts.capability.HandlerError;
 import io.jclaw.contracts.capability.TrustClass;
 import io.jclaw.tools.Schemas;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -38,7 +39,7 @@ public final class McpSurfaceTools {
     /** Handlers for whichever of resources and prompts {@code client} declared. */
     public static List<CapabilityHandler> handlersFor(McpClient client, TrustClass trust, EffectClass effect) {
         Objects.requireNonNull(client, "client");
-        List<CapabilityHandler> handlers = new java.util.ArrayList<>();
+        List<CapabilityHandler> handlers = new ArrayList<>();
         if (client.offers().contains("resources")) {
             handlers.add(new ListResources(client, trust, effect));
             handlers.add(new ReadResource(client, trust, effect));

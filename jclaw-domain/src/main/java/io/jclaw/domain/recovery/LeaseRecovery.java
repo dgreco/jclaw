@@ -13,6 +13,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.Function;
 
 /**
  * Decides what to do with a run whose worker stopped heartbeating. Pure.
@@ -141,7 +142,7 @@ public final class LeaseRecovery {
     /** Convenience over a batch. Order is preserved so reporting is stable. */
     public static List<Decision> decideAll(
             List<RunRecord> records,
-            java.util.function.Function<TurnRunId, Optional<CheckpointKind>> checkpointLookup,
+            Function<TurnRunId, Optional<CheckpointKind>> checkpointLookup,
             Duration leaseTtl,
             Instant now) {
 

@@ -18,6 +18,7 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -88,7 +89,7 @@ public final class HttpTool implements CapabilityHandler {
         if (invocation.arguments().get("headers") instanceof Map<?, ?> given) {
             for (Map.Entry<?, ?> entry : given.entrySet()) {
                 String name = String.valueOf(entry.getKey()).trim();
-                if (name.isEmpty() || RESTRICTED_HEADERS.contains(name.toLowerCase(java.util.Locale.ROOT))) {
+                if (name.isEmpty() || RESTRICTED_HEADERS.contains(name.toLowerCase(Locale.ROOT))) {
                     return Result.err(HandlerError.failed("header_not_allowed"));
                 }
                 headers.put(name, String.valueOf(entry.getValue()));

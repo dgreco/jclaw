@@ -11,13 +11,14 @@ import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import tools.jackson.databind.json.JsonMapper;
 
-import javax.sql.DataSource;
 import java.sql.Timestamp;
 import java.time.Clock;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import javax.sql.DataSource;
 
 /**
  * Materialised projections in {@code jclaw_run_projection}, one row per finished run.
@@ -90,7 +91,7 @@ public final class JdbcRunProjectionCache implements RunProjectionCache {
             if (keep.isEmpty()) {
                 return jdbc.update("DELETE FROM jclaw_run_projection");
             }
-            String placeholders = String.join(",", java.util.Collections.nCopies(keep.size(), "?"));
+            String placeholders = String.join(",", Collections.nCopies(keep.size(), "?"));
             return jdbc.update("DELETE FROM jclaw_run_projection WHERE run NOT IN (" + placeholders + ")",
                     keep.toArray());
         } catch (RuntimeException e) {

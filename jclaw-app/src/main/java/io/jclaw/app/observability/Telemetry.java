@@ -5,9 +5,11 @@ package io.jclaw.app.observability;
 
 import io.jclaw.contracts.event.JclawEvent;
 
+import java.util.HashSet;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.LongAdder;
@@ -134,7 +136,7 @@ public final class Telemetry {
                 out.append(series).append(' ').append(value.sum()).append('\n'));
         // One TYPE line per metric name, not per series: a second one for the same name makes a
         // scraper reject the whole scrape, and one metric commonly has several label sets.
-        java.util.Set<String> typed = new java.util.HashSet<>();
+        Set<String> typed = new HashSet<>();
         new TreeMap<>(timers).forEach((series, histogram) -> {
             int brace = series.indexOf('{');
             String name = brace < 0 ? series : series.substring(0, brace);

@@ -6,6 +6,7 @@ package io.jclaw.domain.policy;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -62,6 +63,6 @@ public record RateLimit(int permits, Duration window) {
 
     /** Human-readable form for denials and diagnostics, e.g. {@code 5 per 1m}. */
     public String describe() {
-        return permits + " per " + window.toString().substring(2).toLowerCase(java.util.Locale.ROOT);
+        return permits + " per " + window.toString().substring(2).toLowerCase(Locale.ROOT);
     }
 }

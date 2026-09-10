@@ -10,12 +10,14 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Supplier;
 
 /**
  * A connected MCP server: the protocol, over whichever {@link McpTransport} carries it.
@@ -41,15 +43,16 @@ public final class McpClient implements AutoCloseable {
 
     private final AtomicLong nextId = new AtomicLong(1);
     private final String serverName;
-    private final java.util.function.Supplier<Result<McpTransport, String>> connector;
+    private final Supplier<Result<McpTransport, String>> connector;
     private final Object connectLock = new Object();
     private volatile McpTransport transport;
+    /** What the server said it offers: some of {@code tools}, {@code resources}, {@code prompts}. */
     private volatile Set<String> offers;
     private volatile McpTransport.ServerRequests sampling;
 
     private McpClient(
             String serverName,
-            java.util.function.Supplier<Result<McpTransport, String>> connector,
+            Supplier<Result<McpTransport, String>> connector,
             McpTransport transport,
             Set<String> offers) {
         this.serverName = serverName;
@@ -129,7 +132,7 @@ public final class McpClient implements AutoCloseable {
      */
     public static McpClient deferred(
             String serverName, Set<String> offers,
-            java.util.function.Supplier<Result<McpTransport, String>> connector) {
+            Supplier<Result<McpTransport, String>> connector) {
         Objects.requireNonNull(serverName, "serverName");
         Objects.requireNonNull(offers, "offers");
         Objects.requireNonNull(connector, "connector");
@@ -202,12 +205,11 @@ public final class McpClient implements AutoCloseable {
         if (!(handshake.get("capabilities") instanceof Map<?, ?> capabilities)) {
             return Set.of();
         }
-        Set<String> declared = new java.util.LinkedHashSet<>();
+        Set<String> declared = new LinkedHashSet<>();
         capabilities.keySet().forEach(key -> declared.add(String.valueOf(key)));
         return declared;
     }
 
-    /** What the server said it offers: some of {@code tools}, {@code resources}, {@code prompts}. */
     /**
      * Answers the server's {@code sampling/createMessage} requests, when the host allows them.
      *
@@ -215,7 +217,7 @@ public final class McpClient implements AutoCloseable {
      * at all, so a host that has not opted into sampling never invites a server to ask.
      */
     public void withSampling(McpTransport.ServerRequests handler) {
-        this.sampling = java.util.Objects.requireNonNull(handler, "handler");
+        this.sampling = Objects.requireNonNull(handler, "handler");
     }
 
     public Set<String> offers() {

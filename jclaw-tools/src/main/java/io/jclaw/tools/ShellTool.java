@@ -12,6 +12,7 @@ import io.jclaw.contracts.capability.HandlerError;
 import io.jclaw.domain.sandbox.SandboxSpec;
 import io.jclaw.domain.secret.SecretStaging;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -179,7 +180,7 @@ public final class ShellTool implements CapabilityHandler {
      */
     private static String readBounded(InputStream stream) throws IOException {
         byte[] buffer = new byte[8192];
-        java.io.ByteArrayOutputStream collected = new java.io.ByteArrayOutputStream();
+        ByteArrayOutputStream collected = new ByteArrayOutputStream();
         int read;
         while (collected.size() < MAX_OUTPUT_BYTES && (read = stream.read(buffer)) != -1) {
             collected.write(buffer, 0, Math.min(read, MAX_OUTPUT_BYTES - collected.size()));

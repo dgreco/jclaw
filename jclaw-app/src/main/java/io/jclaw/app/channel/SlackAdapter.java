@@ -6,22 +6,26 @@ package io.jclaw.app.channel;
 import io.jclaw.contracts.Result;
 import io.jclaw.contracts.channel.ChannelAdapter;
 import io.jclaw.contracts.channel.ReplyTarget;
+import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.json.JsonMapper;
 
-import javax.crypto.Mac;
-import javax.crypto.spec.SecretKeySpec;
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
+import java.time.Clock;
 import java.time.Duration;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 
 /**
  * Slack, over the Events API.
@@ -43,15 +47,15 @@ public final class SlackAdapter implements ChannelAdapter {
 
     private final JsonMapper mapper = JsonMapper.builder().build();
     private final HttpClient client;
-    private final java.time.Clock clock;
+    private final Clock clock;
     private final String api;
 
-    public SlackAdapter(java.time.Clock clock) {
+    public SlackAdapter(Clock clock) {
         this(clock, API);
     }
 
     /** @param api the post endpoint, overridable so a test can point it at a local server */
-    public SlackAdapter(java.time.Clock clock, String api) {
+    public SlackAdapter(Clock clock, String api) {
         this.clock = Objects.requireNonNull(clock, "clock");
         this.api = Objects.requireNonNull(api, "api");
         this.client = HttpClient.newBuilder()
@@ -105,7 +109,7 @@ public final class SlackAdapter implements ChannelAdapter {
 
         Map<String, Object> payload;
         try {
-            payload = mapper.readValue(body, Map.class);
+            payload = mapper.readValue(body, new TypeReference<Map<String, Object>>() { });
         } catch (RuntimeException e) {
             return Result.err("body_malformed");
         }
@@ -148,7 +152,7 @@ public final class SlackAdapter implements ChannelAdapter {
         Objects.requireNonNull(target, "target");
         Objects.requireNonNull(text, "text");
         Objects.requireNonNull(token, "token");
-        Map<String, Object> payload = new java.util.LinkedHashMap<>();
+        Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("channel", target.conversation());
         payload.put("text", text);
         target.thread().ifPresent(thread -> payload.put("thread_ts", thread));
@@ -175,14 +179,14 @@ public final class SlackAdapter implements ChannelAdapter {
         // reported platform failure.
         Map<String, Object> answer;
         try {
-            answer = mapper.readValue(response.body(), Map.class);
+            answer = mapper.readValue(response.body(), new TypeReference<Map<String, Object>>() { });
         } catch (RuntimeException e) {
             return Result.err("slack_response_malformed");
         }
         if (Boolean.TRUE.equals(answer.get("ok"))) {
             return Result.ok(String.valueOf(answer.getOrDefault("ts", "sent")));
         }
-        return Result.err("slack_" + String.valueOf(answer.getOrDefault("error", "rejected")));
+        return Result.err("slack_" + answer.getOrDefault("error", "rejected"));
     }
 
     private static String hmacHex(String key, String message) {
@@ -190,7 +194,7 @@ public final class SlackAdapter implements ChannelAdapter {
             Mac mac = Mac.getInstance("HmacSHA256");
             mac.init(new SecretKeySpec(key.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
             return HexFormat.of().formatHex(mac.doFinal(message.getBytes(StandardCharsets.UTF_8)));
-        } catch (java.security.GeneralSecurityException e) {
+        } catch (GeneralSecurityException e) {
             throw new IllegalStateException("HmacSHA256 is mandatory in every JDK", e);
         }
     }

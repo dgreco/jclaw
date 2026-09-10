@@ -7,6 +7,7 @@ import io.jclaw.contracts.capability.CapabilityId;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -80,12 +81,12 @@ public interface SecretVault {
         /** Whether {@code host} matches one of the bound names or suffix patterns. */
         public boolean permitsHost(String host) {
             Objects.requireNonNull(host, "host");
-            String lower = host.toLowerCase(java.util.Locale.ROOT);
+            String lower = host.toLowerCase(Locale.ROOT);
             if (lower.equals(SUBPROCESS)) {
                 return false;
             }
             for (String bound : hosts) {
-                String candidate = bound.toLowerCase(java.util.Locale.ROOT);
+                String candidate = bound.toLowerCase(Locale.ROOT);
                 if (candidate.equals(SUBPROCESS)) {
                     continue;
                 }

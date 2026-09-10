@@ -1,0 +1,191 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SpotBugs findings that are decisions rather than defects.
+
+  Every entry names the decision. An exclusion without a reason is indistinguishable from a bug
+  someone got tired of, and a filter nobody can audit is worse than no filter: it makes the next
+  real finding easy to add to the list.
+-->
+<FindBugsFilter>
+
+  <!--
+    FindSecBugs flags every log call with a non-constant argument. Almost all of them are ids,
+    enums and counters. The two paths that log model- or tool-controlled text — the interpreter's
+    TRACE payloads and the OpenAI-compatible adapter's wire bodies — fold every line terminator
+    to a literal \n first (see boundForTrace in each), so a tool result cannot forge a log line.
+    That is the property this rule is about, and it is enforced at those call sites.
+  -->
+  <Match>
+    <Bug pattern="CRLF_INJECTION_LOGS"/>
+  </Match>
+
+  <!--
+    The vocabulary here is records and immutable value types: a compact constructor runs
+    List.copyOf / Map.copyOf / Set.copyOf on every collection it takes, and no component is an
+    array. What SpotBugs sees is the accessor returning the same reference it was given, which
+    for an already-immutable copy is the intended behaviour. Verified: no finding in either
+    family involves an array.
+  -->
+  <Match>
+    <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
+  </Match>
+
+  <!--
+    "Constructor throws" is a finalizer-attack concern, and these types have no finalizer: they
+    are records and final classes that validate their arguments in the compact constructor. That
+    validation is the reason a malformed ThreadId or CapabilityId cannot exist at all.
+  -->
+  <Match>
+    <Bug pattern="CT_CONSTRUCTOR_THROW"/>
+  </Match>
+
+  <!--
+    IMPROPER_UNICODE fires on case-insensitive comparison of attacker-influenced text. Every
+    remaining site compares against an ASCII-only vocabulary the harness itself defines — event
+    types, header names, enum names — and the ones where a locale could change the answer now
+    pass Locale.ROOT explicitly.
+  -->
+  <Match>
+    <Bug pattern="IMPROPER_UNICODE"/>
+  </Match>
+
+  <!--
+    No statement is built from anything a run supplies. A table name comes from
+    SqlSchema.tableFor, a static map keyed by a store name that JdbcRowStore has already matched
+    against [a-z][a-z0-9_-]{0,63}; the DDL is a constant. Every value is a bind parameter.
+  -->
+  <Match>
+    <Bug pattern="SQL_INJECTION_SPRING_JDBC"/>
+    <Or>
+      <Class name="io.jclaw.storage.sql.JdbcRowStore"/>
+      <Class name="io.jclaw.storage.sql.SqlSchema"/>
+      <Class name="io.jclaw.storage.projection.JdbcRunProjectionCache"/>
+    </Or>
+  </Match>
+
+  <!--
+    Running a command is what these two are for. ShellTool is the `builtin.shell` lane, gated by
+    the capability host and approved per exact invocation; StdioTransport spawns the MCP server
+    the operator configured. Neither goes through a shell — both take argv as a list, which is
+    the mitigation this rule asks for.
+  -->
+  <Match>
+    <Bug pattern="COMMAND_INJECTION"/>
+    <Or>
+      <Class name="io.jclaw.tools.ShellTool"/>
+      <Class name="io.jclaw.tools.mcp.StdioTransport"/>
+    </Or>
+  </Match>
+
+  <!--
+    A SecureRandom used once is not the weakness this rule describes: the finding is about
+    java.util.Random being seeded and discarded. VaultKey mints one 32-byte key, once, when the
+    key file does not yet exist.
+  -->
+  <Match>
+    <Bug pattern="DMI_RANDOM_USED_ONLY_ONCE"/>
+    <Or>
+      <Class name="io.jclaw.storage.secret.VaultKey"/>
+      <Class name="io.jclaw.app.cli.RoutinesCommand$Add"/>
+    </Or>
+  </Match>
+
+  <!--
+    "[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+" cannot backtrack catastrophically: every repetition of
+    the group must start with a literal dot, so no input can be split between the group and its
+    successor in more than one way. Pinned by CapabilityIdTest.
+  -->
+  <Match>
+    <Bug pattern="REDOS"/>
+    <Class name="io.jclaw.contracts.capability.CapabilityId"/>
+  </Match>
+
+  <!--
+    The "password" is the H2 URL's empty credential for an embedded file database. There is no
+    secret here to hard-code; a real deployment supplies a JDBC URL and the driver's own
+    properties.
+  -->
+  <Match>
+    <Bug pattern="HARD_CODE_PASSWORD"/>
+    <Class name="io.jclaw.app.config.JclawConfiguration"/>
+  </Match>
+
+  <!--
+    `jclaw onboard` writes a YAML file. Its newlines must be \n, which is what the text block
+    produces; %n would emit the platform separator into a file format that does not want one.
+  -->
+  <Match>
+    <Bug pattern="VA_FORMAT_STRING_USES_NEWLINE"/>
+    <Class name="io.jclaw.app.cli.OnboardCommand"/>
+  </Match>
+
+  <!--
+    Paths whose parent is missing. Each of these resolves under a directory the harness owns —
+    the state directory, the workspace root, an extracted package — so the parent exists by
+    construction, and a null there would mean the configuration is already broken.
+  -->
+  <Match>
+    <Bug pattern="NP_NULL_ON_SOME_PATH_FROM_RETURN_VALUE"/>
+  </Match>
+
+  <!--
+    Returning null from a host function is Endive's contract for a WebAssembly import that
+    declares no results. A zero-length array would be a different thing to the runtime.
+  -->
+  <Match>
+    <Bug pattern="PZLA_PREFER_ZERO_LENGTH_ARRAYS"/>
+    <Class name="io.jclaw.tools.wasm.WasmLane"/>
+  </Match>
+
+  <!--
+    The browser UI is one HTML string. It is duplicated across class files because javac interns
+    it into every class that references the constant; it is 9 KB, loaded once, in a process that
+    holds an agent's transcript.
+  -->
+  <Match>
+    <Bug pattern="HSC_HUGE_SHARED_STRING_CONSTANT"/>
+    <Class name="io.jclaw.app.http.WebUi"/>
+  </Match>
+
+  <!--
+    Two switch arms with the same body: the inbound policy's WARN and its unreachable OFF now
+    differ (OFF throws), and this one is the interpreter's handling of two decisions that
+    genuinely do the same thing. Kept as separate arms because collapsing them would hide which
+    decisions exist.
+  -->
+  <Match>
+    <Bug pattern="DB_DUPLICATE_SWITCH_CLAUSES"/>
+    <Class name="io.jclaw.domain.safety.InboundScreening"/>
+  </Match>
+
+  <!--
+    The only variable in these format strings is a column width, computed from the longest
+    capability id in the table. Nothing a run supplies reaches them.
+  -->
+  <Match>
+    <Bug pattern="FORMAT_STRING_MANIPULATION"/>
+    <Class name="io.jclaw.app.cli.ToolsCommand"/>
+  </Match>
+
+  <!--
+    A synthetic local from the desugaring of a pattern switch over a sealed hierarchy, not a
+    store anyone wrote. The method's own source has no dead assignment in it.
+  -->
+  <Match>
+    <Bug pattern="DLS_DEAD_LOCAL_STORE"/>
+    <Class name="io.jclaw.providers.anthropic.AnthropicModelProvider"/>
+    <Method name="toMessageParam"/>
+  </Match>
+
+  <!--
+    A discarded return value that is doing work: building the spec is what validates a WASM
+    package's declared permissions, and the spec a call runs under is built later from the
+    operator's configuration. Removing the call once silently removed the check — the test
+    WasmExtensionIntegrationTest.refusals is what noticed.
+  -->
+  <Match>
+    <Bug pattern="RV_RETURN_VALUE_IGNORED_INFERRED"/>
+    <Class name="io.jclaw.storage.extension.FilesystemExtensionRegistry"/>
+  </Match>
+
+</FindBugsFilter>

@@ -16,7 +16,19 @@ mvn clean install            # build + the full suite
 ./scripts/license-check.sh
 ```
 
-All three run in CI and all three must pass. Then open a PR against `main` describing what
+All three run in CI and all three must pass.
+
+Before a change that touches much code, also run the static analysis:
+
+```bash
+mvn -Panalysis verify        # javac -Xlint, SpotBugs + FindSecBugs, PMD
+```
+
+The tree is clean under all three and they fail the build, so anything they report is yours. If
+one is wrong about your code, add the exclusion to `config/spotbugs-exclude.xml` or
+`config/pmd-ruleset.xml` **with the reason in prose** — every entry in those files says which
+decision it defends, and one that does not is indistinguishable from a finding somebody got
+tired of. Then open a PR against `main` describing what
 changed and *why* — the existing commit log is the house style: prose that explains the
 reasoning, not a summary of the diff.
 

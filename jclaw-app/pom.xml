@@ -122,11 +122,23 @@
               <version>${picocli.version}</version>
             </path>
           </annotationProcessorPaths>
-          <compilerArgs>
-            <arg>-parameters</arg>
+          <!-- append: the parent contributes -parameters, and the `analysis` profile contributes
+               the lint flags. Without this attribute this list would replace both, and the module
+               with the most code in it would be the one nothing lints. -->
+          <compilerArgs combine.children="append">
             <arg>-Aproject=${project.groupId}/${project.artifactId}</arg>
           </compilerArgs>
         </configuration>
+        <executions>
+          <execution>
+            <id>default-testCompile</id>
+            <configuration>
+              <!-- Tests hold no @Command types, so the codegen processor has nothing to do there
+                   — and javac warns that nobody claimed its -Aproject option. -->
+              <proc>none</proc>
+            </configuration>
+          </execution>
+        </executions>
       </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>

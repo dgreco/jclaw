@@ -4,15 +4,16 @@
 package io.jclaw.app.cli;
 
 import io.jclaw.contracts.capability.CapabilityId;
-import io.jclaw.contracts.secret.SecretVault;
 import io.jclaw.contracts.secret.SecretVault.Binding;
 import io.jclaw.contracts.secret.SecretVault.SecretName;
+import io.jclaw.contracts.secret.SecretVault;
 import org.springframework.stereotype.Component;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.Parameters;
 
 import java.io.BufferedReader;
+import java.io.Console;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
@@ -83,6 +84,8 @@ public class SecretsCommand implements Runnable {
                 System.err.println("jclaw: give either --host or --subprocess, not both and not neither");
                 return 1;
             }
+            // Qualified: this class declares a nested `Set` (the `secrets set` subcommand),
+            // and a nested type shadows an import of the same simple name.
             java.util.Set<String> bound = subprocess
                     ? java.util.Set.of(Binding.SUBPROCESS)
                     : new LinkedHashSet<>(Arrays.asList(hosts));
@@ -94,7 +97,7 @@ public class SecretsCommand implements Runnable {
         }
 
         private static String readValue() throws IOException {
-            java.io.Console console = System.console();
+            Console console = System.console();
             if (console != null) {
                 char[] typed = console.readPassword("value: ");
                 return typed == null ? null : new String(typed);

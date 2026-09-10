@@ -87,7 +87,8 @@ class ThreadLockIntegrationTest {
         int runsBefore = runs.recent(Integer.MAX_VALUE).size();
 
         JclawRuntime.TurnResult refused;
-        try (ThreadLock.Held ignored = locks.tryAcquire(runtime.scopeFor(thread)).orElseThrow()) {
+        ThreadLock.Held lock = locks.tryAcquire(runtime.scopeFor(thread)).orElseThrow();
+        try (lock) {
             refused = runtime.submit(thread, "second process", new AtomicBoolean(false));
         }
 
@@ -112,8 +113,9 @@ class ThreadLockIntegrationTest {
     @DisplayName("other threads are unaffected by a held one")
     void otherThreadsProceed() {
         ((MockModelProvider) provider).reprogram(List.of(new Script.Text("elsewhere")));
-        try (ThreadLock.Held ignored =
-                     locks.tryAcquire(runtime.scopeFor(new ThreadId("lock-held"))).orElseThrow()) {
+        ThreadLock.Held lock =
+                locks.tryAcquire(runtime.scopeFor(new ThreadId("lock-held"))).orElseThrow();
+        try (lock) {
             JclawRuntime.TurnResult result =
                     runtime.submit(new ThreadId("lock-free"), "hello", new AtomicBoolean(false));
             assertEquals(TurnStatus.COMPLETED, result.status());

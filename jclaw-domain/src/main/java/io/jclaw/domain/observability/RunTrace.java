@@ -15,6 +15,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -127,7 +128,7 @@ public final class RunTrace {
                     if (at != null) {
                         JclawEvent.GateRaised gate = raised.get(at);
                         children.add(new Span(spanId(run, index++), Optional.of(rootId),
-                                "gate." + gate.gate().name().toLowerCase(java.util.Locale.ROOT), gate.at(), e.at(),
+                                "gate." + gate.gate().name().toLowerCase(Locale.ROOT), gate.at(), e.at(),
                                 Map.of("jclaw.gate", e.gateId(), "jclaw.approved", String.valueOf(e.approved())),
                                 List.of()));
                     }
@@ -153,7 +154,7 @@ public final class RunTrace {
         for (Map.Entry<String, Integer> open : openGates.entrySet()) {
             JclawEvent.GateRaised gate = raised.get(open.getValue());
             children.add(new Span(spanId(run, index++), Optional.of(rootId),
-                    "gate." + gate.gate().name().toLowerCase(java.util.Locale.ROOT), gate.at(), last,
+                    "gate." + gate.gate().name().toLowerCase(Locale.ROOT), gate.at(), last,
                     Map.of("jclaw.gate", gate.gateId(), "jclaw.open", "true"), List.of()));
         }
 

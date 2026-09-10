@@ -5,12 +5,17 @@ package io.jclaw.app.cli;
 
 import io.jclaw.contracts.event.EventLog;
 import io.jclaw.contracts.event.JclawEvent;
+import io.jclaw.contracts.turn.TurnRunId;
+import io.jclaw.domain.observability.RunTrace;
+import io.jclaw.domain.projection.RunProjection;
+import io.jclaw.storage.projection.RunProjectionCache;
 import org.springframework.stereotype.Component;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 
 import java.util.List;
 import java.util.concurrent.Callable;
+import java.util.stream.Collectors;
 
 /**
  * Recent activity from the event log.
@@ -40,9 +45,9 @@ public class StatusCommand implements Callable<Integer> {
     @Option(names = "--run", description = "Show one run's projection folded from its events, instead of the tail.")
     private String run;
 
-    private final io.jclaw.storage.projection.RunProjectionCache projections;
+    private final RunProjectionCache projections;
 
-    public StatusCommand(EventLog events, io.jclaw.storage.projection.RunProjectionCache projections) {
+    public StatusCommand(EventLog events, RunProjectionCache projections) {
         this.events = events;
         this.projections = projections;
     }
@@ -50,7 +55,7 @@ public class StatusCommand implements Callable<Integer> {
     @Override
     public Integer call() {
         if (run != null && !run.isBlank()) {
-            return projection(new io.jclaw.contracts.turn.TurnRunId(run));
+            return projection(new TurnRunId(run));
         }
         EventLog.EventCursor latest = events.latest();
         long from = Math.max(0, latest.position() - limit);
@@ -73,8 +78,8 @@ public class StatusCommand implements Callable<Integer> {
     }
 
     /** The read model of one run: what a UI would show, folded from the same log. */
-    private int projection(io.jclaw.contracts.turn.TurnRunId id) {
-        io.jclaw.domain.projection.RunProjection.RunView view = projections.of(id,
+    private int projection(TurnRunId id) {
+        RunProjection.RunView view = projections.of(id,
                 () -> events.readRun(id).stream().map(EventLog.Entry::event).toList());
         if (view.status().isEmpty() && view.lastEventAt().isEmpty()) {
             System.out.println("(no events for " + id.value() + ")");
@@ -99,18 +104,18 @@ public class StatusCommand implements Callable<Integer> {
         view.openGate().ifPresent(gate -> System.out.println("open gate    " + gate.kind() + " " + gate.id()));
         if (spans) {
             System.out.println();
-            System.out.println("trace        " + io.jclaw.domain.observability.RunTrace.traceId(id));
+            System.out.println("trace        " + RunTrace.traceId(id));
             // Spans are not part of the projection, so --spans reads the log whether or not the
             // summary above came from the cache. That is the honest trade: the cache saves the
             // common read, not every read.
             List<JclawEvent> all = events.readRun(id).stream().map(EventLog.Entry::event).toList();
-            for (var span : io.jclaw.domain.observability.RunTrace.spans(id, all)) {
+            for (var span : RunTrace.spans(id, all)) {
                 System.out.printf("  %s%-30s %6d ms  %s%n", span.parentSpanId().isPresent() ? "  " : "",
                         span.name(), span.duration().toMillis(),
                         span.attributes().entrySet().stream()
                                 .filter(e -> !e.getKey().equals("jclaw.run") && !e.getKey().equals("jclaw.fingerprint"))
                                 .map(e -> e.getKey().substring("jclaw.".length()) + "=" + e.getValue())
-                                .sorted().collect(java.util.stream.Collectors.joining(" ")));
+                                .sorted().collect(Collectors.joining(" ")));
                 for (var event : span.events()) {
                     System.out.printf("      @%s %s%n", event.at(), event.name());
                 }

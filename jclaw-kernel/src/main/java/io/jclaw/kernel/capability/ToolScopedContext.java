@@ -9,6 +9,7 @@ import io.jclaw.kernel.guard.EgressGuard;
 
 import java.net.URI;
 import java.nio.file.Path;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
@@ -58,7 +59,7 @@ final class ToolScopedContext implements CapabilityHandler.HandlerContext {
     }
 
     @Override
-    public java.util.Map<String, String> stagedEnvironment() {
+    public Map<String, String> stagedEnvironment() {
         // Delegated, not defaulted: inheriting the empty default here would silently drop a
         // staged credential for exactly the tools an operator bothered to narrow.
         return base.stagedEnvironment();

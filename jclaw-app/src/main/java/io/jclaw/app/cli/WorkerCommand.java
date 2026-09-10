@@ -7,6 +7,7 @@ import io.jclaw.app.runtime.RecoveryService;
 import io.jclaw.app.runtime.RetentionService;
 import io.jclaw.app.runtime.RoutineRunner;
 import io.jclaw.app.runtime.TurnRunScheduler;
+import io.jclaw.app.runtime.WatchTriggerScanner;
 import org.springframework.stereotype.Component;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
@@ -40,7 +41,7 @@ public class WorkerCommand implements Callable<Integer> {
     private static final Duration MIN_INTERVAL = Duration.ofSeconds(5);
 
     private final RoutineRunner runner;
-    private final io.jclaw.app.runtime.WatchTriggerScanner watches;
+    private final WatchTriggerScanner watches;
     private final RecoveryService recovery;
     private final TurnRunScheduler scheduler;
     private final RetentionService retention;
@@ -57,7 +58,7 @@ public class WorkerCommand implements Callable<Integer> {
     @Option(names = "--once", description = "Poll a single time and exit. Useful for testing.")
     private boolean once;
 
-    public WorkerCommand(RoutineRunner runner, io.jclaw.app.runtime.WatchTriggerScanner watches,
+    public WorkerCommand(RoutineRunner runner, WatchTriggerScanner watches,
             RecoveryService recovery, TurnRunScheduler scheduler,
                          RetentionService retention) {
         this.watches = watches;

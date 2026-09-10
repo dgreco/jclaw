@@ -59,9 +59,11 @@ class TraceContextTest {
 
         TraceContext outer = new TraceContext(TRACE, SPAN, true);
         TraceContext inner = new TraceContext(TRACE, "1111111111111111", true);
-        try (var ignored = TraceContext.open(outer)) {
+        var outerScope = TraceContext.open(outer);
+        try (outerScope) {
             assertEquals(Optional.of(outer), TraceContext.current());
-            try (var alsoIgnored = TraceContext.open(inner)) {
+            var innerScope = TraceContext.open(inner);
+            try (innerScope) {
                 assertEquals(Optional.of(inner), TraceContext.current());
             }
             assertEquals(Optional.of(outer), TraceContext.current(),
@@ -74,7 +76,8 @@ class TraceContextTest {
     @DisplayName("a scope closes even when the work throws")
     void scopeClosesOnFailure() {
         assertThrows(IllegalStateException.class, () -> {
-            try (var ignored = TraceContext.open(new TraceContext(TRACE, SPAN, true))) {
+            var scope = TraceContext.open(new TraceContext(TRACE, SPAN, true));
+            try (scope) {
                 throw new IllegalStateException("boom");
             }
         });
@@ -86,8 +89,8 @@ class TraceContextTest {
     @DisplayName("another thread does not inherit the context")
     void notInherited() throws Exception {
         AtomicReference<Optional<TraceContext>> seen = new AtomicReference<>();
-        try (var ignored = TraceContext.open(new TraceContext(TRACE, SPAN, true));
-             var pool = Executors.newSingleThreadExecutor()) {
+        var scope = TraceContext.open(new TraceContext(TRACE, SPAN, true));
+        try (scope; var pool = Executors.newSingleThreadExecutor()) {
             pool.submit(() -> seen.set(TraceContext.current())).get();
         }
         assertTrue(seen.get().isEmpty(),

@@ -4,6 +4,7 @@
 package io.jclaw.domain.wasm;
 
 import java.time.Duration;
+import java.util.LinkedHashSet;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
@@ -80,10 +81,15 @@ public record WasmSpec(
         return maxMemoryPages * PAGE_BYTES;
     }
 
-    /** Parses permissions as a manifest lists them, rejecting any the host does not implement. */
+    /**
+     * Normalises permissions as a manifest lists them: trimmed, lower-cased, deduplicated.
+     *
+     * <p>Normalises only. Rejecting a permission the host does not implement is this record's
+     * constructor, so a caller validating a manifest has to build a spec, not just parse.
+     */
     public static Set<String> parsePermissions(Iterable<String> declared) {
         Objects.requireNonNull(declared, "declared");
-        Set<String> parsed = new java.util.LinkedHashSet<>();
+        Set<String> parsed = new LinkedHashSet<>();
         for (String permission : declared) {
             String cleaned = permission == null ? "" : permission.trim().toLowerCase(Locale.ROOT);
             if (!cleaned.isEmpty()) {

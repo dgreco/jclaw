@@ -5,6 +5,7 @@ package io.jclaw.contracts.model;
 
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * One piece of message content.
@@ -76,7 +77,7 @@ public sealed interface ContentBlock {
         public Image {
             Objects.requireNonNull(mediaType, "mediaType");
             Objects.requireNonNull(data, "data");
-            if (!java.util.Set.of("image/png", "image/jpeg", "image/gif", "image/webp").contains(mediaType)) {
+            if (!Set.of("image/png", "image/jpeg", "image/gif", "image/webp").contains(mediaType)) {
                 throw new IllegalArgumentException("unsupported image media type: " + mediaType);
             }
             if (data.isBlank()) {

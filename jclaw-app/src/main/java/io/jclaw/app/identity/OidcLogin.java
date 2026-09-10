@@ -15,12 +15,14 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -245,7 +247,7 @@ public final class OidcLogin {
         }
         Object audience = claims.get("aud");
         boolean forUs = clientId.equals(String.valueOf(audience))
-                || (audience instanceof java.util.List<?> list && list.contains(clientId));
+                || (audience instanceof List<?> list && list.contains(clientId));
         if (!forUs) {
             return Result.err("audience_mismatch");
         }
@@ -275,7 +277,7 @@ public final class OidcLogin {
     private static byte[] sha256(String text) {
         try {
             return MessageDigest.getInstance("SHA-256").digest(text.getBytes(StandardCharsets.US_ASCII));
-        } catch (java.security.NoSuchAlgorithmException e) {
+        } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 is mandatory in every JDK", e);
         }
     }

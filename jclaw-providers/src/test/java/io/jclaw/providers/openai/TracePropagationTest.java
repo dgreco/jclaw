@@ -66,7 +66,8 @@ class TracePropagationTest {
     @DisplayName("an open scope becomes a traceparent header the server can parse")
     void sendsTraceparent() {
         TraceContext context = new TraceContext(TRACE, SPAN, true);
-        try (var ignored = TraceContext.open(context)) {
+        var scope = TraceContext.open(context);
+        try (scope) {
             call();
         }
         assertEquals(context.traceparent(), seen.get());

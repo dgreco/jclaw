@@ -6,6 +6,7 @@ package io.jclaw.app.runtime;
 import io.jclaw.contracts.capability.CapabilityHandler;
 import io.jclaw.contracts.extension.ExtensionRegistry;
 import io.jclaw.domain.wasm.WasmSpec;
+import io.jclaw.storage.extension.FilesystemExtensionRegistry;
 import io.jclaw.tools.wasm.WasmCapabilityHandler;
 import io.jclaw.tools.wasm.WasmLane;
 import org.slf4j.Logger;
@@ -48,7 +49,7 @@ public class WasmExtensionHost {
                 continue;
             }
             Path module = extensionsRoot.resolve(installed.name())
-                    .resolve(io.jclaw.storage.extension.FilesystemExtensionRegistry.MODULE_FILE);
+                    .resolve(FilesystemExtensionRegistry.MODULE_FILE);
             byte[] bytes;
             try {
                 bytes = Files.readAllBytes(module);

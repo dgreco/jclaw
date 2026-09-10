@@ -8,11 +8,14 @@ import io.jclaw.contracts.capability.CapabilityId;
 import io.jclaw.contracts.secret.SecretVault.Binding;
 import io.jclaw.contracts.secret.SecretVault.SecretName;
 
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.regex.Matcher;
@@ -51,7 +54,7 @@ public final class SecretInjection {
             }
             return text;
         });
-        return java.util.Collections.unmodifiableSet(found);
+        return Collections.unmodifiableSet(found);
     }
 
     /** Hosts of every absolute {@code http(s)} URL among the string arguments. */
@@ -100,7 +103,7 @@ public final class SecretInjection {
             int port = authority.lastIndexOf(':');
             host = port >= 0 ? authority.substring(0, port) : authority;
         }
-        return host.toLowerCase(java.util.Locale.ROOT);
+        return host.toLowerCase(Locale.ROOT);
     }
 
     /**
@@ -109,23 +112,23 @@ public final class SecretInjection {
      *
      * @return empty when permitted, otherwise a stable denial reason
      */
-    public static java.util.Optional<String> refuse(Binding binding, CapabilityId capability, Set<String> hosts) {
+    public static Optional<String> refuse(Binding binding, CapabilityId capability, Set<String> hosts) {
         Objects.requireNonNull(binding, "binding");
         Objects.requireNonNull(capability, "capability");
         Objects.requireNonNull(hosts, "hosts");
         if (!binding.capability().equals(capability)) {
-            return java.util.Optional.of("secret_not_bound_to_capability");
+            return Optional.of("secret_not_bound_to_capability");
         }
         if (hosts.isEmpty()) {
             // No URL to check against means no way to know where the value would go.
-            return java.util.Optional.of("secret_requires_target_host");
+            return Optional.of("secret_requires_target_host");
         }
         for (String host : hosts) {
             if (host.isEmpty() || !binding.permitsHost(host)) {
-                return java.util.Optional.of("secret_host_not_allowed");
+                return Optional.of("secret_host_not_allowed");
             }
         }
-        return java.util.Optional.empty();
+        return Optional.empty();
     }
 
     /**

@@ -3,25 +3,40 @@
 
 package io.jclaw.app.cli;
 
+import io.jclaw.app.channel.ChannelService;
 import io.jclaw.app.config.JclawProperties;
 import io.jclaw.app.http.JclawHttpServer;
+import io.jclaw.app.identity.LoginProvider;
+import io.jclaw.app.identity.OidcLogin;
+import io.jclaw.app.observability.Telemetry;
 import io.jclaw.app.runtime.JclawRuntime;
 import io.jclaw.app.runtime.RecoveryService;
 import io.jclaw.app.runtime.RetentionService;
 import io.jclaw.app.runtime.RoutineRunner;
 import io.jclaw.app.runtime.TurnRunScheduler;
+import io.jclaw.app.runtime.WatchTriggerScanner;
 import io.jclaw.contracts.event.EventLog;
+import io.jclaw.contracts.identity.SessionStore;
+import io.jclaw.contracts.inbound.InboundReviewStore;
+import io.jclaw.contracts.routine.RoutineStore;
+import io.jclaw.contracts.secret.SecretVault;
 import io.jclaw.contracts.thread.ThreadService;
 import io.jclaw.contracts.turn.RunStore;
+import io.jclaw.domain.safety.InboundPolicy;
+import io.jclaw.domain.secret.SecretInjection;
 import io.jclaw.storage.approval.JsonlApprovalStore;
+import io.jclaw.storage.projection.RunProjectionCache;
 import org.springframework.stereotype.Component;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 
 import java.io.IOException;
+import java.net.URI;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.Optional;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -61,17 +76,17 @@ public class ServeCommand implements Callable<Integer> {
     private final JsonlApprovalStore approvals;
     private final TurnRunScheduler scheduler;
     private final RoutineRunner routines;
-    private final io.jclaw.app.runtime.WatchTriggerScanner watches;
+    private final WatchTriggerScanner watches;
     private final RecoveryService recovery;
     private final RetentionService retention;
-    private final io.jclaw.app.observability.Telemetry telemetry;
-    private final io.jclaw.contracts.routine.RoutineStore routineStore;
-    private final io.jclaw.app.channel.ChannelService channelService;
-    private final io.jclaw.contracts.identity.SessionStore sessionStore;
-    private final io.jclaw.app.identity.LoginProvider oidcLogin;
-    private final io.jclaw.contracts.secret.SecretVault vault;
-    private final io.jclaw.storage.projection.RunProjectionCache projections;
-    private final io.jclaw.contracts.inbound.InboundReviewStore inboundReview;
+    private final Telemetry telemetry;
+    private final RoutineStore routineStore;
+    private final ChannelService channelService;
+    private final SessionStore sessionStore;
+    private final LoginProvider oidcLogin;
+    private final SecretVault vault;
+    private final RunProjectionCache projections;
+    private final InboundReviewStore inboundReview;
     private final Clock clock;
 
     @Option(names = "--host", description = "Interface to bind. Default 127.0.0.1.")
@@ -84,21 +99,21 @@ public class ServeCommand implements Callable<Integer> {
     private int concurrency = 2;
 
     @Option(names = "--per-user", description = "Queued runs executed at once per user. Default: the concurrency.")
-    private int perUser = 0;
+    private int perUser;
 
     public ServeCommand(
             JclawProperties properties, JclawRuntime runtime, RunStore runs, EventLog events,
             ThreadService threads, JsonlApprovalStore approvals, TurnRunScheduler scheduler,
-            RoutineRunner routines, io.jclaw.app.runtime.WatchTriggerScanner watches,
+            RoutineRunner routines, WatchTriggerScanner watches,
             RecoveryService recovery, RetentionService retention,
-            io.jclaw.app.observability.Telemetry telemetry,
-            io.jclaw.contracts.routine.RoutineStore routineStore,
-            io.jclaw.app.channel.ChannelService channelService,
-            io.jclaw.contracts.identity.SessionStore sessionStore,
-            io.jclaw.app.identity.LoginProvider oidcLogin,
-            io.jclaw.contracts.secret.SecretVault vault,
-            io.jclaw.storage.projection.RunProjectionCache projections,
-            io.jclaw.contracts.inbound.InboundReviewStore inboundReview, Clock clock) {
+            Telemetry telemetry,
+            RoutineStore routineStore,
+            ChannelService channelService,
+            SessionStore sessionStore,
+            LoginProvider oidcLogin,
+            SecretVault vault,
+            RunProjectionCache projections,
+            InboundReviewStore inboundReview, Clock clock) {
         this.channelService = channelService;
         this.sessionStore = sessionStore;
         this.oidcLogin = oidcLogin;
@@ -128,24 +143,24 @@ public class ServeCommand implements Callable<Integer> {
      * a tool cannot be spent signing people in, and one meant for another provider cannot be sent
      * to this one.
      */
-    private java.util.Optional<String> leaseOidcSecret() {
+    private Optional<String> leaseOidcSecret() {
         if (!properties.oidcConfigured()) {
-            return java.util.Optional.empty();
+            return Optional.empty();
         }
         try {
-            var name = new io.jclaw.contracts.secret.SecretVault.SecretName(properties.oidcClientSecret());
+            var name = new SecretVault.SecretName(properties.oidcClientSecret());
             var lease = vault.lease(name);
             if (lease.isEmpty()) {
-                return java.util.Optional.empty();
+                return Optional.empty();
             }
-            String host = java.net.URI.create(properties.oidcIssuer()).getHost();
-            var refusal = io.jclaw.domain.secret.SecretInjection.refuse(
-                    lease.get().info().binding(), io.jclaw.app.identity.OidcLogin.LOGIN,
-                    java.util.Set.of(host == null ? "" : host));
-            return refusal.isPresent() ? java.util.Optional.empty()
-                    : java.util.Optional.of(lease.get().value());
+            String host = URI.create(properties.oidcIssuer()).getHost();
+            var refusal = SecretInjection.refuse(
+                    lease.get().info().binding(), OidcLogin.LOGIN,
+                    Set.of(host == null ? "" : host));
+            return refusal.isPresent() ? Optional.empty()
+                    : Optional.of(lease.get().value());
         } catch (RuntimeException e) {
-            return java.util.Optional.empty();
+            return Optional.empty();
         }
     }
 
@@ -163,7 +178,7 @@ public class ServeCommand implements Callable<Integer> {
         server.withChannels(channelService);
         server.withProjectionCache(projections);
         server.withInboundScreening(
-                io.jclaw.domain.safety.InboundPolicy.parse(properties.inboundPolicy()), inboundReview);
+                InboundPolicy.parse(properties.inboundPolicy()), inboundReview);
         server.start(host, port);
         boolean anyAuth = (properties.serveToken() != null && !properties.serveToken().isBlank())
                 || !properties.serveUsers().isEmpty();
@@ -172,7 +187,7 @@ public class ServeCommand implements Callable<Integer> {
                         ? " (bearer tokens required; " + properties.serveUsers().size() + " user(s))"
                         : " (no token: loopback only is wise)")
                 + (channelService.enabled()
-                        ? ", channels " + String.join(", ", new java.util.TreeSet<>(channelService.channels()))
+                        ? ", channels " + String.join(", ", new TreeSet<>(channelService.channels()))
                         : "")
                 + ". Ctrl-C to stop.");
 

@@ -5,28 +5,34 @@ package io.jclaw.app.http;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
+import io.jclaw.app.channel.ChannelService;
+import io.jclaw.app.identity.OidcLogin;
 import io.jclaw.app.observability.Telemetry;
 import io.jclaw.app.runtime.JclawRuntime;
-import io.jclaw.domain.observability.RunTrace;
-import io.jclaw.domain.trigger.Trigger;
-import io.jclaw.contracts.routine.RoutineStore;
-import io.jclaw.contracts.identity.Role;
-import io.jclaw.contracts.identity.SessionStore;
-import io.jclaw.contracts.model.ModelProvider;
 import io.jclaw.contracts.Result;
 import io.jclaw.contracts.capability.ApprovalStore;
 import io.jclaw.contracts.event.EventLog;
+import io.jclaw.contracts.identity.Role;
+import io.jclaw.contracts.identity.SessionStore;
+import io.jclaw.contracts.inbound.InboundReviewStore;
 import io.jclaw.contracts.model.ChatMessage;
 import io.jclaw.contracts.model.ContentBlock;
+import io.jclaw.contracts.model.ModelProvider;
+import io.jclaw.contracts.routine.RoutineStore;
 import io.jclaw.contracts.thread.ThreadService;
 import io.jclaw.contracts.turn.GateId;
 import io.jclaw.contracts.turn.RunStore;
 import io.jclaw.contracts.turn.ThreadId;
 import io.jclaw.contracts.turn.TurnRunId;
 import io.jclaw.contracts.turn.TurnStatus;
+import io.jclaw.domain.observability.RunTrace;
 import io.jclaw.domain.projection.RunProjection;
+import io.jclaw.domain.safety.InboundPolicy;
+import io.jclaw.domain.safety.InboundScreening;
+import io.jclaw.domain.trigger.Trigger;
 import io.jclaw.storage.approval.JsonlApprovalStore;
 import io.jclaw.storage.event.EventCodec;
+import io.jclaw.storage.projection.RunProjectionCache;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tools.jackson.databind.json.JsonMapper;
@@ -34,15 +40,24 @@ import tools.jackson.databind.json.JsonMapper;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.UncheckedIOException;
 import java.net.InetSocketAddress;
+import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -87,11 +102,11 @@ public final class JclawHttpServer {
     private final JclawRuntime runtime;
     private final RunStore runs;
     private final EventLog events;
-    private io.jclaw.storage.projection.RunProjectionCache projections =
-            io.jclaw.storage.projection.RunProjectionCache.none();
-    private io.jclaw.domain.safety.InboundPolicy inboundPolicy =
-            io.jclaw.domain.safety.InboundPolicy.SANITIZE;
-    private io.jclaw.contracts.inbound.InboundReviewStore inboundReview;
+    private RunProjectionCache projections =
+            RunProjectionCache.none();
+    private InboundPolicy inboundPolicy =
+            InboundPolicy.SANITIZE;
+    private InboundReviewStore inboundReview;
     private final ThreadService threads;
     private final JsonlApprovalStore approvals;
     private final Clock clock;
@@ -100,10 +115,10 @@ public final class JclawHttpServer {
     private final String model;
     private final Telemetry telemetry;
     private final Optional<RoutineStore> routines;
-    private Optional<io.jclaw.app.channel.ChannelService> channels = Optional.empty();
+    private Optional<ChannelService> channels = Optional.empty();
     private Optional<SessionStore> sessions = Optional.empty();
-    private Optional<io.jclaw.app.identity.OidcLogin> oidc = Optional.empty();
-    private java.util.function.Supplier<Optional<String>> oidcClientSecret = Optional::empty;
+    private Optional<OidcLogin> oidc = Optional.empty();
+    private Supplier<Optional<String>> oidcClientSecret = Optional::empty;
     private Map<String, Role> userRoles = Map.of();
     private String loginRedirectUri = "";
     private final JsonMapper mapper = JsonMapper.builder().build();
@@ -150,7 +165,7 @@ public final class JclawHttpServer {
         this.token = Objects.requireNonNull(token, "token").filter(t -> !t.isBlank());
         Map<String, String> byToken = new LinkedHashMap<>();
         Objects.requireNonNull(users, "users").forEach((name, secret) -> {
-            new Principal(name, io.jclaw.contracts.identity.Role.MEMBER); // validates the name
+            new Principal(name, Role.MEMBER); // validates the name
             if (secret != null && !secret.isBlank()) {
                 byToken.put(secret, name);
             }
@@ -163,7 +178,7 @@ public final class JclawHttpServer {
     public void start(String host, int port) throws IOException {
         server = HttpServer.create(new InetSocketAddress(host, port), 0);
         server.createContext("/", this::dispatch);
-        server.setExecutor(java.util.concurrent.Executors.newCachedThreadPool(task -> {
+        server.setExecutor(Executors.newCachedThreadPool(task -> {
             Thread thread = new Thread(task, "jclaw-http");
             thread.setDaemon(true);
             return thread;
@@ -182,8 +197,8 @@ public final class JclawHttpServer {
      *                        provider. It is sent in both legs of the flow and must match
      */
     public void withIdentity(SessionStore sessionStore, Map<String, Role> roles,
-            io.jclaw.app.identity.OidcLogin oidc,
-            java.util.function.Supplier<Optional<String>> clientSecret, String redirectUri) {
+            OidcLogin oidc,
+            Supplier<Optional<String>> clientSecret, String redirectUri) {
         this.sessions = Optional.ofNullable(sessionStore);
         this.userRoles = Map.copyOf(Objects.requireNonNull(roles, "roles"));
         this.oidc = Optional.ofNullable(oidc);
@@ -197,7 +212,7 @@ public final class JclawHttpServer {
      * <p>Optional, and defaulted to none rather than required, because a projection cache is an
      * optimisation: a server wired without one answers identically, only slower on long runs.
      */
-    public void withProjectionCache(io.jclaw.storage.projection.RunProjectionCache cache) {
+    public void withProjectionCache(RunProjectionCache cache) {
         this.projections = Objects.requireNonNull(cache, "cache");
     }
 
@@ -208,14 +223,14 @@ public final class JclawHttpServer {
      * behaviour a deployment wants unless it has said otherwise.
      */
     public void withInboundScreening(
-            io.jclaw.domain.safety.InboundPolicy policy,
-            io.jclaw.contracts.inbound.InboundReviewStore review) {
+            InboundPolicy policy,
+            InboundReviewStore review) {
         this.inboundPolicy = Objects.requireNonNull(policy, "policy");
         this.inboundReview = Objects.requireNonNull(review, "review");
     }
 
     /** Serves {@code POST /channels/{adapter}}. Optional: without it the route is a 404. */
-    public void withChannels(io.jclaw.app.channel.ChannelService channelService) {
+    public void withChannels(ChannelService channelService) {
         this.channels = Optional.ofNullable(channelService);
     }
 
@@ -378,7 +393,7 @@ public final class JclawHttpServer {
             for (String pair : query.split("&")) {
                 int eq = pair.indexOf('=');
                 if (eq > 0 && pair.substring(0, eq).equals("access_token")) {
-                    return Optional.of(java.net.URLDecoder.decode(
+                    return Optional.of(URLDecoder.decode(
                             pair.substring(eq + 1), StandardCharsets.UTF_8));
                 }
             }
@@ -401,14 +416,14 @@ public final class JclawHttpServer {
         Role role;
         try {
             role = Role.valueOf(String.valueOf(body.getOrDefault("role", "MEMBER"))
-                    .toUpperCase(java.util.Locale.ROOT));
+                    .toUpperCase(Locale.ROOT));
         } catch (IllegalArgumentException e) {
             send(exchange, 400, Map.of("error", "role must be VIEWER, MEMBER, or OPERATOR"));
             return;
         }
-        java.time.Duration ttl;
+        Duration ttl;
         try {
-            ttl = java.time.Duration.parse(String.valueOf(body.getOrDefault("ttl", "PT12H")));
+            ttl = Duration.parse(String.valueOf(body.getOrDefault("ttl", "PT12H")));
         } catch (RuntimeException e) {
             send(exchange, 400, Map.of("error", "ttl must be an ISO duration"));
             return;
@@ -447,7 +462,7 @@ public final class JclawHttpServer {
                 int eq = pair.indexOf('=');
                 if (eq > 0) {
                     query.put(pair.substring(0, eq),
-                            java.net.URLDecoder.decode(pair.substring(eq + 1), StandardCharsets.UTF_8));
+                            URLDecoder.decode(pair.substring(eq + 1), StandardCharsets.UTF_8));
                 }
             }
         }
@@ -474,7 +489,7 @@ public final class JclawHttpServer {
         }
         String user = identity.orElseThrow().user();
         SessionStore.Session issued = sessions.get().issue(
-                user, userRoles.getOrDefault(user, Role.MEMBER), java.time.Duration.ofHours(12));
+                user, userRoles.getOrDefault(user, Role.MEMBER), Duration.ofHours(12));
         send(exchange, 200, Map.of(
                 "token", issued.token().orElseThrow(),
                 "user", issued.user(),
@@ -503,7 +518,7 @@ public final class JclawHttpServer {
         if (named != null && !named.isBlank()) {
             thread = principal.thread(named);
         } else {
-            thread = principal.thread("oai-" + java.util.UUID.randomUUID().toString().substring(0, 8));
+            thread = principal.thread("oai-" + UUID.randomUUID().toString().substring(0, 8));
             for (ChatMessage prior : parsed.priorTurns()) {
                 if (prior.role() == ChatMessage.Role.USER) {
                     threads.acceptInbound(thread, prior);
@@ -517,7 +532,7 @@ public final class JclawHttpServer {
 
         if (!parsed.stream()) {
             JclawRuntime.TurnResult result = runtime.submit(principal.tenant(),
-                    thread, parsed.inbound(), new java.util.concurrent.atomic.AtomicBoolean(false), Optional.empty());
+                    thread, parsed.inbound(), new AtomicBoolean(false), Optional.empty());
             respondCompletion(exchange, result, thread, created, requestedModel);
             return;
         }
@@ -528,24 +543,27 @@ public final class JclawHttpServer {
         exchange.sendResponseHeaders(200, 0);
         try (OutputStream out = exchange.getResponseBody()) {
             String id = "chatcmpl-" + thread.value();
-            java.util.function.Consumer<ModelProvider.StreamEvent> sink = event -> {
+            Consumer<ModelProvider.StreamEvent> sink = event -> {
                 if (event instanceof ModelProvider.StreamEvent.TextDelta delta) {
                     try {
                         writeSse(out, mapper.writeValueAsString(
                                 OpenAiCompat.chunk(id, created, requestedModel, delta.text(), null)));
                     } catch (IOException clientGone) {
-                        throw new java.io.UncheckedIOException(clientGone);
+                        throw new UncheckedIOException(clientGone);
                     }
                 }
             };
             JclawRuntime.TurnResult result;
             try {
                 result = runtime.submit(principal.tenant(), thread, parsed.inbound(),
-                        new java.util.concurrent.atomic.AtomicBoolean(false), Optional.of(sink));
-            } catch (java.io.UncheckedIOException clientGone) {
+                        new AtomicBoolean(false), Optional.of(sink));
+            } catch (UncheckedIOException clientGone) {
                 return;
             }
-            String finish = result.isSuccess() ? "stop" : "stop";
+            // Always "stop": the OpenAI schema has no finish_reason for a harness failure, and
+            // inventing one would make a client treat a refusal as a length cut-off. A failed run
+            // reports itself in the content chunk written just below.
+            String finish = "stop";
             if (!result.isSuccess()) {
                 writeSse(out, mapper.writeValueAsString(OpenAiCompat.chunk(
                         id, created, requestedModel, describeOutcome(result), null)));
@@ -584,7 +602,7 @@ public final class JclawHttpServer {
             case BLOCKED_AUTH -> "[jclaw] The run is parked awaiting provider credentials"
                     + result.gatePrompt().map(g -> " (gate " + g + ")").orElse("") + ".";
             case WAITING_PROCESS -> "[jclaw] The run is waiting on a child run; a worker resumes it.";
-            default -> "[jclaw] The run " + result.status().name().toLowerCase(java.util.Locale.ROOT)
+            default -> "[jclaw] The run " + result.status().name().toLowerCase(Locale.ROOT)
                     + result.failure().map(f -> " (" + f.category() + ")").orElse("")
                     + result.failureDetail().map(d -> ": " + d).orElse("") + ".";
         };
@@ -631,14 +649,14 @@ public final class JclawHttpServer {
         // A webhook body is written by whatever posted it. The bearer secret proves the sender
         // was told the URL, not that the payload is trustworthy — a CI system relays whatever a
         // commit message or a pull-request title happened to contain.
-        var screened = io.jclaw.domain.safety.InboundScreening.screen(
+        var screened = InboundScreening.screen(
                 raw, "hooks/" + name, inboundPolicy);
-        if (screened.decision() == io.jclaw.domain.safety.InboundScreening.Decision.REFUSED) {
+        if (screened.decision() == InboundScreening.Decision.REFUSED) {
             send(exchange, 422, Map.of("error", "refused by inbound policy",
                     "severity", screened.severity()));
             return;
         }
-        if (screened.decision() == io.jclaw.domain.safety.InboundScreening.Decision.HELD) {
+        if (screened.decision() == InboundScreening.Decision.HELD) {
             var heldRecord = inboundReview.hold("hooks/" + name,
                     runtime.scopeFor(routine.get().thread()), routine.get().thread(), raw,
                     screened.severity(), screened.assessment().rules());
@@ -702,7 +720,7 @@ public final class JclawHttpServer {
         Map<String, String> headers = new LinkedHashMap<>();
         exchange.getRequestHeaders().forEach((key, values) -> {
             if (!values.isEmpty()) {
-                headers.put(key.toLowerCase(java.util.Locale.ROOT), values.get(0));
+                headers.put(key.toLowerCase(Locale.ROOT), values.get(0));
             }
         });
         byte[] body;
@@ -711,18 +729,18 @@ public final class JclawHttpServer {
         }
         var handled = channels.get().receive(name, headers, new String(body, StandardCharsets.UTF_8));
         switch (handled) {
-            case io.jclaw.app.channel.ChannelService.Handled.Handshake handshake ->
+            case ChannelService.Handled.Handshake handshake ->
                     sendText(exchange, "text/plain; charset=utf-8", handshake.body());
-            case io.jclaw.app.channel.ChannelService.Handled.Accepted accepted ->
+            case ChannelService.Handled.Accepted accepted ->
                     send(exchange, 202, Map.of("run", accepted.run(), "thread", accepted.thread()));
-            case io.jclaw.app.channel.ChannelService.Handled.Ignored ignored ->
+            case ChannelService.Handled.Ignored ignored ->
                     send(exchange, 200, Map.of("ignored", ignored.why()));
-            case io.jclaw.app.channel.ChannelService.Handled.Refused refused ->
+            case ChannelService.Handled.Refused refused ->
                     send(exchange, 401, Map.of("error", refused.reason()));
             // 202: the platform's delivery was accepted and is not its problem any more. A
             // person has to look at it, which is not a failure the sender can act on, and
             // telling Slack "error" would have it retry a message deliberately held back.
-            case io.jclaw.app.channel.ChannelService.Handled.Held held ->
+            case ChannelService.Handled.Held held ->
                     send(exchange, 202, Map.of("held", held.id(),
                             "status", "awaiting review"));
         }

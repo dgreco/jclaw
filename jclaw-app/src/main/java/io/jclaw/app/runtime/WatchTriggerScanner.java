@@ -6,9 +6,11 @@ package io.jclaw.app.runtime;
 import io.jclaw.contracts.model.ChatMessage;
 import io.jclaw.contracts.routine.RoutineStore;
 import io.jclaw.contracts.turn.ThreadId;
+import io.jclaw.contracts.turn.TurnRunId;
 import io.jclaw.domain.trigger.Trigger;
 import io.jclaw.domain.trigger.WatchState;
 import io.jclaw.kernel.guard.WorkspaceGuard;
+import io.jclaw.storage.rows.RowStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -24,6 +26,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -56,19 +59,19 @@ public class WatchTriggerScanner {
     private static final int MAX_FILES = 20_000;
 
     /** Directory names never walked. Cheap, and they are where the churn is. */
-    private static final java.util.Set<String> SKIP =
-            java.util.Set.of(".git", "target", "build", "node_modules", ".jclaw", ".state");
+    private static final Set<String> SKIP =
+            Set.of(".git", "target", "build", "node_modules", ".jclaw", ".state");
 
     private final RoutineStore routines;
     private final JclawRuntime runtime;
     private final Path workspace;
     private final Clock clock;
-    private final io.jclaw.storage.rows.RowStore store;
+    private final RowStore store;
     private final Map<String, String> fingerprints = new ConcurrentHashMap<>();
     private volatile boolean loaded;
 
     public WatchTriggerScanner(RoutineStore routines, JclawRuntime runtime,
-            WorkspaceGuard workspace, io.jclaw.storage.rows.RowStore watchState, Clock clock) {
+            WorkspaceGuard workspace, RowStore watchState, Clock clock) {
         this.routines = Objects.requireNonNull(routines, "routines");
         this.runtime = Objects.requireNonNull(runtime, "runtime");
         this.workspace = Objects.requireNonNull(workspace, "workspace").root();
@@ -105,7 +108,7 @@ public class WatchTriggerScanner {
     }
 
     /** One routine fired by a file change. */
-    public record Fired(RoutineStore.Routine routine, String glob, io.jclaw.contracts.turn.TurnRunId run) { }
+    public record Fired(RoutineStore.Routine routine, String glob, TurnRunId run) { }
 
     /**
      * Checks every enabled watch routine and enqueues the ones whose tree changed.

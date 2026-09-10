@@ -12,6 +12,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.regex.Pattern;
 
 /**
@@ -59,7 +60,7 @@ public final class SecretStaging {
         if (!binding.capability().equals(capability)) {
             return Optional.of("secret_not_bound_to_capability");
         }
-        if (!binding.hosts().equals(java.util.Set.of(SUBPROCESS))) {
+        if (!binding.hosts().equals(Set.of(SUBPROCESS))) {
             // A secret bound to real hosts was scoped to where it may be *sent*. A subprocess can
             // send it anywhere, so honouring that binding here would quietly discard it.
             return Optional.of("secret_not_bound_for_subprocess");

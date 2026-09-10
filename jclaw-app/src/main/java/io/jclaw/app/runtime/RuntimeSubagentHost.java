@@ -11,6 +11,7 @@ import io.jclaw.contracts.turn.RunStore;
 import io.jclaw.contracts.turn.ThreadId;
 import io.jclaw.contracts.turn.TurnRunId;
 import io.jclaw.contracts.turn.TurnScope;
+import io.jclaw.contracts.turn.TurnStatus;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 
@@ -116,7 +117,7 @@ public class RuntimeSubagentHost implements SubagentHost {
                 .map(ChatMessage::displayText)
                 .orElse("status: " + child.status());
         return Result.ok(new Progress.Finished(child.run(), new SubagentResult(
-                reply, child.status() == io.jclaw.contracts.turn.TurnStatus.COMPLETED, 0)));
+                reply, child.status() == TurnStatus.COMPLETED, 0)));
     }
 
     /**

@@ -3,14 +3,21 @@
 
 package io.jclaw.app.config;
 
+import io.jclaw.contracts.identity.Role;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.DefaultValue;
 
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.Arrays;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * All externalized configuration, bound from {@code application.yaml}, environment, or CLI flags.
@@ -23,6 +30,22 @@ import java.util.Optional;
  * @param stateDir             where transcripts and the event log are written
  * @param model                model id passed to the provider
  * @param provider             {@code mock} or {@code anthropic}
+ * @param openaiBaseUrl        base URL for the {@code openai} provider. Override for an
+ *                             OpenAI-compatible gateway.
+ * @param ollamaBaseUrl        base URL for a local Ollama daemon.
+ * @param localBaseUrl         base URL for the {@code local} provider: any OpenAI-compatible
+ *                             inference server — LM Studio ({@code http://localhost:1234/v1}), vLLM
+ *                             ({@code http://localhost:8000/v1}), llama.cpp's server, LocalAI.
+ *                             Blank means not configured: the {@code local} provider refuses to
+ *                             start without it (there is no sensible default port to guess), and
+ *                             the failover chain omits the local hop entirely.
+ * @param openrouterBaseUrl    base URL for OpenRouter. Override only for a proxy or a self-hosted
+ *                             gateway.
+ * @param openrouterReferer    optional {@code HTTP-Referer} sent to OpenRouter, which uses it to
+ *                             attribute traffic to an app on its dashboards. Blank means the header
+ *                             is omitted entirely.
+ * @param openrouterTitle      optional {@code X-Title} sent to OpenRouter. Blank means the header
+ *                             is omitted.
  * @param approvalMode         {@code read-only}, {@code interactive}, or {@code trusted}
  * @param allowPrivateNetworks lets tools reach loopback and RFC1918 addresses. Development only —
  *                             it re-opens the SSRF surface the egress guard exists to close.
@@ -32,6 +55,13 @@ import java.util.Optional;
  * @param contextMaxTokens     estimated token budget (4 chars/token) for those messages; lower it
  *                             for local models with small context windows
  * @param systemPrompt         system prompt prepended to every turn
+ * @param mockScript           turns for the {@code mock} provider, replayed in order. Lets the
+ *                             whole CLI — including tool calls and the approval flow — be
+ *                             exercised with no API key and no network, which is the same
+ *                             property that makes the mock provider useful in tests. Each entry is
+ *                             either {@code text:<reply>} or
+ *                             {@code tool:<capability>:<k=v,k=v>}; ignored unless the provider is
+ *                             {@code mock}
  * @param embeddingProvider    {@code none} (default), {@code openai}, {@code openrouter},
  *                             {@code ollama}, or {@code local}; adds vector similarity to memory
  *                             retrieval. Credentials come from the same environment variables as
@@ -148,31 +178,16 @@ public record JclawProperties(
 
         @DefaultValue("mock") String provider,
 
-        /** Base URL for the {@code openai} provider. Override for an OpenAI-compatible gateway. */
         @DefaultValue("https://api.openai.com/v1") String openaiBaseUrl,
 
-        /** Base URL for a local Ollama daemon. */
         @DefaultValue("http://localhost:11434/v1") String ollamaBaseUrl,
 
-        /**
-         * Base URL for the {@code local} provider: any OpenAI-compatible inference server —
-         * LM Studio ({@code http://localhost:1234/v1}), vLLM ({@code http://localhost:8000/v1}),
-         * llama.cpp's server, LocalAI. Blank means not configured: the {@code local} provider
-         * refuses to start without it (there is no sensible default port to guess), and the
-         * failover chain omits the local hop entirely.
-         */
         @DefaultValue("") String localBaseUrl,
 
-        /** Base URL for OpenRouter. Override only for a proxy or a self-hosted gateway. */
         @DefaultValue("https://openrouter.ai/api/v1") String openrouterBaseUrl,
 
-        /**
-         * Optional {@code HTTP-Referer} sent to OpenRouter, which uses it to attribute traffic to
-         * an app on its dashboards. Blank means the header is omitted entirely.
-         */
         @DefaultValue("") String openrouterReferer,
 
-        /** Optional {@code X-Title} sent to OpenRouter. Blank means the header is omitted. */
         @DefaultValue("jclaw") String openrouterTitle,
 
         @DefaultValue("interactive") String approvalMode,
@@ -191,14 +206,6 @@ public record JclawProperties(
                 + "Use the provided tools when they help. Be concise and factual.")
         String systemPrompt,
 
-        /**
-         * Turns for the {@code mock} provider, replayed in order. Lets the whole CLI — including
-         * tool calls and the approval flow — be exercised with no API key and no network, which is
-         * the same property that makes the mock provider useful in tests.
-         *
-         * <p>Each entry is either {@code text:<reply>} or
-         * {@code tool:<capability>:<k=v,k=v>}. Ignored unless the provider is {@code mock}.
-         */
         @DefaultValue("") List<String> mockScript,
 
         @DefaultValue("none") String embeddingProvider,
@@ -323,7 +330,7 @@ public record JclawProperties(
      */
     public record LoopFamilySpec(String base, String reviewInstruction) {
         public LoopFamilySpec {
-            base = base == null || base.isBlank() ? "reflective" : base.trim().toLowerCase(java.util.Locale.ROOT);
+            base = base == null || base.isBlank() ? "reflective" : base.trim().toLowerCase(Locale.ROOT);
             reviewInstruction = reviewInstruction == null ? "" : reviewInstruction.trim();
         }
     }
@@ -465,7 +472,7 @@ public record JclawProperties(
      * on a language server and a scratch skill, {@code prod} only the reviewed ones. Selecting a
      * profile is the operator saying "exactly these", so applying one disables what it omits.
      */
-    public Optional<java.util.Set<String>> profileMembers() {
+    public Optional<Set<String>> profileMembers() {
         if (extensionProfile.isBlank()) {
             return Optional.empty();
         }
@@ -473,18 +480,18 @@ public record JclawProperties(
         if (members == null) {
             return Optional.empty();
         }
-        return Optional.of(java.util.Arrays.stream(members.split(","))
+        return Optional.of(Arrays.stream(members.split(","))
                 .map(String::trim).filter(name -> !name.isEmpty())
-                .collect(java.util.stream.Collectors.toCollection(java.util.LinkedHashSet::new)));
+                .collect(Collectors.toCollection(LinkedHashSet::new)));
     }
 
     /** Roles by user, parsed and validated. An unlisted user is a member. */
-    public Map<String, io.jclaw.contracts.identity.Role> roles() {
-        Map<String, io.jclaw.contracts.identity.Role> parsed = new java.util.LinkedHashMap<>();
+    public Map<String, Role> roles() {
+        Map<String, Role> parsed = new LinkedHashMap<>();
         serveUserRoles.forEach((user, role) -> {
             try {
-                parsed.put(user, io.jclaw.contracts.identity.Role.valueOf(
-                        role.trim().toUpperCase(java.util.Locale.ROOT)));
+                parsed.put(user, Role.valueOf(
+                        role.trim().toUpperCase(Locale.ROOT)));
             } catch (IllegalArgumentException e) {
                 throw new IllegalArgumentException(
                         "jclaw.serve-user-roles." + user + " must be viewer, member, or operator");
@@ -556,11 +563,11 @@ public record JclawProperties(
     }
 
     /** The environment variable the embedding provider reads its credential from, if any. */
-    public java.util.Optional<String> embeddingCredentialEnvVar() {
+    public Optional<String> embeddingCredentialEnvVar() {
         return switch (embeddingProvider) {
-            case "openai" -> java.util.Optional.of("OPENAI_API_KEY");
-            case "openrouter" -> java.util.Optional.of("OPENROUTER_API_KEY");
-            default -> java.util.Optional.empty();
+            case "openai" -> Optional.of("OPENAI_API_KEY");
+            case "openrouter" -> Optional.of("OPENROUTER_API_KEY");
+            default -> Optional.empty();
         };
     }
 
@@ -604,7 +611,6 @@ public record JclawProperties(
         return stateDir.resolve("skills");
     }
 
-    /** Scheduled routines. */
     /** Where a watch routine's last-seen tree fingerprint is kept, so a watch survives a restart. */
     public Path watchStatePath() {
         return stateDir.resolve("watches.jsonl");
@@ -615,6 +621,7 @@ public record JclawProperties(
         return stateDir.resolve("inbound.jsonl");
     }
 
+    /** Scheduled routines. */
     public Path routinesPath() {
         return stateDir.resolve("routines.jsonl");
     }
@@ -676,15 +683,15 @@ public record JclawProperties(
      * {@code models} report the same answer as the wiring actually uses; a hard-coded check
      * elsewhere would drift the moment a provider is added.
      */
-    public java.util.Optional<String> credentialEnvVar() {
+    public Optional<String> credentialEnvVar() {
         return switch (provider) {
-            case "anthropic" -> java.util.Optional.of("ANTHROPIC_API_KEY");
-            case "openai" -> java.util.Optional.of("OPENAI_API_KEY");
-            case "openrouter" -> java.util.Optional.of("OPENROUTER_API_KEY");
+            case "anthropic" -> Optional.of("ANTHROPIC_API_KEY");
+            case "openai" -> Optional.of("OPENAI_API_KEY");
+            case "openrouter" -> Optional.of("OPENROUTER_API_KEY");
             // The failover chain builds itself from whatever keys are present, so no single
             // variable is required for it to start.
-            case "mock", "ollama", "local", "failover" -> java.util.Optional.empty();
-            default -> java.util.Optional.empty();
+            case "mock", "ollama", "local", "failover" -> Optional.empty();
+            default -> Optional.empty();
         };
     }
 }

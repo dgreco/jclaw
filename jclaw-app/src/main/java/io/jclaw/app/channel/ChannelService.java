@@ -14,23 +14,26 @@ import io.jclaw.contracts.event.EventLog;
 import io.jclaw.contracts.event.JclawEvent;
 import io.jclaw.contracts.inbound.InboundReviewStore;
 import io.jclaw.contracts.model.ChatMessage;
-import io.jclaw.domain.safety.InboundPolicy;
-import io.jclaw.domain.safety.InboundScreening;
 import io.jclaw.contracts.secret.SecretVault;
 import io.jclaw.contracts.thread.ThreadService;
 import io.jclaw.contracts.turn.RunStore;
 import io.jclaw.contracts.turn.ThreadId;
 import io.jclaw.contracts.turn.TurnStatus;
+import io.jclaw.domain.safety.InboundPolicy;
+import io.jclaw.domain.safety.InboundScreening;
 import io.jclaw.domain.secret.SecretInjection;
 import io.jclaw.kernel.guard.EgressGuard;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.net.URI;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Runs the channel side of the loop: a webhook becomes a turn, and a finished run becomes a reply.
@@ -71,7 +74,7 @@ public final class ChannelService {
     private InboundPolicy policy;
 
     public ChannelService(
-            java.util.List<ChannelAdapter> adapters, Map<String, Credentials> credentials,
+            List<ChannelAdapter> adapters, Map<String, Credentials> credentials,
             ChannelBindingStore bindings, JclawRuntime runtime, ThreadService threads, RunStore runs,
             SecretVault vault, EgressGuard egress, EventLog events,
             InboundReviewStore review, InboundPolicy policy) {
@@ -101,7 +104,7 @@ public final class ChannelService {
     /** Configured channel ids, for {@code doctor}. */
     public Set<String> channels() {
         return adapters.keySet().stream().filter(credentials::containsKey)
-                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+                .collect(Collectors.toUnmodifiableSet());
     }
 
     /** What a webhook request produced, so the HTTP surface knows what to answer. */
@@ -224,7 +227,7 @@ public final class ChannelService {
         }
         Optional<String> url = adapter.sendUrl(target);
         if (url.isPresent()) {
-            Result<java.net.URI, String> checked = egress.check(url.get());
+            Result<URI, String> checked = egress.check(url.get());
             if (checked.isErr()) {
                 return Result.err("endpoint_" + checked.errorAsOptional().orElse("denied"));
             }
