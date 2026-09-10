@@ -1,0 +1,9 @@
+{
+  "name": "wordcount",
+  "version": "1.0.0",
+  "kind": "wasm",
+  "description": "Counts lines, words and bytes in a workspace file.",
+  "permissions": ["log", "read_file"],
+  "tools": ["count"],
+  "effect": "read_local"
+}

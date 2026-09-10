@@ -1,0 +1,18 @@
+# SPDX-FileCopyrightText: 2026 David Greco
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "jclaw-wasm-wordcount"
+version = "1.0.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Example jclaw WebAssembly extension: counts lines, words and bytes in a workspace file."
+
+[lib]
+crate-type = ["cdylib"]
+
+[profile.release]
+opt-level = "z"     # the module is read by people; small also means fewer instructions metered
+lto = true
+panic = "abort"     # a panic traps, and the lane reports module_trapped
+strip = true

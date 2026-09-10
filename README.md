@@ -771,6 +771,8 @@ The runtime is pure Java, so the native image keeps working. Three things bound 
 
 A module is instantiated per call, so no tool call leaves state for the next. The calling convention is three exports, `memory`, `jclaw_alloc(len) -> ptr`, and `jclaw_call(ptr, len) -> i64` where the result packs a pointer and a length, kept small because each addition is another thing a module author can get wrong.
 
+**A working example is in [`examples/wasm-wordcount`](examples/wasm-wordcount)** — about 2.5 KB of `no_std` Rust that reads a workspace file through the host and counts it, with a build script, the manifest, and the whole install-approve-call round trip written out.
+
 **Trust is decided at install, once, by signature.** A publisher generates a key pair with `jclaw extensions keygen --out keys` and signs a package with `jclaw extensions sign ./pkg --key keys/publisher.key`, which writes `jclaw-extension.sig`: an Ed25519 signature over a digest of every file in the package. An operator who lists the publisher's public key under `trusted-publishers` gets a **`VERIFIED`** install, and a verified manifest's declared effect class is believed: a read-only MCP tool that declares `read_local` can run unattended in `trusted` mode. An unsigned package installs as **`COMMUNITY`**: its tools are `NETWORK` whatever the manifest claims, and every call gates. A package whose signature does not verify, or whose publisher is not trusted, is refused outright, since a package claiming a publisher it cannot prove is worse than one claiming none. Editing a signed package breaks its signature.
 
 **Registries: `search`, `add`, `outdated`, `upgrade`.** A registry is a static document at `<base>/index.json` listing packages, versions, and a URL and digest for each. That is the least interesting design available on purpose: no protocol, no account, nothing to run but a web server, so anyone can publish one.
@@ -1003,6 +1005,7 @@ jclaw/
 ├── scripts/byte-verify.sh  source-integrity guard
 ├── scripts/license-check.sh SPDX header guard
 ├── .github/                Actions pipeline, issue and PR templates, Dependabot
+├── examples/               runnable examples, starting with a WebAssembly extension
 ├── LICENSE                 Apache License 2.0, verbatim
 ├── NOTICE                  attribution that travels with a redistribution
 ├── CONTRIBUTING.md         how to get a change in, and what will fail your build

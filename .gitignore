@@ -10,6 +10,11 @@ buildNumber.properties
 .mvn/timing.properties
 .mvn/wrapper/maven-wrapper.jar
 
+# --- Examples ---
+# build.sh lays out an installable package here; it is entirely derived from src/ and the
+# manifest, and module.wasm is a build artefact like any other.
+examples/*/dist/
+
 # --- GraalVM native image ---
 # The captured Anthropic SDK metadata under src/main/resources/META-INF/native-image is
 # deliberately versioned; only build artefacts are ignored.
