@@ -69,7 +69,21 @@ final class WebUi {
             const $ = (id) => document.getElementById(id);
             const token = () => $("token").value.trim();
             const thread = () => $("thread").value.trim() || "web";
-            try { $("token").value = sessionStorage.getItem("jclaw-token") || ""; $("thread").value = sessionStorage.getItem("jclaw-thread") || "web"; } catch (e) {}
+            // When a token is configured, the page itself is behind auth, so a browser can only
+            // load it as `/?access_token=...`. Seeding the field from that parameter closes a
+            // papercut that looked like a broken UI: you authenticated well enough to fetch the
+            // page, then every button failed with 401 because the field was still empty.
+            // The URL is then rewritten to drop the token, so it does not sit in the address bar,
+            // get copied into a chat, or land in browser history.
+            try {
+              const fromUrl = new URLSearchParams(location.search).get("access_token");
+              $("token").value = fromUrl || sessionStorage.getItem("jclaw-token") || "";
+              $("thread").value = sessionStorage.getItem("jclaw-thread") || "web";
+              if (fromUrl) {
+                sessionStorage.setItem("jclaw-token", fromUrl);
+                history.replaceState(null, "", location.pathname);
+              }
+            } catch (e) {}
             const remember = () => { try { sessionStorage.setItem("jclaw-token", token()); sessionStorage.setItem("jclaw-thread", thread()); } catch (e) {} };
             const headers = () => token() ? { "Authorization": "Bearer " + token(), "Content-Type": "application/json" } : { "Content-Type": "application/json" };
             const status = (t) => { $("status").textContent = t; };

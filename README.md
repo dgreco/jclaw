@@ -362,12 +362,15 @@ docker compose run --rm jclaw doctor
 docker compose run --rm jclaw run "hello"
 docker compose exec postgres psql -U jclaw -d jclaw -c '\dt'   # twelve tables, once jclaw has run
 docker compose --profile serve up                              # the HTTP surface on :8080
+# then open http://localhost:8080/?access_token=local-operator-token
 docker compose --profile "*" down -v                           # and throw it all away
 ```
 
 The first and last lines are not decoration, and both were learned by getting them wrong.
 
 **Start the database explicitly.** `docker compose run` starts it as a dependency, so the `jclaw` lines work without it — but `docker compose exec postgres …` attaches to a running container and starts nothing, so on its own it fails with `service "postgres" is not running`. Starting it up front makes every line work in any order. Run the `\dt` before any `jclaw` line and it correctly reports no relations: jclaw applies its migrations at *its own* startup, so the schema appears when jclaw first runs, not when PostgreSQL does.
+
+**Open the UI with the token in the URL.** Plain `http://localhost:8080` answers `401 {"error":"unauthorized"}`, which looks like a broken server and is not. The compose stack sets `JCLAW_SERVE_TOKEN`, every route including `/` requires it, and a browser cannot be told to send an `Authorization` header by typing an address. So the page accepts `?access_token=…` as well, which is the same parameter the UI's own `EventSource` already had to use. Loading it that way seeds the token box and then rewrites the address bar to drop the token, so it does not linger in history or get pasted into a chat along with the URL. A token in a URL is still a token somewhere it can be read — fine for a throwaway local stack, not a habit to take to a shared one.
 
 **Tear down with `--profile "*"`.** A plain `docker compose down -v` cannot see a service that belongs to a profile, so it leaves `serve` behind — and because that stopped container still references the network `down` just removed, the *next* `--profile serve up` fails with `failed to set up container networking: network … not found`. `--remove-orphans` does not help, since `serve` is defined in the file and merely absent from the active profile. Naming the profiles is what removes it, and `"*"` covers any added later.
 
@@ -382,6 +385,7 @@ docker compose -f docker-compose.native.yml run --rm jclaw doctor
 docker compose -f docker-compose.native.yml run --rm jclaw run "hello"
 docker compose -f docker-compose.native.yml exec postgres psql -U jclaw -d jclaw -c '\dt'
 docker compose -f docker-compose.native.yml --profile serve up   # HTTP on :8081
+# then open http://localhost:8081/?access_token=local-operator-token
 docker compose -f docker-compose.native.yml --profile "*" down -v
 ```
 

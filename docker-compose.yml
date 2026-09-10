@@ -92,6 +92,10 @@ services:
     # A profiled service is invisible to a plain `docker compose down`: tearing this one down
     # needs `--profile "*"` (or `--profile serve`), or the stopped container survives and the
     # next `up` fails on the network it still references.
+    # Every route needs JCLAW_SERVE_TOKEN, including the UI at `/`, and a browser cannot
+    # be told to send an Authorization header by typing an address. Open
+    # http://localhost:8080/?access_token=$JCLAW_SERVE_TOKEN — the page seeds its token box
+    # from that parameter and then scrubs it out of the address bar.
     profiles: ["serve"]
 
 volumes:
