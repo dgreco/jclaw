@@ -320,12 +320,12 @@ jobs:
       contents: write            # the only job that writes anything back to the repository
     steps:
       # No checkout: nothing here reads the sources, which is `GIT_STRATEGY: none` on GitLab.
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: jclaw-native
           path: native
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: jclaw-jar
           path: dist
