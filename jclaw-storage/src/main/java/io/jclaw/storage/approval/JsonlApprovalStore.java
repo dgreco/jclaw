@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 David Greco
+// SPDX-License-Identifier: Apache-2.0
+
 package io.jclaw.storage.approval;
 
 import io.jclaw.contracts.capability.ApprovalStore;

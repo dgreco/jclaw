@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 David Greco
+// SPDX-License-Identifier: Apache-2.0
+
 package io.jclaw.contracts.capability;
 
 import java.util.Objects;

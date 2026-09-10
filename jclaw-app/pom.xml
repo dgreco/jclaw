@@ -80,6 +80,36 @@
     <plugins>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-resources-plugin</artifactId>
+        <executions>
+          <execution>
+            <!-- Apache-2.0 section 4(a) and 4(d): a redistribution must carry a copy of the
+                 licence and the NOTICE contents. This module is the one that produces a
+                 distributable — the uber jar — and a LICENSE file sitting in the repository
+                 reaches nobody who downloads that jar. Copied rather than referenced because
+                 ${project.basedir}/.. escapes the module and only resolves in a reactor build;
+                 the two files land in META-INF, where every convention looks for them. -->
+            <id>copy-licence-into-jar</id>
+            <phase>process-resources</phase>
+            <goals><goal>copy-resources</goal></goals>
+            <configuration>
+              <outputDirectory>${project.build.outputDirectory}/META-INF</outputDirectory>
+              <resources>
+                <resource>
+                  <directory>${project.basedir}/..</directory>
+                  <includes>
+                    <include>LICENSE</include>
+                    <include>NOTICE</include>
+                  </includes>
+                  <filtering>false</filtering>
+                </resource>
+              </resources>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-compiler-plugin</artifactId>
         <configuration>
           <annotationProcessorPaths>

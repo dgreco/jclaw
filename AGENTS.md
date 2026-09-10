@@ -32,6 +32,7 @@ feature surface is a fraction of IronClaw's. See **Not built yet** for the hones
 - Test (single): `mvn test -Dtest=ClassName#methodName -pl <module>` (add `-am` if deps are stale)
 - Run (jar): `java -jar jclaw-app/target/jclaw-app-0.1.0-SNAPSHOT.jar <command>`
 - Source-integrity guard: `./scripts/byte-verify.sh scan`
+- Licence-header guard: `./scripts/license-check.sh`
 - Browser-UI key handling: `./scripts/web-ui-keys.sh` (needs a local Chrome; not in `mvn test`)
 
 ### PostgreSQL
@@ -497,6 +498,19 @@ the Anthropic SDK, and tool lanes may not read the process environment.
   `RowStore`, and `StorageBackend` picks the medium once. `results.jsonl` holds full capability
   payloads. Result refs are evidence: `JclawRuntime.validate` re-resolves each one in a
   `Completed` exit, and a run resumed in a second process completes with refs the first minted.
+- **Every new `.java` and `.sh` file needs the two-line SPDX header**, before the `package`
+  declaration (or directly after the shebang), with a blank line after it:
+  ```java
+  // SPDX-FileCopyrightText: 2026 David Greco
+  // SPDX-License-Identifier: Apache-2.0
+  ```
+  A file copied out of this tree then carries its licence with it, which a root `LICENSE` alone
+  cannot do. `scripts/license-check.sh` enforces it in the `verify` CI stage — on a bare debian
+  image, so a missing header fails in seconds rather than after a compile — and also asserts
+  `LICENSE`, `NOTICE`, and the root POM's `<licenses>` block, which is the declaration that
+  actually reaches a consumer of the jar. It searches only the first five lines: an SPDX string
+  further down a file is a coincidence (a fixture, a javadoc quote), not a header. Verified to
+  fire by stripping a real header, not just by passing.
 - Git: initialized on `main` (September 2026). `.gitignore` excludes `target/`, IDE files, `.claude/settings.local.json`, and `.byte-manifest`; the captured native-image metadata is versioned on purpose.
 
 ## Not built yet

@@ -52,6 +52,9 @@ RUN apt-get update \
  && chown -R jclaw:jclaw /state /workspace
 
 COPY --from=build /src/jclaw-app/target/jclaw /usr/local/bin/jclaw
+# The image is a redistribution. The native binary has no META-INF a reader can open, so this
+# is the only copy of the licence that travels with it.
+COPY --from=build /src/LICENSE /src/NOTICE /usr/share/doc/jclaw/
 USER jclaw
 WORKDIR /workspace
 

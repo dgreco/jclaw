@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 David Greco
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Built-in tool suite and host adapters: shell, file, glob/grep, webfetch,
  * memory and skill tools — each declaring a per-call {@code ToolEffect}.

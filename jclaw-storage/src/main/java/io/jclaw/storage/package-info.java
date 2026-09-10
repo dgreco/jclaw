@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 David Greco
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Durable state: append-only JSONL event, audit, and checkpoint stores;
  * JdbcClient repositories over the H2 default store; migrations; FTS posting

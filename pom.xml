@@ -19,6 +19,16 @@
   <name>jclaw</name>
   <description>Java/Spring Boot clone of the IronClaw harness: hexagonal agent OS, pure functional core.</description>
 
+  <!-- Inherited by every module, so each artifact declares its own licence rather than relying
+       on a LICENSE file that does not travel inside a jar. -->
+  <licenses>
+    <license>
+      <name>Apache-2.0</name>
+      <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+      <distribution>repo</distribution>
+    </license>
+  </licenses>
+
   <properties>
     <!-- Pure-Java WebAssembly runtime: no native library, so the native image keeps working. -->
     <chicory.version>1.7.5</chicory.version>

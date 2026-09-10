@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 David Greco
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Capability kernel: registry, gate evaluation, tool policy, leak engine,
  * vault logic, audit policy, skill catalog, routine policy.

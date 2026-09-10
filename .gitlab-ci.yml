@@ -1,7 +1,7 @@
 # GitLab CI for jclaw.
 #
 # Stages
-#   verify   source-integrity scan (no toolchain needed)
+#   verify   source-integrity and licence-header scans (no toolchain needed)
 #   build    compile + full test suite, publishes JUnit reports and the uber jar
 #   native   GraalVM native image, built and smoke-tested on every pipeline; a broken native
 #            build fails the pipeline the same way a broken test does
@@ -51,6 +51,12 @@ byte-verify:
   image: debian:bookworm-slim
   script:
     - ./scripts/byte-verify.sh scan
+
+license-verify:
+  stage: verify
+  image: debian:bookworm-slim
+  script:
+    - ./scripts/license-check.sh
 
 build-test:
   stage: build

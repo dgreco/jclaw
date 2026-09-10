@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 David Greco
+// SPDX-License-Identifier: Apache-2.0
+
 package io.jclaw.app.architecture;
 
 import com.tngtech.archunit.core.domain.JavaClasses;

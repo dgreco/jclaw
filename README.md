@@ -43,6 +43,7 @@ jclaw-domain/src/main/java/io/jclaw/domain/loop/TurnMachine.java ...
   - [Exit codes](#exit-codes)
 - [Security model in one page](#security-model-in-one-page)
 - [Project layout](#project-layout)
+- [Licence](#licence)
 - [Further reading](#further-reading)
 
 ---
@@ -982,11 +983,46 @@ jclaw/
 ├── jclaw-storage/          JSONL stores, hand-written codecs, filesystem skill catalog
 ├── jclaw-app/              Spring wiring, picocli CLI, JclawRuntime, scheduler, HTTP surface, native profile
 ├── scripts/byte-verify.sh  source-integrity guard
+├── scripts/license-check.sh SPDX header guard
+├── LICENSE                 Apache License 2.0, verbatim
+├── NOTICE                  attribution that travels with a redistribution
 ├── ARCH.md                 C4 architecture and the full turn lifecycle
 └── PARITY.md               what IronClaw has that jclaw does not
 ```
 
 Dependencies flow strictly downward (contracts ← domain ← kernel ← loop/tools/storage ← app; providers depend on contracts only) and `DependencyLawTest` enforces it. Notable choices: Jackson 3 (`tools.jackson`) via Boot 4 — do not add `jackson-databind` 2.x; hand-written codecs for native-image safety; JLine for the REPL; picocli bridged to Spring through its `IFactory`.
+
+## Licence
+
+jclaw is licensed under the **Apache License, Version 2.0**. The full text is in
+[LICENSE](LICENSE); the attribution that a redistribution must carry is in [NOTICE](NOTICE).
+
+Every `.java` and `.sh` file carries a two-line SPDX header, so a file copied out of this tree
+carries its licence with it and scanners can read the tree without guessing:
+
+```java
+// SPDX-FileCopyrightText: 2026 David Greco
+// SPDX-License-Identifier: Apache-2.0
+```
+
+`scripts/license-check.sh` enforces that, along with the presence of `LICENSE`, `NOTICE`, and the
+`<licenses>` block in the root POM. It runs in the `verify` stage next to `byte-verify.sh`, on a
+bare image before any toolchain exists, so a missing header fails in seconds rather than after a
+compile. It was verified to fire by stripping a real header, not just by passing.
+
+**The artifacts carry the licence, not just the repository.** Apache-2.0 sections 4(a) and 4(d)
+bind a redistribution, and nobody who downloads a jar can see a file in a git tree:
+
+| artifact | where the licence is |
+|---|---|
+| uber jar | `META-INF/LICENSE`, `META-INF/NOTICE`, plus the `<licenses>` block in the POM under `META-INF/maven/` |
+| every module jar | the `<licenses>` block, inherited from the reactor parent |
+| `Dockerfile` image | `/opt/jclaw/LICENSE` and `/opt/jclaw/NOTICE` (and inside the jar) |
+| `Dockerfile.native` image | `/usr/share/doc/jclaw/` — the binary has no `META-INF` to open, so this is the only copy that travels with it |
+
+Contributions are accepted under the same licence, per Apache-2.0 section 5. jclaw is an
+independent reimplementation of IronClaw's architecture and contains no IronClaw source; see
+[NOTICE](NOTICE).
 
 ## Further reading
 

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 David Greco
+// SPDX-License-Identifier: Apache-2.0
+
 package io.jclaw.domain.secret;
 
 import io.jclaw.contracts.Result;

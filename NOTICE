@@ -1,0 +1,18 @@
+jclaw
+Copyright 2026 David Greco
+
+This product includes software developed by David Greco.
+
+Licensed under the Apache License, Version 2.0. See the LICENSE file in the
+root of this distribution, or http://www.apache.org/licenses/LICENSE-2.0.
+
+jclaw is an independent reimplementation of the architecture of IronClaw
+(https://github.com/nearai/ironclaw). No IronClaw source is included or
+derived from; the correspondence is one of design, and the layering, the
+turn/run lifecycle, and the capability model are credited to that project.
+
+The uber jar and the native image bundle third-party dependencies. Those
+carry their own licenses and their own notices, which apply to them and not
+to the terms above; the licenses are declared in each dependency's own
+metadata and are not restated here, because a hand-copied list goes stale on
+the first version bump.

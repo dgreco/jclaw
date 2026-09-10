@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: 2026 David Greco
+# SPDX-License-Identifier: Apache-2.0
 # Drives the real served browser UI in headless Chrome and checks every way a
 # message can be sent or deliberately not sent.
 #

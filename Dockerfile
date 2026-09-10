@@ -27,6 +27,9 @@ FROM eclipse-temurin:21-jre
 RUN useradd --create-home --shell /bin/bash jclaw
 WORKDIR /workspace
 COPY --from=build /src/jclaw-app/target/jclaw-app-*.jar /opt/jclaw/jclaw.jar
+# The image is a redistribution, so it carries the licence and the notice at a path a person
+# can find without unzipping the jar. They are inside it too, under META-INF.
+COPY --from=build /src/LICENSE /src/NOTICE /opt/jclaw/
 # Both mount points must exist in the image and be owned by the runtime user: a named volume
 # takes its ownership from the image directory the first time it is mounted, and a root-owned
 # /state means the very first command fails trying to create its skills directory.

@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: 2026 David Greco
+# SPDX-License-Identifier: Apache-2.0
 # Guards against the transport hazard: tool-param writes can silently lowercase
 # camelCase identifiers on disk. Compilation catches it in .java, but this gates
 # the build (and hand-checks) over every source type, including poms and SQL.

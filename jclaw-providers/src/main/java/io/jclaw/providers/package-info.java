@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 David Greco
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * {@code ModelProvider} adapters: mock (scripted, golden-test default), Anthropic
  * Messages with SSE streaming, a generic OpenAI-compatible client, ollama, and the
