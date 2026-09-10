@@ -387,30 +387,47 @@ coverage-wiki:
       fi
     - |
       set -eu
-      remote="https://oauth2:${WIKI_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.wiki.git"
-      # A wiki's git repository does not exist until the wiki has a page, so a first run clones
-      # nothing and starts one instead. GitLab creates it on the first push.
-      # symbolic-ref, not rev-parse: a wiki that exists but has no page clones successfully with
-      # an unborn HEAD, where `rev-parse --abbrev-ref HEAD` answers the literal "HEAD" and the
-      # push refspec becomes nonsense. symbolic-ref reports the branch HEAD points at either way.
-      if git clone --quiet "$remote" wiki 2>/dev/null; then
+      # The token stays out of the URL and out of argv: a credential helper hands it to git only
+      # when git asks. An embedded token would otherwise appear in every error message git prints
+      # about the remote, and those are exactly the messages this job needs to show.
+      remote="https://${CI_SERVER_HOST}/${CI_PROJECT_PATH}.wiki.git"
+      export WIKI_TOKEN
+      helper='!f() { echo username=oauth2; echo "password=$WIKI_TOKEN"; }; f'
+
+      if git -c credential.helper="$helper" clone --quiet "$remote" wiki 2>clone.err; then
         branch="$(git -C wiki symbolic-ref --short HEAD 2>/dev/null || echo main)"
       else
-        mkdir -p wiki && git -C wiki init --quiet --initial-branch=main
-        git -C wiki remote add origin "$remote"
+        # Do not guess. A wiki that does not exist yet and a wiki this token may not read fail
+        # the same way from here, and only one of them is fixed by pushing.
+        echo "coverage-wiki: could not clone the wiki. git said:"
+        sed 's/^/    /' clone.err
+        echo
+        echo "  If it says 404: the wiki has no page yet, or the feature is off —"
+        echo "    Settings > General > Visibility, project features, permissions > Wiki"
+        echo "  If it says 403: WIKI_TOKEN is missing the write_repository scope."
+        echo
+        echo "  Trying to create it by pushing anyway."
+        rm -rf wiki && mkdir -p wiki && git -C wiki init --quiet --initial-branch=main
         branch=main
       fi
+
       cp Coverage.md wiki/Coverage.md
       git -C wiki config user.email "ci@${CI_SERVER_HOST}"
       git -C wiki config user.name "jclaw CI"
+      git -C wiki config credential.helper "$helper"
+      git -C wiki remote remove origin 2>/dev/null || true
+      git -C wiki remote add origin "$remote"
       git -C wiki add Coverage.md
       if git -C wiki diff --cached --quiet; then
         echo "coverage-wiki: unchanged since the last pipeline"
       else
         git -C wiki commit --quiet -m "Coverage for ${CI_COMMIT_SHORT_SHA}"
-        git -C wiki push --quiet origin "HEAD:$branch"
+        git -C wiki push origin "HEAD:$branch"
         echo "coverage-wiki: published to ${CI_PROJECT_URL}/-/wikis/Coverage"
       fi
+  # A report that cannot be published is not a reason to fail a build. The job still goes red on
+  # its own row, with git's own words in the log, which is what makes it fixable.
+  allow_failure: true
   artifacts:
     when: always
     expire_in: 2 weeks
