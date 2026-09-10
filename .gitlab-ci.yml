@@ -365,11 +365,26 @@ coverage-wiki:
   image: alpine:3.21
   needs: [build-test]
   rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $WIKI_TOKEN
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
   script:
     - apk add --no-cache git python3
+    # Generated first, so the artifact below exists whether or not the page can be published.
     - python3 scripts/coverage-markdown.py
         jclaw-app/target/site/jacoco-aggregate/jacoco.csv "Coverage" > Coverage.md
+    # Says why rather than vanishing. Gating the whole job on $WIKI_TOKEN meant that an instance
+    # without one had no coverage-wiki job in the pipeline at all, which looks identical to
+    # "nothing was ever configured" — and is what someone reads as the feature being broken.
+    - |
+      if [ -z "${WIKI_TOKEN:-}" ]; then
+        echo "coverage-wiki: not published — no WIKI_TOKEN set."
+        echo
+        echo "  CI_JOB_TOKEN cannot write a wiki, so this needs a project access token:"
+        echo "    Settings > Access tokens   — add one with the write_repository scope"
+        echo "    Settings > CI/CD > Variables — add it as WIKI_TOKEN, masked"
+        echo
+        echo "  The report itself is attached to this job as Coverage.md."
+        exit 0
+      fi
     - |
       set -eu
       remote="https://oauth2:${WIKI_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.wiki.git"
