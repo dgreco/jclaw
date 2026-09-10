@@ -35,6 +35,7 @@ feature surface is a fraction of IronClaw's. See **Not built yet** for the hones
 - Coverage: any `mvn verify`; `./scripts/coverage.sh` prints the total
 - Source-integrity guard: `./scripts/byte-verify.sh scan`
 - Licence-header guard: `./scripts/license-check.sh`
+- README flavours: `./scripts/readme-sync.sh` (and `--check`, which CI runs)
 - Browser-UI key handling: `./scripts/web-ui-keys.sh` (needs a local Chrome; not in `mvn test`)
 
 ### Static analysis
@@ -609,11 +610,13 @@ the Anthropic SDK, and tool lanes may not read the process environment.
   `.github/workflows/ci.yml` run the same six jobs; a change to one needs the same change to
   the other, and nothing checks that. Each also has a seventh job that publishes the JaCoCo
   report to its own Pages — `coverage-pages` on GitHub, `pages` on GitLab — so a reader is never
-  sent across to the other remote for a number this one computed. The README badge's link is deliberately
-  local — a heading in the file, not either host's report — because one file is rendered by both
-  and any absolute link sends one audience to the other's infrastructure. The mirror's own
-  coverage badge is a GitLab project badge, which lives in that project's settings rather than in
-  a file both hosts render, which is what lets it point somewhere GitHub never sees. Where they differ it is deliberate and commented at the
+  sent across to the other remote for a number this one computed. The coverage badge opens the report belonging to
+  whichever host is rendering it, which one file cannot do: **GitHub renders `.github/README.md`
+  in preference to the root one, GitLab renders only the root one**, so there are two, generated
+  from one body by `scripts/readme-sync.sh`. Edit the root file and run the script; both
+  pipelines' verify stage runs `--check` and fails on drift. The generator also prefixes every
+  relative link with `../` in the GitHub copy, because that file lives a directory down and
+  `LICENSE` there would mean `.github/LICENSE`. Where they differ it is deliberate and commented at the
   step: GitHub's runners have a Docker socket, so the dind service and its three cleared TLS
   variables are absent; its `postgres` service gates on `pg_isready`, so the `/dev/tcp` wait
   loop is absent; `setup-graalvm` installs the toolchain, so there is no ENTRYPOINT to override.

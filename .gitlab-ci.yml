@@ -60,6 +60,14 @@ license-verify:
   script:
     - ./scripts/license-check.sh
 
+readme-sync:
+  stage: verify
+  image: debian:bookworm-slim
+  # The two READMEs are generated from one body, and drift is invisible until somebody reads the
+  # wrong one: a GitLab reader sent to github.io, or a GitHub reader to a page they cannot open.
+  script:
+    - ./scripts/readme-sync.sh --check
+
 build-test:
   stage: build
   image: maven:3.9.11-eclipse-temurin-21

@@ -1,3 +1,4 @@
+<!-- Generated from ../README.md by scripts/readme-sync.sh. Edit that one. -->
 # jclaw
 
 <!--
@@ -12,10 +13,10 @@
   The coverage and test figures are the ones stated under Coverage, refreshed when those move.
 -->
 <!-- BADGES:START -->
-[![pipeline](https://gitlab.davidgreco.it/dgreco/jclaw/badges/main/pipeline.svg)](https://gitlab.davidgreco.it/dgreco/jclaw/-/pipelines)
-[![coverage](https://gitlab.davidgreco.it/dgreco/jclaw/badges/main/coverage.svg)](https://gitlab.davidgreco.it/dgreco/jclaw/-/pages)
+[![CI](https://github.com/dgreco/jclaw/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dgreco/jclaw/actions/workflows/ci.yml)
+[![coverage](https://img.shields.io/badge/coverage-73.3%25-brightgreen)](https://dgreco.github.io/jclaw/)
 [![tests](https://img.shields.io/badge/tests-432-brightgreen)](#coverage)
-[![license](https://img.shields.io/github/license/dgreco/jclaw?color=blue)](LICENSE)
+[![license](https://img.shields.io/github/license/dgreco/jclaw?color=blue)](../LICENSE)
 [![Java](https://img.shields.io/badge/Java-21%2B-orange)](#building)
 [![GraalVM](https://img.shields.io/badge/GraalVM-native%20image-blue)](#native-image)
 <!-- BADGES:END -->
@@ -72,7 +73,7 @@ jclaw-domain/src/main/java/io/jclaw/domain/loop/TurnMachine.java ...
 
 ## What it is
 
-jclaw reimplements the **architecture** of IronClaw — the seven-layer ladder, the turn/run lifecycle, the untrusted-exit trust model, and the single capability-authority boundary — in about 32k lines of Java. It is not a port: the feature surface is a fraction of IronClaw's (see [PARITY.md](PARITY.md)), but the load-bearing ideas are intact:
+jclaw reimplements the **architecture** of IronClaw — the seven-layer ladder, the turn/run lifecycle, the untrusted-exit trust model, and the single capability-authority boundary — in about 32k lines of Java. It is not a port: the feature surface is a fraction of IronClaw's (see [PARITY.md](../PARITY.md)), but the load-bearing ideas are intact:
 
 | Idea | What it means for you |
 |---|---|
@@ -84,7 +85,7 @@ jclaw reimplements the **architecture** of IronClaw — the seven-layer ladder, 
 
 Everything is durable JSONL under `~/.jclaw`: a run can park in one process, be approved in a second, and resume in a third. There is no database, and no server unless you start one (`jclaw serve`).
 
-**Status.** Milestones M0–M7 plus subagents (synchronous or asynchronous), MCP, streaming on every provider, lease-based crash recovery, a per-thread run lock, context compaction with model summaries, vector memory, configurable denials and egress lists, per-tool rate limits, injection heuristics, auth and process gates with expiry, a scheduler with `submit` and `worker`, an HTTP surface with run projections, event streams, and per-user tenants, attachments, store retention, an encrypted secret vault with host-side credential injection, a container sandbox for the shell lane, a SQL storage backend (embedded H2 or PostgreSQL) with schema migrations, signed extension packages, execution-stage hooks, a second loop family, Prometheus metrics with OTLP trace export, webhook, heartbeat, and event triggers, MCP over HTTP with resources, prompts, lazily started servers, OAuth 2.1 client credentials, and sampling, channel adapters for Slack and Telegram, OIDC login with roles and per-tenant policy, a WebAssembly extension lane, extension registries with versioned upgrades and profiles, subprocess secret staging with an outbound leak scan and a vault per tenant, per-concept SQL tables with pooled connections and materialised projections, latency histograms with W3C trace propagation, hooks on prompt assembly and gate raising with loop families from configuration, and filesystem, inbound-message, and fan-out triggers. 416 tests pass across the modules, including 15 machine-checked architecture rules (ArchUnit). Both the uber jar and the native image are verified end to end, including subprocess spawning for MCP servers and shell tools. [PARITY.md](PARITY.md) lists what IronClaw still has that jclaw does not.
+**Status.** Milestones M0–M7 plus subagents (synchronous or asynchronous), MCP, streaming on every provider, lease-based crash recovery, a per-thread run lock, context compaction with model summaries, vector memory, configurable denials and egress lists, per-tool rate limits, injection heuristics, auth and process gates with expiry, a scheduler with `submit` and `worker`, an HTTP surface with run projections, event streams, and per-user tenants, attachments, store retention, an encrypted secret vault with host-side credential injection, a container sandbox for the shell lane, a SQL storage backend (embedded H2 or PostgreSQL) with schema migrations, signed extension packages, execution-stage hooks, a second loop family, Prometheus metrics with OTLP trace export, webhook, heartbeat, and event triggers, MCP over HTTP with resources, prompts, lazily started servers, OAuth 2.1 client credentials, and sampling, channel adapters for Slack and Telegram, OIDC login with roles and per-tenant policy, a WebAssembly extension lane, extension registries with versioned upgrades and profiles, subprocess secret staging with an outbound leak scan and a vault per tenant, per-concept SQL tables with pooled connections and materialised projections, latency histograms with W3C trace propagation, hooks on prompt assembly and gate raising with loop families from configuration, and filesystem, inbound-message, and fan-out triggers. 416 tests pass across the modules, including 15 machine-checked architecture rules (ArchUnit). Both the uber jar and the native image are verified end to end, including subprocess spawning for MCP servers and shell tools. [PARITY.md](../PARITY.md) lists what IronClaw still has that jclaw does not.
 
 ---
 
@@ -180,8 +181,8 @@ mvn -Panalysis verify                                      # javac -Xlint, SpotB
 The `analysis` profile is opt-in and adds three layers that see different things: `javac
 -Xlint:all` with `failOnWarning`, SpotBugs with FindSecBugs over the bytecode, and PMD 7 over the
 source. The tree is clean under all three and each fails the build. Their filter files —
-[`config/spotbugs-exclude.xml`](config/spotbugs-exclude.xml) and
-[`config/pmd-ruleset.xml`](config/pmd-ruleset.xml) — give a reason in prose for every exclusion,
+[`config/spotbugs-exclude.xml`](../config/spotbugs-exclude.xml) and
+[`config/pmd-ruleset.xml`](../config/pmd-ruleset.xml) — give a reason in prose for every exclusion,
 because an exclusion nobody can audit is worse than no filter at all.
 
 Test totals by module (verified on this checkout, with a Docker daemon so the PostgreSQL test runs rather than skipping): domain 166 · app 160 · storage 43 · providers 28 · kernel 14 · contracts 14 · tools 7 = **432, 0 failures**.
@@ -200,7 +201,7 @@ this page opens the one belonging to the host you are reading it on:
 
 That works because the two hosts read different files: GitHub renders `.github/README.md` in
 preference to the root one, GitLab renders only the root one. Both are generated from one body by
-[`scripts/readme-sync.sh`](scripts/readme-sync.sh) — edit the root file, run the script, and the
+[`scripts/readme-sync.sh`](../scripts/readme-sync.sh) — edit the root file, run the script, and the
 verify stage of both pipelines fails the build if either copy is stale.
 
 Read the aggregate rather than the per-module figures: most of `contracts`, `kernel` and `tools` is exercised by integration tests that live in `jclaw-app`, so their own reports read 5–16% while the aggregate, which credits a class wherever it actually ran, reads 73%. `DependencyLawTest` in `jclaw-app` machine-checks the layer ladder with ArchUnit; the rules were confirmed to fire by planting deliberate violations.
@@ -739,7 +740,7 @@ jclaw skills list
 jclaw skills show release-notes
 ```
 
-**A working example is in [`examples/skill-fanout`](examples/skill-fanout)** — a `parallel-review`
+**A working example is in [`examples/skill-fanout`](../examples/skill-fanout)** — a `parallel-review`
 skill that splits an independent task into facets and gives each facet its own agent. Three
 runnable demos: one scripted, one against whatever model you have configured (including a local
 ollama, with no key at all), and one that puts several agents on the machine at once.
@@ -828,7 +829,7 @@ The runtime is pure Java, so the native image keeps working. Three things bound 
 
 A module is instantiated per call, so no tool call leaves state for the next. The calling convention is three exports, `memory`, `jclaw_alloc(len) -> ptr`, and `jclaw_call(ptr, len) -> i64` where the result packs a pointer and a length, kept small because each addition is another thing a module author can get wrong.
 
-**A working example is in [`examples/wasm-wordcount`](examples/wasm-wordcount)** — about 2.5 KB of `no_std` Rust that reads a workspace file through the host and counts it, with a build script, the manifest, and the whole install-approve-call round trip written out.
+**A working example is in [`examples/wasm-wordcount`](../examples/wasm-wordcount)** — about 2.5 KB of `no_std` Rust that reads a workspace file through the host and counts it, with a build script, the manifest, and the whole install-approve-call round trip written out.
 
 **Trust is decided at install, once, by signature.** A publisher generates a key pair with `jclaw extensions keygen --out keys` and signs a package with `jclaw extensions sign ./pkg --key keys/publisher.key`, which writes `jclaw-extension.sig`: an Ed25519 signature over a digest of every file in the package. An operator who lists the publisher's public key under `trusted-publishers` gets a **`VERIFIED`** install, and a verified manifest's declared effect class is believed: a read-only MCP tool that declares `read_local` can run unattended in `trusted` mode. An unsigned package installs as **`COMMUNITY`**: its tools are `NETWORK` whatever the manifest claims, and every call gates. A package whose signature does not verify, or whose publisher is not trusted, is refused outright, since a package claiming a publisher it cannot prove is worse than one claiming none. Editing a signed package breaks its signature.
 
@@ -933,7 +934,7 @@ Two seams let host code change how a run behaves without touching the machine.
 
 The kernel still checks whatever a hook hands back, so a hook cannot grant what policy would refuse. Every rewrite and veto is recorded as a `hook.fired` audit event with its stage. A gate hook that throws is treated as no opinion rather than as a refusal — a buggy hook turning every gate into a denial would be a worse failure than the bug it came from. Built-in hooks are enabled by id in `hooks`; any Spring bean implementing `LoopHook` is picked up as well, which is the seam a plugin uses.
 
-**Loop families** are strategies over the same state, decisions, and checkpoints. `canonical` is the machine described in [ARCH.md](ARCH.md). `reflective` intercepts the moment the canonical machine would persist a reply and first asks the model to review the draft against the conversation and return the reply it stands behind; the revision replaces the draft, the review call is charged to the budget, is skipped when the budget is exhausted, and falls back to the draft if it fails. A family cannot invent a new kind of effect: the decision type is sealed and the interpreter is the only executor.
+**Loop families** are strategies over the same state, decisions, and checkpoints. `canonical` is the machine described in [ARCH.md](../ARCH.md). `reflective` intercepts the moment the canonical machine would persist a reply and first asks the model to review the draft against the conversation and return the reply it stands behind; the revision replaces the draft, the review call is charged to the budget, is skipped when the budget is exhausted, and falls back to the draft if it fails. A family cannot invent a new kind of effect: the decision type is sealed and the interpreter is the only executor.
 
 A family can also come from configuration, which is the case that actually recurs — a team wants the review to check something their work needs checked:
 
@@ -1076,7 +1077,7 @@ Dependencies flow strictly downward (contracts ← domain ← kernel ← loop/to
 ## Licence
 
 jclaw is licensed under the **Apache License, Version 2.0**. The full text is in
-[LICENSE](LICENSE); the attribution that a redistribution must carry is in [NOTICE](NOTICE).
+[LICENSE](../LICENSE); the attribution that a redistribution must carry is in [NOTICE](../NOTICE).
 
 Every `.java` and `.sh` file carries a two-line SPDX header, so a file copied out of this tree
 carries its licence with it and scanners can read the tree without guessing:
@@ -1103,25 +1104,25 @@ bind a redistribution, and nobody who downloads a jar can see a file in a git tr
 
 Contributions are accepted under the same licence, per Apache-2.0 section 5. jclaw is an
 independent reimplementation of IronClaw's architecture and contains no IronClaw source; see
-[NOTICE](NOTICE).
+[NOTICE](../NOTICE).
 
 ## Contributing
 
 Issues and pull requests go to GitHub. The project is also mirrored to a private GitLab, which
 is where CI originally lived — hence two pipeline files that must be changed together.
 
-[CONTRIBUTING.md](CONTRIBUTING.md) is the short version: three commands that must pass, the SPDX
+[CONTRIBUTING.md](../CONTRIBUTING.md) is the short version: three commands that must pass, the SPDX
 header every new source file needs, and five rules that will otherwise fail your build in ways
-the error message does not explain. [AGENTS.md](AGENTS.md) is the long version.
+the error message does not explain. [AGENTS.md](../AGENTS.md) is the long version.
 
 **Security issues do not go in the issue tracker.** Use GitHub's private vulnerability
-reporting; [SECURITY.md](SECURITY.md) says what is in scope and, just as usefully, which
+reporting; [SECURITY.md](../SECURITY.md) says what is in scope and, just as usefully, which
 limitations are already known and written down.
 
 ## Further reading
 
-- [ARCH.md](ARCH.md) — C4 model (context, containers, components, code), the step-by-step lifecycle from prompt to result, and a full sequence diagram.
-- [PARITY.md](PARITY.md) — an honest enumeration of what IronClaw has that jclaw does not.
-- [AGENTS.md](AGENTS.md) — working notes for contributors and coding agents, including the pitfalls list. `CLAUDE.md` is a one-line include of it.
-- [CONTRIBUTING.md](CONTRIBUTING.md) · [SECURITY.md](SECURITY.md) · [CHANGELOG.md](CHANGELOG.md) · [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+- [ARCH.md](../ARCH.md) — C4 model (context, containers, components, code), the step-by-step lifecycle from prompt to result, and a full sequence diagram.
+- [PARITY.md](../PARITY.md) — an honest enumeration of what IronClaw has that jclaw does not.
+- [AGENTS.md](../AGENTS.md) — working notes for contributors and coding agents, including the pitfalls list. `CLAUDE.md` is a one-line include of it.
+- [CONTRIBUTING.md](../CONTRIBUTING.md) · [SECURITY.md](../SECURITY.md) · [CHANGELOG.md](../CHANGELOG.md) · [CODE_OF_CONDUCT.md](../CODE_OF_CONDUCT.md)
 - [IronClaw](https://github.com/nearai/ironclaw) — the original.

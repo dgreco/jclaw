@@ -67,6 +67,10 @@ jobs:
       - run: ./scripts/byte-verify.sh scan
       - run: ./scripts/license-check.sh
 
+      # The two READMEs are generated from one body; drift is invisible until somebody reads the
+      # wrong one, so it is checked where the other cheap guards run.
+      - run: ./scripts/readme-sync.sh --check
+
   build-test:
     name: Build and test
     runs-on: ubuntu-latest

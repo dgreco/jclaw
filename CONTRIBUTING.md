@@ -14,9 +14,15 @@ pipeline, change both.
 mvn clean install            # build + the full suite
 ./scripts/byte-verify.sh scan
 ./scripts/license-check.sh
+./scripts/readme-sync.sh     # after editing README.md — see below
 ```
 
-All three run in CI and all three must pass.
+All four run in CI and all four must pass.
+
+`README.md` is the source; `.github/README.md` is generated from it, because GitHub renders that
+one in preference and GitLab renders only the root — which is what lets each host's coverage badge
+open the report that host published. Edit the root file, run `./scripts/readme-sync.sh`, and
+commit both.
 
 Before a change that touches much code, also run the static analysis:
 
