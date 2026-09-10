@@ -109,13 +109,13 @@ jobs:
 
       # Two artifacts rather than one, so the release job can fetch the jar without dragging
       # every surefire report along with it.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: jclaw-jar
           retention-days: 14
           path: jclaw-app/target/jclaw-app-*.jar
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()                 # reports are most wanted exactly when the build failed
         with:
           name: test-reports
@@ -302,7 +302,7 @@ jobs:
           # GitHub carries it as a job output, declared under `outputs:` above.
           echo "arch=$(uname -m)" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: jclaw-native
           retention-days: 28
