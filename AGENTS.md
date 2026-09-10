@@ -599,6 +599,10 @@ the Anthropic SDK, and tool lanes may not read the process environment.
 - **Coverage is in the ordinary build, and the number has one source.** JaCoCo runs on every
   `mvn verify`; `report-aggregate` in jclaw-app produces the whole-tree figure, which works
   because that module depends on every other one, so no module exists solely to hold a report.
+  Note what GitLab cannot do: without Pages it refuses to render an HTML artifact in the browser
+  at all, because inline artifact serving is the Pages daemon's job. On an instance without them
+  the coverage badge can only point at GitLab's own coverage chart, the per-line view is the merge
+  request diff, and the HTML report is a download.
   Read the aggregate and ignore the per-module figures: most of `contracts`, `kernel` and
   `tools` is exercised by integration tests that live in `jclaw-app`, so their own reports say
   5-16% while the aggregate — which credits a class wherever it was executed — says 73%.

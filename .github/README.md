@@ -196,10 +196,10 @@ this page opens the one belonging to the host you are reading it on:
 
 | Remote | Job | Where it shows |
 |---|---|---|
-| GitHub | `coverage-pages` | the report on [GitHub Pages](https://dgreco.github.io/jclaw/), and the total in the run summary |
+| GitHub | `coverage-pages` | the browsable report on [GitHub Pages](https://dgreco.github.io/jclaw/), and the total in the run summary |
 | GitLab | `coverage-report` | **covered and uncovered lines painted onto the merge request diff**, from a Cobertura report |
-| GitLab | `build-test` | the percentage on the MR widget and the project badge, from the `coverage:` keyword; the HTML report in the job's artifacts |
-| GitLab | `pages` | the HTML report on that instance's Pages, where it has them |
+| GitLab | `build-test` | the percentage on the MR widget, the badge, and the coverage chart the badge links to; the HTML report as a downloadable artifact |
+| GitLab | `pages` | the browsable report on that instance's Pages, where it has them |
 
 The diff annotation is the one that changes behaviour, because it puts the number where the
 decision is made. GitLab reads only Cobertura and JaCoCo does not write it, so
@@ -208,9 +208,12 @@ by pulling the published converter image, which is amd64-only against an arm64 r
 no versioned tag. It is stdlib-only, and was verified against that converter's own output: the
 same 219 files, the same 12,187 line entries, the same rates.
 
-GitLab Pages is an instance-level feature, so the `pages` job runs only where `CI_PAGES_URL` is
-defined and skips cleanly elsewhere; the badge points at the artifact browser, which needs nothing
-enabled and serves the same directory.
+Without Pages, GitLab will not render an HTML artifact in the browser — inline artifact serving is
+done by the Pages daemon, so an instance without it answers *"the source could not be displayed
+because it is stored as a job artifact"*. The mirror's badge therefore points at GitLab's own
+coverage chart, which it renders natively; the per-line view is the merge request diff, and the
+full HTML report remains a download. The `pages` job runs only where `CI_PAGES_URL` is defined,
+so it skips cleanly on an instance without Pages and starts publishing by itself on one with them.
 
 That works because the two hosts read different files: GitHub renders `.github/README.md` in
 preference to the root one, GitLab renders only the root one. Both are generated from one body by

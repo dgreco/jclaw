@@ -27,13 +27,19 @@ check=""
 # The reports, one per host. Both are published by that host's own pipeline: `coverage-pages` in
 # .github/workflows/ci.yml, `pages` in .gitlab-ci.yml.
 GITHUB_REPORT="https://dgreco.github.io/jclaw/"
-# The mirror's report comes out of build-test's artifacts rather than off GitLab Pages, because
-# Pages is an instance-level feature (`pages_external_url`) and this one does not have it turned
-# on — with it off, the project has no Pages menu and /-/pages is a 404. The artifact browser
-# needs nothing enabled and serves the same directory, for anyone who can see the project.
-# If Pages is ever enabled there, this is the one line to change: the `pages` job already
-# publishes to it, and the URL is on the project's Deploy > Pages page.
-GITLAB_REPORT="https://gitlab.davidgreco.it/dgreco/jclaw/-/jobs/artifacts/main/file/jclaw-app/target/site/jacoco-aggregate/index.html?job=build-test"
+# GitLab's own coverage chart, not the HTML report. Without Pages, GitLab refuses to render an
+# HTML artifact in the browser at all — "the source could not be displayed because it is stored
+# as a job artifact" — because inline artifact serving is done by the Pages daemon
+# (`artifacts_server`), which an instance without Pages does not run. So the badge goes somewhere
+# GitLab renders natively: the coverage-over-time chart fed by the `coverage:` keyword.
+#
+# The per-line detail lives on the merge request diff, painted from the Cobertura report the
+# coverage-report job produces, which is the view worth having anyway. The full HTML report is
+# still in build-test's artifacts as a download.
+#
+# If Pages is ever enabled on the instance, this is the one line to change — the `pages` job
+# already publishes there and un-skips itself.
+GITLAB_REPORT="https://gitlab.davidgreco.it/dgreco/jclaw/-/pipelines/charts"
 
 # Each host gets its own status badge and its own coverage badge, and every link stays on the
 # host doing the rendering. GitLab's coverage badge is live — the number comes from the
