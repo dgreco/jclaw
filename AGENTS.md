@@ -600,9 +600,14 @@ the Anthropic SDK, and tool lanes may not read the process environment.
   `mvn verify`; `report-aggregate` in jclaw-app produces the whole-tree figure, which works
   because that module depends on every other one, so no module exists solely to hold a report.
   Note what GitLab cannot do: without Pages it refuses to render an HTML artifact in the browser
-  at all, because inline artifact serving is the Pages daemon's job. On an instance without them
-  the coverage badge can only point at GitLab's own coverage chart, the per-line view is the merge
-  request diff, and the HTML report is a download.
+  at all, because inline artifact serving is the Pages daemon's job. Markdown it does render, so on an instance without
+  them `coverage-wiki` writes the report to the project wiki and the badge opens that; the
+  per-line view is the merge request diff, painted from the Cobertura report. The wiki job is
+  opt-in — CI_JOB_TOKEN cannot write a wiki, so it needs a project access token in `WIKI_TOKEN`
+  and its rule simply does not match without one. Two things the rehearsal caught before it ever
+  ran: a wiki that exists but has no page clones fine with an unborn HEAD, where
+  `rev-parse --abbrev-ref HEAD` answers the literal "HEAD" and the push refspec becomes nonsense
+  (`symbolic-ref --short` is right), and an unchanged report must not produce an empty commit.
   Read the aggregate and ignore the per-module figures: most of `contracts`, `kernel` and
   `tools` is exercised by integration tests that live in `jclaw-app`, so their own reports say
   5-16% while the aggregate — which credits a class wherever it was executed — says 73%.

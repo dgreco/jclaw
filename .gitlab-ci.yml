@@ -351,6 +351,56 @@ coverage-report:
         coverage_format: cobertura
         path: cobertura.xml
 
+# The report as a wiki page, because this instance cannot show it any other way. A wiki page is
+# Markdown, which GitLab renders natively at a stable URL — unlike an HTML artifact, which it
+# refuses to display without the Pages daemon. What it loses is JaCoCo's clickable source view;
+# what it keeps is the part anybody reads.
+#
+# Opt-in, and silent when it is not set up: WIKI_TOKEN is a project access token with the
+# `write_repository` scope, because CI_JOB_TOKEN cannot write a wiki. Without it the rule does not
+# match and the job never runs, so a clone of this repository elsewhere does not fail a pipeline
+# over a wiki it has no business writing to.
+coverage-wiki:
+  stage: deploy
+  image: alpine:3.21
+  needs: [build-test]
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $WIKI_TOKEN
+  script:
+    - apk add --no-cache git python3
+    - python3 scripts/coverage-markdown.py
+        jclaw-app/target/site/jacoco-aggregate/jacoco.csv "Coverage" > Coverage.md
+    - |
+      set -eu
+      remote="https://oauth2:${WIKI_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.wiki.git"
+      # A wiki's git repository does not exist until the wiki has a page, so a first run clones
+      # nothing and starts one instead. GitLab creates it on the first push.
+      # symbolic-ref, not rev-parse: a wiki that exists but has no page clones successfully with
+      # an unborn HEAD, where `rev-parse --abbrev-ref HEAD` answers the literal "HEAD" and the
+      # push refspec becomes nonsense. symbolic-ref reports the branch HEAD points at either way.
+      if git clone --quiet "$remote" wiki 2>/dev/null; then
+        branch="$(git -C wiki symbolic-ref --short HEAD 2>/dev/null || echo main)"
+      else
+        mkdir -p wiki && git -C wiki init --quiet --initial-branch=main
+        git -C wiki remote add origin "$remote"
+        branch=main
+      fi
+      cp Coverage.md wiki/Coverage.md
+      git -C wiki config user.email "ci@${CI_SERVER_HOST}"
+      git -C wiki config user.name "jclaw CI"
+      git -C wiki add Coverage.md
+      if git -C wiki diff --cached --quiet; then
+        echo "coverage-wiki: unchanged since the last pipeline"
+      else
+        git -C wiki commit --quiet -m "Coverage for ${CI_COMMIT_SHORT_SHA}"
+        git -C wiki push --quiet origin "HEAD:$branch"
+        echo "coverage-wiki: published to ${CI_PROJECT_URL}/-/wikis/Coverage"
+      fi
+  artifacts:
+    when: always
+    expire_in: 2 weeks
+    paths: [Coverage.md]
+
 pages:
   stage: deploy
   image: debian:bookworm-slim

@@ -198,8 +198,9 @@ this page opens the one belonging to the host you are reading it on:
 |---|---|---|
 | GitHub | `coverage-pages` | the browsable report on [GitHub Pages](https://dgreco.github.io/jclaw/), and the total in the run summary |
 | GitLab | `coverage-report` | **covered and uncovered lines painted onto the merge request diff**, from a Cobertura report |
-| GitLab | `build-test` | the percentage on the MR widget, the badge, and the coverage chart the badge links to; the HTML report as a downloadable artifact |
-| GitLab | `pages` | the browsable report on that instance's Pages, where it has them |
+| GitLab | `coverage-wiki` | the report as a **wiki page** the badge links to, rendered in the browser: totals, per module, per package |
+| GitLab | `build-test` | the percentage on the MR widget and the badge, from the `coverage:` keyword; the HTML report as a downloadable artifact |
+| GitLab | `pages` | the browsable HTML report on that instance's Pages, where it has them |
 
 The diff annotation is the one that changes behaviour, because it puts the number where the
 decision is made. GitLab reads only Cobertura and JaCoCo does not write it, so
@@ -208,11 +209,16 @@ by pulling the published converter image, which is amd64-only against an arm64 r
 no versioned tag. It is stdlib-only, and was verified against that converter's own output: the
 same 219 files, the same 12,187 line entries, the same rates.
 
-Without Pages, GitLab will not render an HTML artifact in the browser — inline artifact serving is
-done by the Pages daemon, so an instance without it answers *"the source could not be displayed
-because it is stored as a job artifact"*. The mirror's badge therefore points at GitLab's own
-coverage chart, which it renders natively; the per-line view is the merge request diff, and the
-full HTML report remains a download. The `pages` job runs only where `CI_PAGES_URL` is defined,
+Without Pages, GitLab will not render an HTML artifact in the browser at all — inline artifact
+serving is done by the Pages daemon, so an instance without it answers *"the source could not be
+displayed because it is stored as a job artifact"*. Markdown it does render, so `coverage-wiki`
+writes the report to the project wiki with
+[`scripts/coverage-markdown.py`](../scripts/coverage-markdown.py) and the badge opens that. It loses
+JaCoCo's clickable source view and keeps the part anybody reads.
+
+That job is opt-in and silent when unconfigured: `CI_JOB_TOKEN` cannot write a wiki, so it needs a
+project access token with the `write_repository` scope in a masked CI variable named `WIKI_TOKEN`.
+Without it the rule does not match, the job never runs, and nothing fails. The `pages` job runs only where `CI_PAGES_URL` is defined,
 so it skips cleanly on an instance without Pages and starts publishing by itself on one with them.
 
 That works because the two hosts read different files: GitHub renders `.github/README.md` in

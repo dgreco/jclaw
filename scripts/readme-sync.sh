@@ -31,7 +31,9 @@ GITHUB_REPORT="https://dgreco.github.io/jclaw/"
 # HTML artifact in the browser at all — "the source could not be displayed because it is stored
 # as a job artifact" — because inline artifact serving is done by the Pages daemon
 # (`artifacts_server`), which an instance without Pages does not run. So the badge goes somewhere
-# GitLab renders natively: the coverage-over-time chart fed by the `coverage:` keyword.
+# GitLab renders natively: a wiki page. The `coverage-wiki` job writes the report there as
+# Markdown on every default-branch pipeline, because Markdown is the only thing that instance will
+# render in a browser — an HTML artifact it refuses to display without the Pages daemon.
 #
 # The per-line detail lives on the merge request diff, painted from the Cobertura report the
 # coverage-report job produces, which is the view worth having anyway. The full HTML report is
@@ -39,7 +41,7 @@ GITHUB_REPORT="https://dgreco.github.io/jclaw/"
 #
 # If Pages is ever enabled on the instance, this is the one line to change — the `pages` job
 # already publishes there and un-skips itself.
-GITLAB_REPORT="https://gitlab.davidgreco.it/dgreco/jclaw/-/pipelines/charts"
+GITLAB_REPORT="https://gitlab.davidgreco.it/dgreco/jclaw/-/wikis/Coverage"
 
 # Each host gets its own status badge and its own coverage badge, and every link stays on the
 # host doing the rendering. GitLab's coverage badge is live — the number comes from the
