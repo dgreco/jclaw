@@ -30,8 +30,12 @@
   </licenses>
 
   <properties>
-    <!-- Pure-Java WebAssembly runtime: no native library, so the native image keeps working. -->
-    <chicory.version>1.7.5</chicory.version>
+    <!-- Pure-Java WebAssembly runtime: no native library, so the native image keeps working.
+         Endive is Chicory rehomed under the Bytecode Alliance — same codebase, same API, new
+         coordinates. Its default engine is still the pure-Java interpreter; the `redline`
+         backend that ships native binaries is experimental and opt-in, and enabling it would
+         cost exactly the property this dependency was chosen for. -->
+    <endive.version>1.1.0</endive.version>
     <testcontainers.version>2.0.5</testcontainers.version>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
@@ -69,14 +73,14 @@
         <scope>import</scope>
       </dependency>
       <dependency>
-        <groupId>com.dylibso.chicory</groupId>
+        <groupId>run.endive</groupId>
         <artifactId>runtime</artifactId>
-        <version>${chicory.version}</version>
+        <version>${endive.version}</version>
       </dependency>
       <dependency>
-        <groupId>com.dylibso.chicory</groupId>
+        <groupId>run.endive</groupId>
         <artifactId>wasm</artifactId>
-        <version>${chicory.version}</version>
+        <version>${endive.version}</version>
       </dependency>
       <!-- jclaw modules -->
       <dependency><groupId>io.jclaw</groupId><artifactId>jclaw-contracts</artifactId><version>${project.version}</version></dependency>

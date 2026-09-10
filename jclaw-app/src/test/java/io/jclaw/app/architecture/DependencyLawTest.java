@@ -191,6 +191,20 @@ class DependencyLawTest {
         }
 
         @Test
+        @DisplayName("only the wasm lane imports the WebAssembly runtime")
+        void wasmRuntimeContained() {
+            // The same argument as the SDK rule above, and it has already been collected on:
+            // moving from Chicory to Endive was a package rename in exactly one file, because
+            // nothing else had ever reached for the runtime. That was true by habit rather than
+            // by construction, which is the difference this rule closes.
+            noClasses().that().resideOutsideOfPackage("io.jclaw.tools.wasm..")
+                    .should().dependOnClassesThat().resideInAPackage("run.endive..")
+                    .because("a WebAssembly runtime is a vendor engine like any other: swapping "
+                            + "one should touch a single lane, not the harness")
+                    .check(classes);
+        }
+
+        @Test
         @DisplayName("no module outside providers opens an HTTP client to a model")
         void modelTransportContained() {
             noClasses().that().resideInAnyPackage(

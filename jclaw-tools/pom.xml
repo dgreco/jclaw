@@ -15,11 +15,11 @@
   <dependencies>
     <!-- The WASM lane. Pure Java on purpose: a native runtime would break the native image. -->
     <dependency>
-      <groupId>com.dylibso.chicory</groupId>
+      <groupId>run.endive</groupId>
       <artifactId>runtime</artifactId>
     </dependency>
     <dependency>
-      <groupId>com.dylibso.chicory</groupId>
+      <groupId>run.endive</groupId>
       <artifactId>wasm</artifactId>
     </dependency>
     <dependency>

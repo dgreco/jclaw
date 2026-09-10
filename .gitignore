@@ -11,6 +11,13 @@ buildNumber.properties
 .mvn/wrapper/maven-wrapper.jar
 
 # --- Examples ---
+# Following examples/wasm-wordcount/README.md in a clone drops these at the root: a publisher
+# keypair from `extensions keygen` and the sample file. *.key below already covers the private
+# half, but the public half and the sample would otherwise be staged by a plain `git add -A`,
+# and a committed signing keypair is worth one line of prevention.
+/keys/
+/sample.txt
+
 # build.sh lays out an installable package here; it is entirely derived from src/ and the
 # manifest, and module.wasm is a build artefact like any other.
 examples/*/dist/

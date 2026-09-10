@@ -521,6 +521,16 @@ the Anthropic SDK, and tool lanes may not read the process environment.
   one page: **no module any toolchain produced could run**.
   `WasmLaneTest.honoursDeclaredMemory` pins it against a module shaped the way a toolchain emits
   one, and was verified to fail with the initial size pinned back to 1.
+- **The WASM runtime is Endive, not Chicory.** Endive is Chicory rehomed under the Bytecode
+  Alliance — same codebase, same API, `com.dylibso.chicory` → `run.endive` for both the groupId
+  and the packages, and two exception renames jclaw does not use. The move cost one file, because
+  `WasmLane` is the only thing that ever imported the runtime; `DependencyLawTest.wasmRuntimeContained`
+  now makes that true by construction rather than by habit. Both properties that mattered were
+  verified rather than assumed: `withUnsafeExecutionListener` survives the fork, so instruction
+  metering still works, and the native image builds and runs the lane end to end. Endive's
+  `redline` backend compiles through Cranelift and ships prebuilt native binaries; it is
+  experimental and opt-in, and turning it on would cost exactly the pure-Java property this
+  dependency was chosen for.
 - **Two CI pipelines, kept in step by hand.** `.gitlab-ci.yml` (the live remote) and
   `.github/workflows/ci.yml` run the same five jobs; a change to one needs the same change to
   the other, and nothing checks that. Where they differ it is deliberate and commented at the
@@ -565,7 +575,7 @@ architecture and most runtime mechanisms are equivalent, the breadth is not. PAR
   pools connections through HikariCP. Rows are still JSON documents rather than typed columns,
   the only materialised projection is the run view, and there is no read replica or partitioning.
 - **A sandbox orchestrator** — shell commands and MCP servers run in containers, and WASM
-  extensions run in-process under Chicory with metered instructions, capped memory, and only the
+  extensions run in-process under Endive with metered instructions, capped memory, and only the
   host imports their manifest asked for. There is no orchestrator with per-job tokens, no LLM
   proxying through the host, and a sandboxed MCP server's network is all-or-nothing rather than
   host-mediated per host.

@@ -3,13 +3,13 @@
 
 package io.jclaw.tools.wasm;
 
-import com.dylibso.chicory.runtime.HostFunction;
-import com.dylibso.chicory.runtime.ImportValues;
-import com.dylibso.chicory.runtime.Instance;
-import com.dylibso.chicory.wasm.Parser;
-import com.dylibso.chicory.wasm.WasmModule;
-import com.dylibso.chicory.wasm.types.MemoryLimits;
-import com.dylibso.chicory.wasm.types.ValueType;
+import run.endive.runtime.HostFunction;
+import run.endive.runtime.ImportValues;
+import run.endive.runtime.Instance;
+import run.endive.wasm.Parser;
+import run.endive.wasm.WasmModule;
+import run.endive.wasm.types.MemoryLimits;
+import run.endive.wasm.types.ValueType;
 import io.jclaw.contracts.Result;
 import io.jclaw.domain.wasm.WasmSpec;
 
