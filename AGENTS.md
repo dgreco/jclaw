@@ -531,6 +531,24 @@ the Anthropic SDK, and tool lanes may not read the process environment.
   `redline` backend compiles through Cranelift and ships prebuilt native binaries; it is
   experimental and opt-in, and turning it on would cost exactly the pure-Java property this
   dependency was chosen for.
+- **A fan-out of subagents is sequential, and the interpreter is what makes it so.**
+  `EffectInterpreter.invokeCapabilities` stops dispatching a batch at the first
+  `NeedsApproval` — running further effects after deciding to park is the duplicated work
+  checkpointing exists to prevent — and `DefaultCapabilityHost.waitOn` turns a lane's `Waiting`
+  into exactly that outcome. So N `spawn_subagent` calls in one reply start one child, park,
+  resume, and start the next, in async mode as well as sync. Concurrency comes from *independent
+  runs*: `TurnRunScheduler` claims each queued run onto its own thread up to `--concurrency`,
+  which is what a webhook `topic` fan-out produces from one POST. `examples/skill-fanout`
+  demonstrates both halves and says which is which. Related: the mock provider's script is now a
+  `ConcurrentLinkedDeque`, because `serve --concurrency N` polls one provider bean from N threads
+  and a lost turn surfaces as "mock script exhausted" in a run that did nothing wrong
+  (`MockModelProviderTest`, verified to fail with the plain `ArrayDeque`).
+- **`WasmSpec` validates by construction, and `parsePermissions` only normalises.** A manifest's
+  permissions are checked by building a spec from them and throwing the spec away — which reads
+  exactly like a mistake, and SpotBugs calls it one (`RV_RETURN_VALUE_IGNORED_INFERRED`).
+  "Simplifying" it to the parse call alone silently deleted the check, and only
+  `WasmExtensionIntegrationTest.refusals` noticed. The javadoc that invited the mistake said
+  parsing rejected unknown permissions; it now says what it does.
 - **Two CI pipelines, kept in step by hand.** `.gitlab-ci.yml` (the live remote) and
   `.github/workflows/ci.yml` run the same five jobs; a change to one needs the same change to
   the other, and nothing checks that. Where they differ it is deliberate and commented at the

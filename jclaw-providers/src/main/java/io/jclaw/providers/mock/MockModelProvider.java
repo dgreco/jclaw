@@ -14,11 +14,12 @@ import io.jclaw.contracts.model.ModelProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -63,6 +64,15 @@ public final class MockModelProvider implements ModelProvider {
         }
     }
 
+    /**
+     * The turns not yet served.
+     *
+     * <p>Concurrent rather than an {@code ArrayDeque}, because the mock is not only a test double:
+     * {@code serve --concurrency N} and {@code worker --concurrency N} execute several runs at
+     * once against the one provider bean, and a webhook topic fan-out is exactly that shape. A
+     * plain deque polled from several threads can hand two runs the same turn or lose one, which
+     * would surface as "mock script exhausted" in a run that did nothing wrong.
+     */
     private final Deque<Script> remaining;
     private final AtomicInteger callCount = new AtomicInteger();
     private volatile ModelRequest lastRequest;
@@ -71,7 +81,7 @@ public final class MockModelProvider implements ModelProvider {
     /** When true the final scripted turn repeats instead of the script running dry. */
     private final boolean repeatLast;
 
-    private Script lastServed;
+    private volatile Script lastServed;
 
     public MockModelProvider(List<Script> script) {
         this(script, "mock-model", false);
@@ -82,7 +92,8 @@ public final class MockModelProvider implements ModelProvider {
     }
 
     public MockModelProvider(List<Script> script, String modelId, boolean repeatLast) {
-        this.remaining = new ArrayDeque<>(Objects.requireNonNull(script, "script"));
+        this.remaining = new ConcurrentLinkedDeque<>(
+                Objects.requireNonNull(script, "script"));
         this.modelId = Objects.requireNonNull(modelId, "modelId");
         this.repeatLast = repeatLast;
     }
@@ -163,12 +174,12 @@ public final class MockModelProvider implements ModelProvider {
         callCount.set(0);
     }
 
-    /** How many times the provider has been called. Lets a test assert on retry behaviour. */
     /** The most recent request, so a test can assert what the loop actually sent. */
-    public java.util.Optional<ModelRequest> lastRequest() {
-        return java.util.Optional.ofNullable(lastRequest);
+    public Optional<ModelRequest> lastRequest() {
+        return Optional.ofNullable(lastRequest);
     }
 
+    /** How many times the provider has been called. Lets a test assert on retry behaviour. */
     public int callCount() {
         return callCount.get();
     }

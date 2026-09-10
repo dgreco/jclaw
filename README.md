@@ -687,6 +687,11 @@ jclaw skills list
 jclaw skills show release-notes
 ```
 
+**A working example is in [`examples/skill-fanout`](examples/skill-fanout)** — a `parallel-review`
+skill that splits an independent task into facets and gives each facet its own agent. Three
+runnable demos: one scripted, one against whatever model you have configured (including a local
+ollama, with no key at all), and one that puts several agents on the machine at once.
+
 ### Scheduled routines: `routines` and `worker`
 
 A routine is a prompt that runs on its own thread, under your configured provider and approval mode, when something makes it fire. Exactly one trigger per routine, in four forms:
@@ -1005,7 +1010,7 @@ jclaw/
 ├── scripts/byte-verify.sh  source-integrity guard
 ├── scripts/license-check.sh SPDX header guard
 ├── .github/                Actions pipeline, issue and PR templates, Dependabot
-├── examples/               runnable examples, starting with a WebAssembly extension
+├── examples/               runnable examples: a WebAssembly extension, a fan-out skill
 ├── LICENSE                 Apache License 2.0, verbatim
 ├── NOTICE                  attribution that travels with a redistribution
 ├── CONTRIBUTING.md         how to get a change in, and what will fail your build
