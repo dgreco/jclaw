@@ -44,6 +44,7 @@ jclaw-domain/src/main/java/io/jclaw/domain/loop/TurnMachine.java ...
 - [Security model in one page](#security-model-in-one-page)
 - [Project layout](#project-layout)
 - [Licence](#licence)
+- [Contributing](#contributing)
 - [Further reading](#further-reading)
 
 ---
@@ -158,18 +159,35 @@ Test totals by module (verified on this checkout): contracts 8 · domain 116 · 
 
 ### Continuous integration
 
-`.gitlab-ci.yml` defines four jobs for the GitLab remote:
+Two pipelines, one shape. `.gitlab-ci.yml` and `.github/workflows/ci.yml` run the same five
+pieces of work in the same order; whichever remote you push to gives the same verdict.
 
-| Job | Stage | What it does |
+| Job | What it does |
+|---|---|
+| `byte-verify` | `scripts/byte-verify.sh scan` — refuses stray control bytes in sources. |
+| `license-verify` | `scripts/license-check.sh` — SPDX header on every source file, plus `LICENSE`, `NOTICE`, and the POM's `<licenses>` block. Runs before any toolchain exists, so a missing header fails in seconds. |
+| `build-test` | `mvn verify` on Temurin 21, with a real Docker daemon so `PostgresStorageIntegrationTest` runs against PostgreSQL rather than skipping. Publishes the test reports and the uber jar. Maven's local repository is cached per pom hash. |
+| `native-image` | Builds the GraalVM binary and smoke-tests it against embedded H2 *and* a live PostgreSQL — the vault's AES-GCM, Ed25519 extension signing, triggers, MCP records, loop families, spans. Mandatory on every run: a broken native build fails the pipeline like a broken test. Needs several GB of memory. |
+| `release` | Tags only. Publishes the native binary (`jclaw-linux-<arch>`), the uber jar, and `SHA256SUMS`. |
+
+To cut a release, push a tag: `git tag v0.1.0 && git push origin v0.1.0`. The tag pipeline runs
+every job and ends by publishing the release.
+
+Where the two differ, it is because copying GitLab's workarounds to GitHub would make the GitHub
+pipeline worse, not because the coverage differs:
+
+| | GitLab | GitHub |
 |---|---|---|
-| `byte-verify` | verify | `scripts/byte-verify.sh scan` — refuses stray control bytes in sources. |
-| `build-test` | build | `mvn verify` on Temurin 21; publishes JUnit reports to the merge-request widget and the uber jar as an artifact. Maven's local repository is cached per pom hash. |
-| `native-image` | native | Builds the GraalVM binary and smoke-tests it (`--version`, a mock-provider `run`). Mandatory on every pipeline: a broken native build fails the pipeline like a broken test. Needs a runner with several GB of memory. |
-| `release` | release | Tags only. Uploads the native binary (`jclaw-linux-<arch>`), the uber jar, and `SHA256SUMS` to the project's generic package registry and creates a GitLab Release for the tag linking them. |
+| Docker for Testcontainers | a `docker:27-dind` service, three inherited TLS variables cleared | the runner's own socket |
+| Waiting for PostgreSQL | polls `/dev/tcp` until the port answers | `--health-cmd pg_isready` gates the job |
+| GraalVM toolchain | the `native-image-community:25` image, ENTRYPOINT overridden | `setup-graalvm` onto the runner |
+| Release assets | uploaded to the generic package registry, linked from the release | attached to the release directly |
+| Test reports | `reports: junit:` renders them in the MR widget | a totals line in the run summary, XML as an artifact — GitHub has no first-party equivalent |
+| Arch handoff to `release` | a `dotenv` report | a job output |
 
-To cut a release, push a tag: `git tag v0.1.0 && git push origin v0.1.0`. The tag pipeline runs every job and ends by publishing the release at `/-/releases/v0.1.0`.
-
-One pipeline per change: pushes to a branch with an open merge request run only the merge-request pipeline. The jobs assume a Docker-executor runner and pull public images (`maven:3.9.11-eclipse-temurin-21`, `ghcr.io/graalvm/native-image-community:25`).
+One pipeline per change on both: GitLab runs only the merge-request pipeline for a branch with
+an open MR, and the GitHub workflow limits `push` to `main` so a pull request does not also fire
+a branch run. Superseded runs are cancelled — except on a tag, which is building a release.
 
 ---
 
@@ -984,8 +1002,11 @@ jclaw/
 ├── jclaw-app/              Spring wiring, picocli CLI, JclawRuntime, scheduler, HTTP surface, native profile
 ├── scripts/byte-verify.sh  source-integrity guard
 ├── scripts/license-check.sh SPDX header guard
+├── .github/                Actions pipeline, issue and PR templates, Dependabot
 ├── LICENSE                 Apache License 2.0, verbatim
 ├── NOTICE                  attribution that travels with a redistribution
+├── CONTRIBUTING.md         how to get a change in, and what will fail your build
+├── SECURITY.md             what is in scope, and what is a known limitation
 ├── ARCH.md                 C4 architecture and the full turn lifecycle
 └── PARITY.md               what IronClaw has that jclaw does not
 ```
@@ -1024,9 +1045,23 @@ Contributions are accepted under the same licence, per Apache-2.0 section 5. jcl
 independent reimplementation of IronClaw's architecture and contains no IronClaw source; see
 [NOTICE](NOTICE).
 
+## Contributing
+
+Issues and pull requests go to GitHub. The project is also mirrored to a private GitLab, which
+is where CI originally lived — hence two pipeline files that must be changed together.
+
+[CONTRIBUTING.md](CONTRIBUTING.md) is the short version: three commands that must pass, the SPDX
+header every new source file needs, and five rules that will otherwise fail your build in ways
+the error message does not explain. [AGENTS.md](AGENTS.md) is the long version.
+
+**Security issues do not go in the issue tracker.** Use GitHub's private vulnerability
+reporting; [SECURITY.md](SECURITY.md) says what is in scope and, just as usefully, which
+limitations are already known and written down.
+
 ## Further reading
 
 - [ARCH.md](ARCH.md) — C4 model (context, containers, components, code), the step-by-step lifecycle from prompt to result, and a full sequence diagram.
 - [PARITY.md](PARITY.md) — an honest enumeration of what IronClaw has that jclaw does not.
-- [CLAUDE.md](CLAUDE.md) — working notes for contributors and coding agents, including the pitfalls list.
+- [AGENTS.md](AGENTS.md) — working notes for contributors and coding agents, including the pitfalls list. `CLAUDE.md` is a one-line include of it.
+- [CONTRIBUTING.md](CONTRIBUTING.md) · [SECURITY.md](SECURITY.md) · [CHANGELOG.md](CHANGELOG.md) · [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
 - [IronClaw](https://github.com/nearai/ironclaw) — the original.

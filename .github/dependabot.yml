@@ -1,0 +1,30 @@
+# Keeps pinned versions from going stale. Two ecosystems, one directory each.
+#
+# Maven needs only "/": every third-party version in this reactor lives in the root pom, as a
+# property or a dependencyManagement entry, and the module poms carry nothing but the parent
+# coordinate. An entry per module would open nine PRs for one bump.
+version: 2
+updates:
+  - package-ecosystem: maven
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # Boot moves as a unit — the starter parent, the plugin, and the framework are versioned
+      # together, and taking them in separate PRs means each one fails against the others.
+      spring-boot:
+        patterns: ["org.springframework*"]
+      test-tooling:
+        patterns: ["org.testcontainers:*", "com.tngtech.archunit:*", "org.junit*"]
+    commit-message:
+      prefix: "deps"
+
+  # The workflow pins action majors, and a major that goes out of support fails the run with a
+  # deprecation error rather than a useful message. This is what notices.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "ci"

@@ -1,0 +1,10 @@
+# Security reports must not arrive as public issues, so the blank-issue escape hatch is closed
+# and the Security tab is offered as a link instead.
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/dgreco/jclaw/security/advisories/new
+    about: Private disclosure. Never file a suspected vulnerability as a public issue — see SECURITY.md.
+  - name: Question or idea
+    url: https://github.com/dgreco/jclaw/discussions
+    about: For anything that is not a bug or a concrete proposal. Enable Discussions for this link to work.

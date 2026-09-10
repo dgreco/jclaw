@@ -1,0 +1,48 @@
+name: Feature request
+description: Suggest something jclaw should do
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Please check [PARITY.md](../blob/main/PARITY.md) first.** It enumerates what IronClaw
+        has that jclaw does not, ranked, and much of what looks missing is missing on purpose
+        with the reason written down. If your idea is already there, say so below and add what
+        it does not cover — that is more useful than a new entry.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The problem, not the solution. What does jclaw make hard or impossible today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like it to do?
+      description: A sketch is fine. If you have a CLI shape or a config key in mind, show it.
+    validations:
+      required: true
+
+  - type: textarea
+    id: parity
+    attributes:
+      label: Is this in PARITY.md?
+      description: If so, which entry, and what does that entry not cover?
+
+  - type: dropdown
+    id: layer
+    attributes:
+      label: Roughly where would this live?
+      description: Optional — a guess is fine, and getting it wrong costs nothing.
+      options:
+        - "Don't know"
+        - "contracts / domain (the pure core)"
+        - "kernel (capability authority, guards)"
+        - "loop (the effect interpreter)"
+        - "providers (a model or embedding backend)"
+        - "tools (a capability lane, MCP)"
+        - "storage (a store or a backend)"
+        - "app (CLI, HTTP surface, scheduler, wiring)"

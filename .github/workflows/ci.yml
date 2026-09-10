@@ -1,0 +1,363 @@
+# GitHub Actions for jclaw — the same pipeline as .gitlab-ci.yml, in GitHub's idiom.
+#
+# Jobs
+#   verify        source-integrity and licence-header scans (no toolchain needed)
+#   build-test    compile + full test suite, publishes the reports and the uber jar
+#   native-image  GraalVM native image, built and smoke-tested on every run; a broken native
+#                 build fails the run the same way a broken test does
+#   release       on tags only: publishes the native binary and the uber jar as a GitHub Release
+#
+# Four things are deliberately NOT ported literally, because they are workarounds for GitLab
+# rather than parts of the pipeline:
+#
+#  - **No docker-in-docker.** The GitLab job declares a `docker:27-dind` service and clears
+#    three inherited TLS variables so Testcontainers can find a daemon. GitHub's Ubuntu runners
+#    ship a working Docker socket, so PostgresStorageIntegrationTest simply runs. That is the
+#    same outcome the dind block was bought for, with none of the setup.
+#  - **No wait loop before PostgreSQL.** GitLab services are started but not gated, so the
+#    script polls /dev/tcp until the port answers. GitHub gates on `--health-cmd pg_isready`
+#    and does not start the job until the service is healthy.
+#  - **No entrypoint override.** The GraalVM image's ENTRYPOINT is `native-image` itself, which
+#    breaks a GitLab container job. Here the toolchain is installed onto the runner by
+#    setup-graalvm instead of running inside that image, so there is no entrypoint to fight.
+#  - **No generic package registry.** A GitLab release cannot host files, so the GitLab job
+#    uploads to the package registry and links to it. GitHub releases host assets directly.
+#
+# Two things are genuinely weaker here than on GitLab, and both are noted at the step that
+# loses them: there is no first-party equivalent of `reports: junit:`, and no `dotenv` report.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# One run per change: a PR branch gets the pull_request run, and `push` is limited to main so
+# the two never both fire. Superseded runs are cancelled, which is `interruptible: true` on the
+# GitLab side — except on a tag, where the run is producing a release nobody wants cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+permissions:
+  contents: read
+
+env:
+  MAVEN_CLI_OPTS: "--batch-mode --no-transfer-progress --errors --fail-at-end -Dstyle.color=always"
+  MAVEN_OPTS: "-Djava.awt.headless=true"
+
+jobs:
+  # Both guards, in one job. On GitLab they are two jobs on a bare debian image because a
+  # container has to be pulled either way; here the runner already has bash, find and grep, so
+  # splitting them would cost a whole runner to save nothing. They still run before any
+  # toolchain exists, which is the property that matters: a missing licence header fails in
+  # seconds rather than after a full compile.
+  verify:
+    name: Source and licence guards
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: ./scripts/byte-verify.sh scan
+      - run: ./scripts/license-check.sh
+
+  build-test:
+    name: Build and test
+    runs-on: ubuntu-latest
+    needs: [verify]
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - run: java -version && mvn -version
+
+      # The runner's own Docker socket. PostgresStorageIntegrationTest is
+      # @Testcontainers(disabledWithoutDocker = true), so this line is what decides whether it
+      # runs or silently skips — everything under jclaw.storage=sql was written against embedded
+      # H2, and SqlSchema only *claims* its DDL is portable.
+      - name: Confirm Docker is available to Testcontainers
+        run: docker version --format 'daemon {{.Server.Version}}'
+
+      - name: Build and test
+        run: mvn $MAVEN_CLI_OPTS verify
+
+      # GitHub has no first-party equivalent of GitLab's `reports: junit:` — nothing renders the
+      # XML into the run summary or annotates the diff. Rather than take a third-party action
+      # into a repository that signs its own extensions, the same one-line total the GitLab job
+      # prints is written to the run summary, and the raw XML is uploaded for anyone who wants
+      # detail. Counts <testcase> elements: the .txt reports say 0 for classes whose tests live
+      # in @Nested classes, and the testsuite "tests" attribute can undercount by one.
+      - name: Summarise the test run
+        if: always()
+        run: |
+          if ls */target/surefire-reports/TEST-*.xml >/dev/null 2>&1; then
+            printf 'TOTAL testcases=%s failures=%s errors=%s skipped=%s\n' \
+              "$(grep -h -c '<testcase ' */target/surefire-reports/TEST-*.xml | awk '{s+=$1} END{print s}')" \
+              "$(grep -h -c '<failure' */target/surefire-reports/TEST-*.xml | awk '{s+=$1} END{print s}')" \
+              "$(grep -h -c '<error' */target/surefire-reports/TEST-*.xml | awk '{s+=$1} END{print s}')" \
+              "$(grep -h -c '<skipped' */target/surefire-reports/TEST-*.xml | awk '{s+=$1} END{print s}')" \
+              | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # Two artifacts rather than one, so the release job can fetch the jar without dragging
+      # every surefire report along with it.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jclaw-jar
+          retention-days: 14
+          path: jclaw-app/target/jclaw-app-*.jar
+
+      - uses: actions/upload-artifact@v4
+        if: always()                 # reports are most wanted exactly when the build failed
+        with:
+          name: test-reports
+          retention-days: 14
+          path: "*/target/surefire-reports/"
+
+  native-image:
+    name: Native image
+    runs-on: ubuntu-latest
+    needs: [build-test]
+    timeout-minutes: 45
+    outputs:
+      arch: ${{ steps.smoke.outputs.arch }}
+
+    # A real PostgreSQL for the binary to talk to. This is the combination nothing else covers:
+    # PostgresStorageIntegrationTest is a @SpringBootTest, so it proves the schema and the stores
+    # work on the JVM, and the smoke steps below prove the binary works — but against embedded
+    # H2. The interesting failure lives in the gap: a JDBC driver is resolved reflectively from
+    # the URL, and `--no-fallback` turns a missing registration into a crash rather than a
+    # degradation. Only the native binary pointed at PostgreSQL can show that it does not.
+    #
+    # Reachable on localhost, not by service name: the job runs on the runner rather than in a
+    # container, so the service's port is published to the host.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: jclaw
+          POSTGRES_USER: jclaw
+          POSTGRES_PASSWORD: jclaw-ci-password
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: graalvm/setup-graalvm@v1
+        with:
+          distribution: graalvm-community
+          java-version: '25'          # GraalVM 25+; the toolchain is 25 while we target release 21
+          cache: maven
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - run: java -version && native-image --version && mvn -version
+
+      # Install all modules first: the `native` profile lives in jclaw-app/pom.xml, and the Boot
+      # parent contributes only pluginManagement for it, so a bare root-level -Pnative does
+      # nothing useful.
+      - name: Build the native image
+        run: |
+          mvn $MAVEN_CLI_OPTS install -DskipTests
+          mvn $MAVEN_CLI_OPTS -Pnative -pl jclaw-app package -DskipTests
+          ls -la jclaw-app/target/jclaw
+
+      # One shell for the whole sequence, deliberately: the steps below share exported paths and
+      # a temporary state directory, and splitting them into separate `run:` blocks would lose
+      # every variable between them.
+      - name: Smoke-test the binary
+        id: smoke
+        run: |
+          set -euo pipefail
+
+          ./jclaw-app/target/jclaw --version
+          ./jclaw-app/target/jclaw run "smoke test"          # mock provider, no network
+
+          # Everything below exercises a path `run` never reaches, and every one of them is the
+          # kind a native image breaks: JCA providers for the vault's AES-256-GCM and the
+          # extension signature's Ed25519, and a reflectively loaded JDBC driver for
+          # `storage=sql`. With `--no-fallback` a missing registration is a crash rather than a
+          # degradation, so the only way to know the binary works is to make it do the work.
+          export SMOKE=$(mktemp -d)
+          export JC="./jclaw-app/target/jclaw --jclaw.workspace=$SMOKE --jclaw.state-dir=$SMOKE/state --jclaw.provider=mock --jclaw.approval-mode=trusted"
+
+          # Vault: AES-256-GCM seal and open, and the owner-only key file generated on first use.
+          printf 's3cret-value-0123456789' | $JC secrets set ci --capability builtin.http_fetch --host api.example.com
+          $JC secrets list | grep -q "api.example.com"
+
+          # Extensions: Ed25519 key generation, signing, and verification against a trusted publisher.
+          mkdir -p $SMOKE/pkg
+          $JC extensions keygen --out $SMOKE/keys
+          printf '{"name":"ci","version":"1.0","kind":"skill","description":"ci probe","publisher":"ci"}' > $SMOKE/pkg/jclaw-extension.json
+          printf -- '---\nname: CI\ndescription: d\nwhen-to-use: w\n---\nBody.\n' > $SMOKE/pkg/SKILL.md
+          $JC extensions sign $SMOKE/pkg --key $SMOKE/keys/publisher.key
+          $JC extensions install $SMOKE/pkg --jclaw.trusted-publishers.ci="$(cat $SMOKE/keys/publisher.pub)"
+          $JC extensions list | grep -q VERIFIED
+
+          # Inbound screening: the review queue binds and the CLI works it. A foreign message
+          # that started a turn anyway would be the failure worth catching.
+          $JC inbound list | grep -q 'nothing held'
+
+          # Secret staging: a credential that reaches a child process's environment and never the
+          # command line. AES-GCM is already covered above; what is new here is the binding kind
+          # and the picocli flag, both of which AOT could plausibly have dropped.
+          printf 'ghp-ci-staged-0123456789' | $JC secrets set ci-gh --capability builtin.shell --subprocess
+          $JC secrets list | grep -q 'subprocess environment'
+          $JC run "stage it" '--jclaw.mock-script[0]=tool:builtin.shell:command=printf %s "$CI_GH",secret_env={"CI_GH":"ci-gh"}' '--jclaw.mock-script[1]=text:done'
+          $JC status -n 8 | grep -q secret.injected
+          ! grep -rq ghp-ci-staged-0123456789 $SMOKE/state   # the value is in no store
+          $JC run "leak scan" --jclaw.hooks=budget-notice,secret-leak-scan --jclaw.mock-script=text:done
+
+          # Registry: an index served from a file:// URL is refused by the egress guard, so the
+          # reachable half is checked instead — a profile applied to the package just installed,
+          # and the message a missing registry setting produces. Both exercise the picocli
+          # subcommands and the property binding that AOT is most likely to have dropped.
+          $JC extensions profile --jclaw.extension-profiles.ci=ci --jclaw.extension-profile=ci | grep -q "(active)"
+          $JC extensions profile ci --jclaw.extension-profiles.ci=ci
+          $JC extensions profile off --jclaw.extension-profiles.off= | grep -q "disabled ci"
+          $JC extensions list | grep -q disabled
+
+          # `search` exits non-zero without a registry, which is the point, so the output is
+          # captured rather than piped: under `pipefail` a matching grep would still inherit
+          # that exit code.
+          $JC extensions search anything > $SMOKE/search.txt 2>&1 || true
+          grep -q 'no registries configured' $SMOKE/search.txt
+
+          # SQL storage: the H2 driver loads, migrations apply, and a turn round-trips through it.
+          # Schema 2 (a table per busy store) and 3 (materialised projections) reached the
+          # database, and the projection a finished run wrote reads back through the pooled
+          # connection. The thread lock is a row under sql, so schema 4 and its table must be
+          # there: a missing lock table would silently mean no exclusion at all between two hosts.
+          ./jclaw-app/target/jclaw run "sql smoke" --jclaw.workspace=$SMOKE --jclaw.state-dir=$SMOKE/sql --jclaw.provider=mock --jclaw.approval-mode=trusted --jclaw.storage=sql
+          ./jclaw-app/target/jclaw status -n 3 --jclaw.workspace=$SMOKE --jclaw.state-dir=$SMOKE/sql --jclaw.provider=mock --jclaw.storage=sql | grep -q "run.finished"
+
+          # The same binary against a real PostgreSQL, which is where a reflectively loaded
+          # driver would actually fail. Everything above this line used embedded H2.
+          #
+          # The credential is scoped to these invocations with `env`, not exported. Exporting it
+          # broke the H2 steps that follow: they share this shell, their database was created
+          # earlier with no password, and an inherited one is then rejected with "Wrong user name
+          # or password". Two databases in one script must not share a credential variable.
+          export PGDIR=$(mktemp -d)
+          export JCPG="env JCLAW_DATASOURCE_PASSWORD=jclaw-ci-password ./jclaw-app/target/jclaw --jclaw.workspace=$PGDIR --jclaw.state-dir=$PGDIR/state --jclaw.provider=mock --jclaw.approval-mode=trusted --jclaw.storage=sql --jclaw.datasource-url=jdbc:postgresql://localhost:5432/jclaw --jclaw.datasource-username=jclaw"
+
+          # A turn proves the driver loads, every migration applies, and writes land.
+          $JCPG run "native on postgres" --jclaw.mock-script=text:pg-ok | grep -q pg-ok
+          # Reads come back out of PostgreSQL, not out of a cache in the same process.
+          $JCPG status -n 5 | grep -q "run.finished"
+          export PGRUN=$($JCPG status -n 20 | grep -o 'run_[0-9a-f]*' | head -1)
+          $JCPG status --run $PGRUN --spans | grep -q COMPLETED
+          # The vault over SQL: AES-GCM through a different JDBC driver than the H2 run above.
+          printf 'pg-secret-value-0123456789' | $JCPG secrets set pg --capability builtin.http_fetch --host api.example.com
+          $JCPG secrets list | grep -q api.example.com
+
+          ./jclaw-app/target/jclaw doctor --jclaw.workspace=$SMOKE --jclaw.state-dir=$SMOKE/sql --jclaw.provider=mock --jclaw.storage=sql || true
+          export SQLRUN=$(./jclaw-app/target/jclaw status -n 20 --jclaw.workspace=$SMOKE --jclaw.state-dir=$SMOKE/sql --jclaw.provider=mock --jclaw.storage=sql | grep -o 'run_[0-9a-f]*' | head -1)
+          ./jclaw-app/target/jclaw status --run $SQLRUN --spans --jclaw.workspace=$SMOKE --jclaw.state-dir=$SMOKE/sql --jclaw.provider=mock --jclaw.storage=sql | grep -q COMPLETED
+
+          # A loop family defined in configuration, and the startup validation that catches a
+          # typo in one. Both are pure wiring, which is exactly what AOT is most likely to drop.
+          $JC run "family" --jclaw.loop-families.strict.base=reflective --jclaw.loop-families.strict.review-instruction=REVIEW-IT --jclaw.loop-family=strict '--jclaw.mock-script[0]=text:draft' '--jclaw.mock-script[1]=text:REVIEWED' | grep -q REVIEWED
+          ! $JC run x --jclaw.loop-family=nope
+          ! $JC run x --jclaw.loop-families.canonical.base=reflective --jclaw.loop-families.canonical.review-instruction=x
+
+          # Triggers: a watch, a webhook topic, and the inbound-message event type all bind and
+          # round-trip through the store. A watch also proves the durable fingerprint works
+          # across processes, which is the whole reason it is not held in memory.
+          mkdir -p $SMOKE/src && echo 'class One {}' > $SMOKE/src/One.java
+          $JC routines add --name ci-watch --watch 'src/**/*.java' -- look at it
+          $JC routines add --name ci-hook --webhook --topic deploys -- handle it
+          $JC routines add --name ci-inbox --on turn.submitted --when thread=inbox -- triage it
+          $JC routines list | grep -q 'topic=deploys'
+          $JC worker --once                       # baseline; the first look never fires
+          echo 'class Two {}' > $SMOKE/src/Two.java
+          $JC worker --once | grep -q 'watch src'
+
+          # MCP: a remote server configured with OAuth 2.1 client credentials round-trips through
+          # the store. Nothing is contacted — the point is that the record binds and replays
+          # under AOT.
+          $JC mcp add --name ci-oauth --url https://mcp.example.com/mcp --oauth-client-id jclaw --oauth-client-secret ci-oauth-secret
+          $JC mcp list | grep -q ci-oauth
+          ! $JC mcp add --name ci-both --url https://mcp.example.com/mcp --auth-secret a --oauth-client-id b --oauth-client-secret c
+
+          # Spans: `--spans` is the option `--trace` could never be, since that name is claimed
+          # process-wide for verbosity. Cheap to check and silent to lose.
+          $JC run "metrics" --jclaw.mock-script=text:done
+          $JC status --run $($JC status -n 20 | grep -o 'run_[0-9a-f]*' | head -1) --spans | grep -q "model.call"
+          ./jclaw-app/target/jclaw doctor || true            # informational in CI
+
+          # The release job names the asset by it. GitLab carried this in a dotenv report;
+          # GitHub carries it as a job output, declared under `outputs:` above.
+          echo "arch=$(uname -m)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jclaw-native
+          retention-days: 28
+          path: jclaw-app/target/jclaw
+
+  # Publishes a GitHub Release for the tag with the native binary and the uber jar attached.
+  # Simpler than the GitLab counterpart for one reason: a GitHub release hosts its own assets,
+  # so there is no package-registry upload and no hand-built links array.
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    needs: [build-test, native-image]
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write            # the only job that writes anything back to the repository
+    steps:
+      # No checkout: nothing here reads the sources, which is `GIT_STRATEGY: none` on GitLab.
+      - uses: actions/download-artifact@v4
+        with:
+          name: jclaw-native
+          path: native
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: jclaw-jar
+          path: dist
+
+      - name: Assemble and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NATIVE_ARCH: ${{ needs.native-image.outputs.arch }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          # Located rather than assumed: upload-artifact roots an archive at the least common
+          # ancestor of its paths, so where a file lands after download depends on what else
+          # was uploaded beside it. `find` does not care.
+          BIN="jclaw-linux-${NATIVE_ARCH}"
+          JAR_PATH="$(find dist -type f -name 'jclaw-app-*.jar' | head -1)"
+          BIN_PATH="$(find native -type f -name jclaw | head -1)"
+          test -n "$JAR_PATH" && test -n "$BIN_PATH"
+          JAR="$(basename "$JAR_PATH")"
+          cp "$BIN_PATH" "$BIN"
+          chmod +x "$BIN"                       # the artifact upload does not preserve the bit
+          cp "$JAR_PATH" "$JAR"
+          sha256sum "$BIN" "$JAR" | tee SHA256SUMS
+
+          gh release create "$TAG" \
+            --repo "${{ github.repository }}" \
+            --title "jclaw $TAG" \
+            --notes "jclaw $TAG (commit ${GITHUB_SHA:0:8}).
+
+          - \`$BIN\`: GraalVM native image, Linux ${NATIVE_ARCH}
+          - \`$JAR\`: uber jar, needs Java 21+
+          - \`SHA256SUMS\`
+
+          Built by [run ${GITHUB_RUN_ID}](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})." \
+            "$BIN" "$JAR" SHA256SUMS

@@ -511,6 +511,15 @@ the Anthropic SDK, and tool lanes may not read the process environment.
   actually reaches a consumer of the jar. It searches only the first five lines: an SPDX string
   further down a file is a coincidence (a fixture, a javadoc quote), not a header. Verified to
   fire by stripping a real header, not just by passing.
+- **Two CI pipelines, kept in step by hand.** `.gitlab-ci.yml` (the live remote) and
+  `.github/workflows/ci.yml` run the same five jobs; a change to one needs the same change to
+  the other, and nothing checks that. Where they differ it is deliberate and commented at the
+  step: GitHub's runners have a Docker socket, so the dind service and its three cleared TLS
+  variables are absent; its `postgres` service gates on `pg_isready`, so the `/dev/tcp` wait
+  loop is absent; `setup-graalvm` installs the toolchain, so there is no ENTRYPOINT to override.
+  What GitHub genuinely lacks is `reports: junit:` — the totals line goes to the run summary and
+  the XML is an artifact, because the alternative is a third-party action in a repository that
+  verifies its own extension signatures.
 - Git: initialized on `main` (September 2026). `.gitignore` excludes `target/`, IDE files, `.claude/settings.local.json`, and `.byte-manifest`; the captured native-image metadata is versioned on purpose.
 
 ## Not built yet

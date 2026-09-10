@@ -1,0 +1,87 @@
+name: Bug report
+description: Something behaves differently than documented
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **If this is a security issue, stop.** Do not file it here — use the Security tab's
+        *Report a vulnerability*, per [SECURITY.md](../blob/main/SECURITY.md).
+
+        The three dropdowns below account for most behavioural differences in jclaw. Filling
+        them in usually saves a round trip.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you expected, what you got, and the smallest way to reproduce it.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: runtime
+    attributes:
+      label: How are you running it?
+      options:
+        - Uber jar (java -jar)
+        - GraalVM native binary
+        - Docker (Dockerfile)
+        - Docker (Dockerfile.native)
+        - From source (mvn)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Provider
+      description: "`jclaw.provider`. The mock provider needs no key and reproduces most non-network bugs."
+      options: [mock, anthropic, openai, openrouter, ollama, local, failover]
+    validations:
+      required: true
+
+  - type: dropdown
+    id: storage
+    attributes:
+      label: Storage backend
+      description: "`jclaw.storage`. The JSONL and SQL paths differ in real ways — the thread lock most of all."
+      options:
+        - jsonl (default)
+        - sql / H2 (default embedded)
+        - sql / PostgreSQL
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: "v0.1.0, or the output of `jclaw --version`, or a commit sha"
+    validations:
+      required: true
+
+  - type: input
+    id: approval-mode
+    attributes:
+      label: Approval mode
+      description: "`jclaw.approval-mode`, if the bug involves a tool call or a gate."
+      placeholder: read-only | interactive | trusted
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log output
+      description: |
+        `--debug` narrates every pipeline step and is usually enough. `--trace` also prints
+        prompts, tool arguments, and payloads — redact before pasting, since those may contain
+        your own data.
+      render: shell
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before filing
+      options:
+        - label: I ran `jclaw doctor` and it did not already explain this
+        - label: I checked PARITY.md, in case this is a documented gap rather than a bug
