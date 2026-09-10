@@ -32,7 +32,7 @@
   <properties>
     <!-- Pure-Java WebAssembly runtime: no native library, so the native image keeps working. -->
     <chicory.version>1.7.5</chicory.version>
-    <testcontainers.version>1.21.3</testcontainers.version>
+    <testcontainers.version>2.0.5</testcontainers.version>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
     <maven.compiler.release>21</maven.compiler.release>
