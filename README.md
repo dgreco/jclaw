@@ -407,7 +407,24 @@ docker compose -f docker-compose.native.yml ps --format '{{.Service}}\t{{.Ports}
 # serve   0.0.0.0:8081->8080/tcp      <- host 8081, container 8080
 ```
 
-The token is `local-operator-token` unless you set `JCLAW_SERVE_TOKEN`, and it is needed on every route including `/`; see **Open the UI with the token in the URL** above for why it goes in the query string.
+**Where the token comes from.** It is not generated or stored anywhere to be looked up — both compose files simply default it:
+
+```yaml
+JCLAW_SERVE_TOKEN: ${JCLAW_SERVE_TOKEN:-local-operator-token}
+```
+
+So it is `local-operator-token` unless you export something else before `up`. To ask a stack what it actually resolved — the profile is required, or the `serve` service is omitted from the output entirely:
+
+```bash
+docker compose --profile serve config | grep JCLAW_SERVE_TOKEN
+#       JCLAW_SERVE_TOKEN: local-operator-token
+
+JCLAW_SERVE_TOKEN=something-else docker compose --profile serve up   # to use your own
+```
+
+`jclaw doctor` reports only *whether* a token is configured (`serve auth  operator token`), never its value — a diagnostic that prints credentials is a diagnostic nobody can paste into a bug report. And running `jclaw serve` outside Docker with no `serve-token` at all needs no token: it binds loopback only and every route is open to whoever is already on the machine.
+
+The token is needed on every route including `/`; see **Open the UI with the token in the URL** above for why it goes in the query string.
 
 Measured in the same container shape, the binary starts in **61 ms** against the jar's **1.48 s**. Two choices in `Dockerfile.native` are worth knowing. The runtime base is `debian:12-slim`, not distroless: `builtin.shell` runs `/bin/sh -c`, so an image without a shell would ship an agent with one of its own tools permanently broken. And it is glibc rather than Alpine because the image is not statically linked.
 
