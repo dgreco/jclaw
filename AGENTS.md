@@ -607,9 +607,11 @@ the Anthropic SDK, and tool lanes may not read the process environment.
   73.3 as "73,3" under an Italian locale and the GitLab regex expects a dot.
 - **Two CI pipelines, kept in step by hand.** `.gitlab-ci.yml` (the live remote) and
   `.github/workflows/ci.yml` run the same six jobs; a change to one needs the same change to
-  the other, and nothing checks that. GitHub has a seventh, `coverage-pages`, with no GitLab
-  counterpart: it publishes the JaCoCo report to GitHub Pages so the README's coverage badge
-  links to something readable, and the private mirror has nowhere public to put one. Where they differ it is deliberate and commented at the
+  the other, and nothing checks that. Each also has a seventh job that publishes the JaCoCo
+  report to its own Pages — `coverage-pages` on GitHub, `pages` on GitLab — so a reader is never
+  sent across to the other remote for a number this one computed. The README badge can only
+  carry one link, so it carries the public one; the mirror's own coverage badge is a GitLab
+  project badge, which lives in that project's settings rather than in a file both hosts render. Where they differ it is deliberate and commented at the
   step: GitHub's runners have a Docker socket, so the dind service and its three cleared TLS
   variables are absent; its `postgres` service gates on `pg_isready`, so the `/dev/tcp` wait
   loop is absent; `setup-graalvm` installs the toolchain, so there is no ENTRYPOINT to override.

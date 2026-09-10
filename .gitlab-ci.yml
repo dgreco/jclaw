@@ -5,6 +5,8 @@
 #   build    compile + full test suite (with coverage), and static analysis alongside it
 #   native   GraalVM native image, built and smoke-tested on every pipeline; a broken native
 #            build fails the pipeline the same way a broken test does
+#   deploy   publishes the coverage report to this instance's GitLab Pages, on the default
+#            branch only
 #   release  on tags only: publishes the native binary (and the uber jar) as a GitLab Release
 #
 # Assumes a Docker-executor runner. Maven's local repository is cached per branch so
@@ -18,7 +20,7 @@ workflow:
     - if: $CI_COMMIT_BRANCH
     - if: $CI_COMMIT_TAG
 
-stages: [verify, build, native, release]
+stages: [verify, build, native, deploy, release]
 
 variables:
   MAVEN_CLI_OPTS: "--batch-mode --no-transfer-progress --errors --fail-at-end -Dstyle.color=always"
@@ -298,6 +300,36 @@ native-image:
   # no allow_failure, so a failure blocks the pipeline (and merge, with "pipelines must
   # succeed" enabled).
   timeout: 45m
+
+# The coverage report, served by this GitLab rather than by the other remote. The mirror computes
+# its own coverage on every pipeline; sending a reader to github.io to look at it would make a
+# private instance depend on a public one for a number it already has.
+#
+# GitLab Pages is a job named `pages` whose artifact is a directory called `public`, which is why
+# this copies rather than configures. `needs: [build-test]` fetches that job's artifacts — the
+# aggregate report is already among them — and lets this start the moment the tests are done
+# instead of waiting for the native image two stages ahead of it.
+#
+# Default branch only: a report published from a topic branch would describe something nobody has
+# merged, and Pages keeps one site per project.
+#
+# Worth knowing before the first deploy: whether the site is public depends on the instance's
+# Pages access control, not on this file. Here that costs nothing — the same sources are public
+# on GitHub — but a JaCoCo report does embed source listings, so it is the wrong pattern to copy
+# into a project whose code is actually private.
+pages:
+  stage: deploy
+  image: debian:bookworm-slim
+  needs: [build-test]
+  script:
+    - test -f jclaw-app/target/site/jacoco-aggregate/index.html
+    - rm -rf public && mkdir -p public
+    - cp -a jclaw-app/target/site/jacoco-aggregate/. public/
+  artifacts:
+    paths: [public]
+    expire_in: 4 weeks
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
 # Publishes a GitLab Release for the tag with the native binary and the uber jar attached.
 # The files go to the project's generic package registry (a release cannot host files itself)

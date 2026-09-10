@@ -12,7 +12,7 @@
   It links to the JaCoCo report the `coverage-pages` job publishes on every push to main. A
   README has one link per badge and is rendered on both hosts, so that link serves the public
   audience; the GitLab mirror carries its own coverage badge as a project badge, pointing at the
-  report inside its own job artifacts, and never at github.io. The coverage and test figures are
+  copy its own `pages` job publishes, and never at github.io. The coverage and test figures are
   the ones stated further down, refreshed when those move.
 -->
 [![CI](https://github.com/dgreco/jclaw/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dgreco/jclaw/actions/workflows/ci.yml)
@@ -188,16 +188,16 @@ because an exclusion nobody can audit is worse than no filter at all.
 
 Test totals by module (verified on this checkout, with a Docker daemon so the PostgreSQL test runs rather than skipping): domain 166 · app 160 · storage 43 · providers 28 · kernel 14 · contracts 14 · tools 7 = **432, 0 failures**.
 
-Coverage comes from JaCoCo in the ordinary build — `mvn verify` writes a per-module report and an aggregate one under `jclaw-app/target/site/jacoco-aggregate`, and `./scripts/coverage.sh` prints the one-line total both pipelines publish. On this checkout: **73.3% of instructions, 55.3% of branches, 72.3% of lines**. GitLab shows the percentage on the merge request and the project badge; GitHub writes it to the run summary. The report itself is published to [GitHub Pages](https://dgreco.github.io/jclaw/) on every push to `main`, which is what the coverage badge links to. On the GitLab mirror the same report is served from the job's own artifacts — `/-/jobs/artifacts/main/file/jclaw-app/target/site/jacoco-aggregate/index.html?job=build-test`, with a project badge pointing at it — so neither remote has to reach across to the other for its own numbers.
+Coverage comes from JaCoCo in the ordinary build — `mvn verify` writes a per-module report and an aggregate one under `jclaw-app/target/site/jacoco-aggregate`, and `./scripts/coverage.sh` prints the one-line total both pipelines publish. On this checkout: **73.3% of instructions, 55.3% of branches, 72.3% of lines**. GitLab shows the percentage on the merge request and the project badge; GitHub writes it to the run summary. The report itself is published to [GitHub Pages](https://dgreco.github.io/jclaw/) on every push to `main`, which is what the coverage badge links to. The GitLab mirror serves the same report from its own GitLab Pages, published by the `pages` job on every default-branch pipeline, so neither remote has to reach across to the other for a number it already computes. Its URL is whatever that instance is configured for — the project's **Deploy → Pages** page names it after the first deploy — and it is what the mirror's coverage project badge points at.
 
 Read the aggregate rather than the per-module figures: most of `contracts`, `kernel` and `tools` is exercised by integration tests that live in `jclaw-app`, so their own reports read 5–16% while the aggregate, which credits a class wherever it actually ran, reads 73%. `DependencyLawTest` in `jclaw-app` machine-checks the layer ladder with ArchUnit; the rules were confirmed to fire by planting deliberate violations.
 
 ### Continuous integration
 
 Two pipelines, one shape. `.gitlab-ci.yml` and `.github/workflows/ci.yml` run the same six
-pieces of work in the same order; whichever remote you push to gives the same verdict. GitHub
-carries one extra job, `coverage-pages`, because it is the remote with somewhere public to put
-the report.
+pieces of work in the same order; whichever remote you push to gives the same verdict. Each also
+publishes the coverage report to its own Pages — `coverage-pages` on GitHub, `pages` on GitLab —
+so neither remote sends a reader to the other for a number it computed itself.
 
 | Job | What it does |
 |---|---|
@@ -205,7 +205,7 @@ the report.
 | `license-verify` | `scripts/license-check.sh` — SPDX header on every source file, plus `LICENSE`, `NOTICE`, and the POM's `<licenses>` block. Runs before any toolchain exists, so a missing header fails in seconds. |
 | `build-test` | `mvn verify` on Temurin 21, with a real Docker daemon so `PostgresStorageIntegrationTest` runs against PostgreSQL rather than skipping. Publishes the test reports, the coverage report and the uber jar. Maven's local repository is cached per pom hash. |
 | `static-analysis` / `analysis` | `mvn -Panalysis verify -DskipTests` — javac `-Xlint:all` with `failOnWarning`, SpotBugs with FindSecBugs, and PMD. Runs beside `build-test` rather than after it, and all three fail the job. |
-| `coverage-pages` (GitHub only) | Publishes the JaCoCo report to [GitHub Pages](https://dgreco.github.io/jclaw/) on pushes to `main`, which is where the coverage badge points. GitLab has no equivalent here: the mirror is private, so a published report would be readable only by the people who can already open the job's artifact. |
+| `coverage-pages` / `pages` | Publishes the JaCoCo report on default-branch pipelines: to [GitHub Pages](https://dgreco.github.io/jclaw/), which is where the README's coverage badge points, and to the mirror's own GitLab Pages, which is where its project badge points. Each remote serves the report it computed. |
 | `native-image` | Builds the GraalVM binary and smoke-tests it against embedded H2 *and* a live PostgreSQL — the vault's AES-GCM, Ed25519 extension signing, triggers, MCP records, loop families, spans. Mandatory on every run: a broken native build fails the pipeline like a broken test. Needs several GB of memory. |
 | `release` | Tags only. Publishes the native binary (`jclaw-linux-<arch>`), the uber jar, and `SHA256SUMS`. |
 
