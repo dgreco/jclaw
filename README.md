@@ -1,18 +1,21 @@
 # jclaw
 
 <!--
-  Two pipelines, two sets of badges. The github.com and shields.io ones render everywhere,
-  including inside the GitLab mirror's README view. The two gitlab.davidgreco.it ones are live —
-  they follow the mirror's own pipeline and its `coverage:` keyword — but the project is private,
-  so they resolve only for a signed-in viewer and appear as broken images to anyone reading this
-  on GitHub. That is the trade: a live number where the pipeline runs, a static one everywhere
-  else. The static coverage and test figures are the ones stated further down, refreshed when
-  those move.
+  Two pipelines, one badge each. The github.com and shields.io ones render everywhere, including
+  inside the GitLab mirror's README view; the gitlab.davidgreco.it pipeline badge is live but the
+  project is private, so it resolves only for a signed-in viewer and is a broken image to anyone
+  reading this on GitHub.
+
+  Coverage appears once, and it is the static one on purpose: GitLab already shows its live
+  figure on the project page and the merge request widget from the `coverage:` keyword, so a
+  second badge there would say the same thing twice while leaving a GitHub visitor with nothing.
+  It links to the JaCoCo report the `coverage-pages` job publishes on every push to main, which
+  is a URL both READMEs can point at. The coverage and test figures are the ones stated further
+  down, refreshed when those move.
 -->
 [![CI](https://github.com/dgreco/jclaw/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dgreco/jclaw/actions/workflows/ci.yml)
 [![pipeline](https://gitlab.davidgreco.it/dgreco/jclaw/badges/main/pipeline.svg)](https://gitlab.davidgreco.it/dgreco/jclaw/-/pipelines)
-[![coverage](https://img.shields.io/badge/coverage-73.3%25-brightgreen)](#tests-and-source-integrity-checks)
-[![coverage](https://gitlab.davidgreco.it/dgreco/jclaw/badges/main/coverage.svg)](https://gitlab.davidgreco.it/dgreco/jclaw/-/graphs/main/charts)
+[![coverage](https://img.shields.io/badge/coverage-73.3%25-brightgreen)](https://dgreco.github.io/jclaw/)
 [![tests](https://img.shields.io/badge/tests-432-brightgreen)](#tests-and-source-integrity-checks)
 [![license](https://img.shields.io/github/license/dgreco/jclaw?color=blue)](LICENSE)
 [![Java](https://img.shields.io/badge/Java-21%2B-orange)](#building)
@@ -183,12 +186,16 @@ because an exclusion nobody can audit is worse than no filter at all.
 
 Test totals by module (verified on this checkout, with a Docker daemon so the PostgreSQL test runs rather than skipping): domain 166 · app 160 · storage 43 · providers 28 · kernel 14 · contracts 14 · tools 7 = **432, 0 failures**.
 
-Coverage comes from JaCoCo in the ordinary build — `mvn verify` writes a per-module report and an aggregate one under `jclaw-app/target/site/jacoco-aggregate`, and `./scripts/coverage.sh` prints the one-line total both pipelines publish. On this checkout: **73.3% of instructions, 55.3% of branches, 72.3% of lines**. GitLab shows the percentage on the merge request and the project badge; GitHub writes it to the run summary, and both keep the browsable HTML report as an artifact. `DependencyLawTest` in `jclaw-app` machine-checks the layer ladder with ArchUnit; the rules were confirmed to fire by planting deliberate violations.
+Coverage comes from JaCoCo in the ordinary build — `mvn verify` writes a per-module report and an aggregate one under `jclaw-app/target/site/jacoco-aggregate`, and `./scripts/coverage.sh` prints the one-line total both pipelines publish. On this checkout: **73.3% of instructions, 55.3% of branches, 72.3% of lines**. GitLab shows the percentage on the merge request and the project badge; GitHub writes it to the run summary. The report itself is published to [GitHub Pages](https://dgreco.github.io/jclaw/) on every push to `main`, which is what the coverage badge links to, and both pipelines keep it as an artifact as well.
+
+Read the aggregate rather than the per-module figures: most of `contracts`, `kernel` and `tools` is exercised by integration tests that live in `jclaw-app`, so their own reports read 5–16% while the aggregate, which credits a class wherever it actually ran, reads 73%. `DependencyLawTest` in `jclaw-app` machine-checks the layer ladder with ArchUnit; the rules were confirmed to fire by planting deliberate violations.
 
 ### Continuous integration
 
 Two pipelines, one shape. `.gitlab-ci.yml` and `.github/workflows/ci.yml` run the same six
-pieces of work in the same order; whichever remote you push to gives the same verdict.
+pieces of work in the same order; whichever remote you push to gives the same verdict. GitHub
+carries one extra job, `coverage-pages`, because it is the remote with somewhere public to put
+the report.
 
 | Job | What it does |
 |---|---|
@@ -196,6 +203,7 @@ pieces of work in the same order; whichever remote you push to gives the same ve
 | `license-verify` | `scripts/license-check.sh` — SPDX header on every source file, plus `LICENSE`, `NOTICE`, and the POM's `<licenses>` block. Runs before any toolchain exists, so a missing header fails in seconds. |
 | `build-test` | `mvn verify` on Temurin 21, with a real Docker daemon so `PostgresStorageIntegrationTest` runs against PostgreSQL rather than skipping. Publishes the test reports, the coverage report and the uber jar. Maven's local repository is cached per pom hash. |
 | `static-analysis` / `analysis` | `mvn -Panalysis verify -DskipTests` — javac `-Xlint:all` with `failOnWarning`, SpotBugs with FindSecBugs, and PMD. Runs beside `build-test` rather than after it, and all three fail the job. |
+| `coverage-pages` (GitHub only) | Publishes the JaCoCo report to [GitHub Pages](https://dgreco.github.io/jclaw/) on pushes to `main`, which is where the coverage badge points. GitLab has no equivalent here: the mirror is private, so a published report would be readable only by the people who can already open the job's artifact. |
 | `native-image` | Builds the GraalVM binary and smoke-tests it against embedded H2 *and* a live PostgreSQL — the vault's AES-GCM, Ed25519 extension signing, triggers, MCP records, loop families, spans. Mandatory on every run: a broken native build fails the pipeline like a broken test. Needs several GB of memory. |
 | `release` | Tags only. Publishes the native binary (`jclaw-linux-<arch>`), the uber jar, and `SHA256SUMS`. |
 

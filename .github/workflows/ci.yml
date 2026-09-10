@@ -4,6 +4,8 @@
 #   verify        source-integrity and licence-header scans (no toolchain needed)
 #   build-test    compile + full test suite with coverage, publishes the reports and the uber jar
 #   analysis      javac -Xlint, SpotBugs + FindSecBugs, PMD — beside build-test, not after it
+#   coverage-pages  publishes the JaCoCo report to GitHub Pages, so the README badge links to
+#                 something readable rather than to a zip nobody downloads (main pushes only)
 #   native-image  GraalVM native image, built and smoke-tested on every run; a broken native
 #                 build fails the run the same way a broken test does
 #   release       on tags only: publishes the native binary and the uber jar as a GitHub Release
@@ -167,6 +169,48 @@ jobs:
           path: |
             */target/spotbugsXml.xml
             */target/pmd.xml
+
+  # The coverage report, somewhere a person can read it. An artifact is a zip behind a login and
+  # two clicks; Pages is a URL, which is what a badge needs to be worth clicking.
+  #
+  # Main pushes only: a pull request from a fork cannot be given `pages: write`, and publishing a
+  # report from an unmerged branch would make the badge lie about main. All three actions are
+  # first-party — the same bar this pipeline holds elsewhere, where a third-party alternative was
+  # declined for the JUnit and coverage summaries.
+  coverage-pages:
+    name: Publish the coverage report
+    runs-on: ubuntu-latest
+    needs: [build-test]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      pages: write
+      id-token: write
+    # Its own group: a queued deployment should wait for the one in flight rather than cancel it,
+    # which is the opposite of what the workflow-level group does for ordinary jobs.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: coverage-report
+          path: site
+
+      # `enablement: true` turns Pages on the first time this runs, so the repository does not
+      # need a setting flipped by hand before the job can work.
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+
+      - id: deploy
+        uses: actions/deploy-pages@v4
 
   native-image:
     name: Native image
