@@ -10,6 +10,7 @@
 #   docker compose -f docker-compose.native.yml run --rm jclaw doctor
 #   docker compose -f docker-compose.native.yml run --rm jclaw run "hello"
 #   docker compose -f docker-compose.native.yml --profile serve up
+#   docker compose -f docker-compose.native.yml --profile "*" down -v
 #
 # Looking at what it wrote:
 #
@@ -84,6 +85,9 @@ services:
     volumes:
       - ./docker/workspace:/workspace
       - jclaw-state:/state
+    # A profiled service is invisible to a plain `docker compose down`: tearing this one down
+    # needs `--profile "*"` (or `--profile serve`), or the stopped container survives and the
+    # next `up` fails on the network it still references.
     profiles: ["serve"]
 
 volumes:

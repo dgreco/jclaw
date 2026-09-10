@@ -5,7 +5,7 @@
 #   docker compose run --rm jclaw run "hello"
 #   docker compose run --rm jclaw status -n 10
 #   docker compose --profile serve up          # the HTTP surface on http://localhost:8080
-#   docker compose down -v                     # throw the database away
+#   docker compose --profile "*" down -v   # remove everything, profiles included
 #
 # Everything under `storage: sql` was written against embedded H2 and is verified against
 # PostgreSQL by PostgresStorageIntegrationTest; this is the same thing by hand, for when you
@@ -89,6 +89,9 @@ services:
     volumes:
       - ./docker/workspace:/workspace
       - jclaw-state:/state
+    # A profiled service is invisible to a plain `docker compose down`: tearing this one down
+    # needs `--profile "*"` (or `--profile serve`), or the stopped container survives and the
+    # next `up` fails on the network it still references.
     profiles: ["serve"]
 
 volumes:

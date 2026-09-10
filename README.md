@@ -362,10 +362,14 @@ docker compose run --rm jclaw doctor
 docker compose run --rm jclaw run "hello"
 docker compose exec postgres psql -U jclaw -d jclaw -c '\dt'   # twelve tables, once jclaw has run
 docker compose --profile serve up                              # the HTTP surface on :8080
-docker compose down -v                                         # and throw it all away
+docker compose --profile "*" down -v                           # and throw it all away
 ```
 
-The first and last lines are not decoration. `docker compose run` starts the database as a dependency, so the `jclaw` lines work without it — but `docker compose exec postgres …` attaches to a running container and starts nothing, so on its own it fails with `service "postgres" is not running`. Starting the database explicitly makes every line work in any order. Run the `\dt` before any `jclaw` line and it correctly reports no relations: jclaw applies its migrations at startup, so the schema appears when jclaw first runs, not when PostgreSQL does.
+The first and last lines are not decoration, and both were learned by getting them wrong.
+
+**Start the database explicitly.** `docker compose run` starts it as a dependency, so the `jclaw` lines work without it — but `docker compose exec postgres …` attaches to a running container and starts nothing, so on its own it fails with `service "postgres" is not running`. Starting it up front makes every line work in any order. Run the `\dt` before any `jclaw` line and it correctly reports no relations: jclaw applies its migrations at *its own* startup, so the schema appears when jclaw first runs, not when PostgreSQL does.
+
+**Tear down with `--profile "*"`.** A plain `docker compose down -v` cannot see a service that belongs to a profile, so it leaves `serve` behind — and because that stopped container still references the network `down` just removed, the *next* `--profile serve up` fails with `failed to set up container networking: network … not found`. `--remove-orphans` does not help, since `serve` is defined in the file and merely absent from the active profile. Naming the profiles is what removes it, and `"*"` covers any added later.
 
 The CLI container and the `serve` container are two processes on one database, which is exactly the topology the thread lock and the shared cap exist for. That image is the uber jar on a JRE base, because a native image has to be compiled for the container's platform and that takes minutes — the default should be the one you can try immediately.
 
@@ -378,7 +382,7 @@ docker compose -f docker-compose.native.yml run --rm jclaw doctor
 docker compose -f docker-compose.native.yml run --rm jclaw run "hello"
 docker compose -f docker-compose.native.yml exec postgres psql -U jclaw -d jclaw -c '\dt'
 docker compose -f docker-compose.native.yml --profile serve up   # HTTP on :8081
-docker compose -f docker-compose.native.yml down -v              # and throw it all away
+docker compose -f docker-compose.native.yml --profile "*" down -v
 ```
 
 The same ordering caveat applies as above, for the same reason: `exec` attaches to a running container and starts nothing, so the database has to be up before that line and the tables only exist once jclaw has applied its migrations. This stack uses its own ports — 8081 for `serve`, 55432 for PostgreSQL — so it can run alongside the jar one without a collision.
