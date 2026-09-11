@@ -230,18 +230,21 @@ jobs:
       arch: ${{ steps.smoke.outputs.arch }}
 
     # Kept identical to the GitLab job's variable, where this is a fix rather than a
-    # precaution: that runner let native-image claim 12.63 GB of a ~16.7 GB host it shares with
-    # the PostgreSQL service, and the kernel killed the builder at [6/8] on about every other
-    # pipeline. The image itself peaks at 3.67 GiB, measured, so 8 GB is over twice what it
-    # needs and leaves the host most of its memory.
+    # precaution: left to size itself from the host, native-image claimed ~75% of that runner
+    # and the kernel killed the builder mid-build on about every other pipeline.
     #
-    # This runner has the same 16 GB and the same co-tenant database, so it carries the same
+    # The image needs about four gigabytes, measured -- a 9 GB ceiling peaks at 3.67 GiB and a
+    # 6 GB ceiling at 3.75 GiB, so the cap barely moves the peak and only stops a lazy heap
+    # from sprawling into memory the host cannot spare. The requirement is absolute rather than
+    # proportional, which is why this is a fixed size; it wants rechecking if either runner is
+    # ever resized below ~10 GB.
+    #
+    # This runner has 16 GB and the same co-tenant PostgreSQL service, so it carries the same
     # latent bug and has simply been winning the race; its 4 vCPUs also already pick the thread
-    # count set here. Pinning both makes the two pipelines agree and survives a move to a
-    # larger runner, which would otherwise reintroduce the GitLab failure here as an
-    # intermittent OOM in a job nobody touched.
+    # count set here. Pinning both makes the two pipelines agree and survives a change of
+    # runner size, which is exactly what broke the GitLab job once already.
     env:
-      NATIVE_IMAGE_OPTIONS: "--parallelism=4 -J-Xmx8g"
+      NATIVE_IMAGE_OPTIONS: "--parallelism=4 -J-Xmx6g"
 
     # A real PostgreSQL for the binary to talk to. This is the combination nothing else covers:
     # PostgresStorageIntegrationTest is a @SpringBootTest, so it proves the schema and the stores
