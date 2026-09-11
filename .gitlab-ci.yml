@@ -226,6 +226,14 @@ native-image:
     - curl -fsSL "https://repo.maven.apache.org/maven2/org/apache/maven/apache-maven/${MAVEN_VERSION}/apache-maven-${MAVEN_VERSION}-bin.tar.gz" | tar xz -C /opt
     - export PATH="/opt/apache-maven-${MAVEN_VERSION}/bin:$PATH"
     - java -version && native-image --version && mvn -version
+    # Diagnostic, temporary. native-image reports its heap as a percentage of "system memory",
+    # and that figure is the host's -- it is not necessarily what this container may actually
+    # use. A cgroup limit below it would let the builder size itself for room it will never
+    # get, which looks exactly like the OOM this job keeps producing: killed well under its own
+    # -Xmx ceiling. These three lines say which it is, and cost a second.
+    - 'echo "--- cgroup v2 memory.max:"; cat /sys/fs/cgroup/memory.max 2>/dev/null || echo "(none)"'
+    - 'echo "--- cgroup v1 limit_in_bytes:"; cat /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null || echo "(none)"'
+    - 'echo "--- free -m:"; free -m 2>/dev/null || grep -E "MemTotal|MemAvailable" /proc/meminfo'
   script:
     - mvn $MAVEN_CLI_OPTS install -DskipTests
     - mvn $MAVEN_CLI_OPTS -Pnative -pl jclaw-app package -DskipTests
