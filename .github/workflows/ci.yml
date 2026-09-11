@@ -219,7 +219,7 @@ jobs:
           path: site
 
       - id: deploy
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
 
   native-image:
     name: Native image
