@@ -641,29 +641,34 @@ the Anthropic SDK, and tool lanes may not read the process environment.
   What GitHub genuinely lacks is `reports: junit:` — the totals line goes to the run summary and
   the XML is an artifact, because the alternative is a third-party action in a repository that
   verifies its own extension signatures.
-- **The native image was not short of memory; it was claiming too much, and the cap must be
-  rechecked when the runner is resized.** The `native-image` job failed on roughly every other
-  pipeline with "The Native Image build process ran out of memory", which reads like a flaky
-  runner and is not one. That message also reads as "use a bigger machine", and means the
-  opposite: native-image sizes its heap from the host, so it claimed ~75% of a box that also
-  runs the job's PostgreSQL service, and a Java heap is lazy — handed room it does not need it
-  grows into that room before collecting, and the kernel gets there first. **The build wants
-  about four gigabytes.** Measured on the same architecture and GraalVM major: a 9 GB ceiling
-  peaks at 3.67 GiB in 1m23s, a 6 GB ceiling at 3.75 GiB in 1m24s. The ceiling barely moves the
-  peak — it just stops the sprawl — so capping costs nothing. Both pipelines set
-  `NATIVE_IMAGE_OPTIONS: "--parallelism=4 -J-Xmx6g"`.
-  **The requirement is absolute, not proportional, so the fixed size is a dependency on the
-  runner's size rather than a constant.** That bit is not hypothetical: the first fix pinned
-  8 GB against a ~16.7 GB runner (48%), the runner was later resized to 12.5 GB, and the same
-  unchanged setting became 64% of the host and brought the OOM straight back. Anything below
-  ~10 GB of runner needs this number revisited rather than inherited. Measure before believing
-  the message: `--parallelism=4` was tried *alone* first and did nothing at all, the job OOMing
-  at the same stage with `4 thread(s) ... set via '--parallelism=4'` in the log, so it is
-  margin and not the fix. An environment variable rather than a `<buildArg>`, so a developer's
-  machine keeps its own cores and memory, and self-verifying either way: the build output
-  echoes `Picked up NATIVE_IMAGE_OPTIONS:` and then reports the heap *as a percentage of the
-  host it actually found* — which is precisely the number that goes wrong after a resize, so a
-  job log shows it.
+- **The native image sizes its heap from `MemTotal`, and on the GitLab runner `MemTotal` is
+  fiction.** The `native-image` job failed on most pipelines with "The Native Image build
+  process ran out of memory", which reads like a flaky runner, reads like "use a bigger
+  machine", and is neither. The VM reports 11.6 GiB, but something on it holds ~7.6 GB before
+  the job starts, so the build actually has **~4.4 GiB** — printed by the `grep /proc/meminfo`
+  step kept in that job, because no other line in the log reports it. native-image plans
+  against the first number and is killed against the second. There is no cgroup limit in play;
+  that was checked, `memory.max` reads `max`.
+  **Three fixes failed before this one, and the failures are the useful part.**
+  `--parallelism=4` alone changed nothing (the job OOMed at the same stage with `4 thread(s)
+  ... set via '--parallelism=4'` in the log), so it is margin, not a fix. `-J-Xmx8g` then
+  looked right for three green pipelines — and was only ever right for *that* host, because
+  the runner was later resized from ~16.7 GB to 12.2 GB and the same unchanged setting went
+  from 48% of the host to 64% and brought the OOM straight back. `-J-Xmx6g` then died at
+  `[2/8]` with a 4.49 GB peak against its own 5.73 GB ceiling — a builder killed from outside,
+  which is what finally ruled out the heap-exhaustion story. **Any ceiling above what the
+  machine can supply is the same bug wearing a smaller number**, so stop tuning it and read
+  `MemAvailable`.
+  The value is measured at both ends, on the same architecture and GraalVM major: a 6 GB
+  ceiling peaks at 3.75 GiB, 4 GB peaks at 3.42 GiB, 3 GB fails outright. A *tighter* ceiling
+  lowers the peak, because the difference is garbage the GC had no reason to collect. Both
+  pipelines set `NATIVE_IMAGE_OPTIONS: "--parallelism=4 -J-Xmx4g"`, and the GitLab job also
+  caps `MAVEN_OPTS` with `-Xmx512m` — Maven shares those 4.4 GiB and was defaulting to a
+  quarter of `MemTotal` for a job that resolves a POM and forks a subprocess.
+  **This fit is tight by necessity and is a stopgap.** ~3.4 GiB of builder plus ~0.5 GiB of
+  Maven against ~4.4 GiB available holds only while `MemAvailable` stays there; a dependency
+  that grows the image will break it again. The durable fixes are a larger VM or moving
+  whatever holds the other 7.6 GB off that host.
 - Git: initialized on `main` (September 2026). `.gitignore` excludes `target/`, IDE files, `.claude/settings.local.json`, and `.byte-manifest`; the captured native-image metadata is versioned on purpose.
 
 ## Not built yet

@@ -182,37 +182,41 @@ native-image:
     POSTGRES_DB: jclaw
     POSTGRES_USER: jclaw
     POSTGRES_PASSWORD: jclaw-ci-password
-    # native-image sizes its heap from the host, and that default is the bug: left alone it
-    # claimed ~75% of this runner and was killed mid-build with "The Native Image build process
-    # ran out of memory" on roughly every other pipeline. The message says "use a bigger
-    # machine" and means the opposite.
+    # native-image sizes its heap from MemTotal, and on this runner MemTotal is fiction. The
+    # VM reports 11.6 GiB, but something on it holds ~7.6 GB before the job starts, so the
+    # build actually has ~4.4 GiB. Left alone the builder claimed ~12.6 GB of memory that was
+    # never there, and the kernel killed it mid-build with "The Native Image build process ran
+    # out of memory" -- a message that says "use a bigger machine" and points away from the
+    # cause. There is no cgroup limit involved; this was checked, memory.max reads "max".
     #
-    # The build needs about four gigabytes and no more. Measured, on the same architecture and
-    # GraalVM major: a 9 GB ceiling peaks at 3.67 GiB in 1m23s, a 6 GB ceiling peaks at
-    # 3.75 GiB in 1m24s. The ceiling barely moves the peak, because a Java heap is lazy — hand
-    # it room it does not need and it grows into that room before collecting, which is how a
-    # builder wanting four gigabytes gets itself killed asking for twelve. Cap it and the GC
-    # simply does its job.
+    # Two earlier caps here failed to fix it, and both failures are worth keeping:
+    # --parallelism=4 alone changed nothing, and -J-Xmx8g then -J-Xmx6g still died -- 6g died
+    # at [2/8] with a 4.49 GB peak against its own 5.73 GB ceiling, which is a builder killed
+    # from outside rather than one exhausting its heap. Any ceiling above what the machine can
+    # supply is the same bug wearing a smaller number.
     #
-    # **This requirement is absolute, not proportional, so the cap is a fixed size and it has
-    # to be rechecked whenever the runner is resized.** That is not hypothetical: the runner
-    # went from ~16.7 GB to 12.5 GB, which silently turned this same setting from 48% of the
-    # host into 64% of it, and the OOM came straight back. At 6 GB the builder takes 48% of
-    # today's 12.5 GB and leaves 6.5 GB for PostgreSQL, the runner and page cache, with ~1.6x
-    # headroom over the measured peak. A runner below ~10 GB needs this number revisited rather
-    # than inherited.
+    # So the number comes from measurement at both ends. What the build needs, on the same
+    # architecture and GraalVM major: 6 GB ceiling peaks at 3.75 GiB, 4 GB peaks at 3.42 GiB,
+    # 3 GB fails outright. A tighter ceiling *lowers* the peak, because most of the difference
+    # was uncollected garbage the GC had no reason to reclaim. 4 GB is therefore the floor plus
+    # nothing, which is the right choice only because the host leaves no room for margin:
+    # ~3.4 GiB of builder and ~0.5 GiB of Maven against ~4.4 GiB available.
     #
-    # --parallelism=4 rides along to hold the peak working set down on a shared box, and it is
-    # worth recording that it was tried *alone* first and did nothing: the job OOMed at the
-    # same stage with "4 thread(s) ... set via '--parallelism=4'" in the log. It is margin, not
-    # the fix.
+    # **That fit is tight by necessity, not by design.** It holds only while MemAvailable stays
+    # near 4.4 GiB, which is why it is printed above. The durable fixes are a larger VM or
+    # moving whatever holds the other 7.6 GB off this host; this is the stopgap that makes the
+    # pipeline green meanwhile, and a dependency that grows the image will break it again.
     #
     # An environment variable rather than a <buildArg>, so a developer's machine keeps its own
-    # cores and memory. Self-verifying either way: the build output echoes "Picked up
-    # NATIVE_IMAGE_OPTIONS:" and then reports the heap as a percentage of the host it actually
-    # found, so a job log shows both that the cap took effect and what fraction of the machine
-    # it is currently claiming -- which is the number that goes wrong after a resize.
-    NATIVE_IMAGE_OPTIONS: "--parallelism=4 -J-Xmx6g"
+    # cores and memory. Self-verifying: the build output echoes "Picked up
+    # NATIVE_IMAGE_OPTIONS:" and then reports the heap it actually used.
+    NATIVE_IMAGE_OPTIONS: "--parallelism=4 -J-Xmx4g"
+    # Maven's own JVM shares those ~4.4 GiB with the builder, and it was uncapped -- so it
+    # defaulted to a quarter of MemTotal, ~3 GB, for a job that resolves a POM and forks a
+    # subprocess. Same lazy-heap trap as the builder's: memory it never needed but would grow
+    # into. Repeats the global MAVEN_OPTS because a job-level value replaces it rather than
+    # extending it.
+    MAVEN_OPTS: "-Dmaven.repo.local=$CI_PROJECT_DIR/.m2/repository -Djava.awt.headless=true -Xmx512m"
   needs: [build-test]
   cache:
     key:
@@ -226,14 +230,13 @@ native-image:
     - curl -fsSL "https://repo.maven.apache.org/maven2/org/apache/maven/apache-maven/${MAVEN_VERSION}/apache-maven-${MAVEN_VERSION}-bin.tar.gz" | tar xz -C /opt
     - export PATH="/opt/apache-maven-${MAVEN_VERSION}/bin:$PATH"
     - java -version && native-image --version && mvn -version
-    # Diagnostic, temporary. native-image reports its heap as a percentage of "system memory",
-    # and that figure is the host's -- it is not necessarily what this container may actually
-    # use. A cgroup limit below it would let the builder size itself for room it will never
-    # get, which looks exactly like the OOM this job keeps producing: killed well under its own
-    # -Xmx ceiling. These three lines say which it is, and cost a second.
-    - 'echo "--- cgroup v2 memory.max:"; cat /sys/fs/cgroup/memory.max 2>/dev/null || echo "(none)"'
-    - 'echo "--- cgroup v1 limit_in_bytes:"; cat /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null || echo "(none)"'
-    - 'echo "--- free -m:"; free -m 2>/dev/null || grep -E "MemTotal|MemAvailable" /proc/meminfo'
+    # Kept, because it is the number this job actually lives or dies by and nothing else in the
+    # log reports it. native-image sizes its heap from MemTotal, but MemTotal is not what this
+    # job may have: something on this VM holds ~7.6 GB before the build starts, so of 11.6 GiB
+    # total only ~4.4 GiB is available. Every OOM here has been the builder planning against
+    # the first number and being killed against the second. When this job fails again, read
+    # MemAvailable first -- if it has dropped, nothing in this file is at fault.
+    - 'grep -E "MemTotal|MemAvailable" /proc/meminfo'
   script:
     - mvn $MAVEN_CLI_OPTS install -DskipTests
     - mvn $MAVEN_CLI_OPTS -Pnative -pl jclaw-app package -DskipTests

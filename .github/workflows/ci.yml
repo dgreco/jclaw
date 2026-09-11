@@ -229,22 +229,21 @@ jobs:
     outputs:
       arch: ${{ steps.smoke.outputs.arch }}
 
-    # Kept identical to the GitLab job's variable, where this is a fix rather than a
-    # precaution: left to size itself from the host, native-image claimed ~75% of that runner
-    # and the kernel killed the builder mid-build on about every other pipeline.
+    # Kept identical to the GitLab job's variable, where it is a fix rather than a precaution.
+    # native-image sizes its heap from MemTotal; on that runner MemTotal is fiction, because
+    # ~7.6 GB is held by something else before the job starts and the build really has ~4.4 GiB.
+    # Claiming the full share got the builder killed mid-build on most pipelines.
     #
-    # The image needs about four gigabytes, measured -- a 9 GB ceiling peaks at 3.67 GiB and a
-    # 6 GB ceiling at 3.75 GiB, so the cap barely moves the peak and only stops a lazy heap
-    # from sprawling into memory the host cannot spare. The requirement is absolute rather than
-    # proportional, which is why this is a fixed size; it wants rechecking if either runner is
-    # ever resized below ~10 GB.
+    # 4 GB is measured at both ends: a 6 GB ceiling peaks at 3.75 GiB, 4 GB peaks at 3.42 GiB,
+    # 3 GB fails outright. A tighter ceiling lowers the peak, since the difference is garbage
+    # the GC had no reason to collect.
     #
-    # This runner has 16 GB and the same co-tenant PostgreSQL service, so it carries the same
-    # latent bug and has simply been winning the race; its 4 vCPUs also already pick the thread
-    # count set here. Pinning both makes the two pipelines agree and survives a change of
-    # runner size, which is exactly what broke the GitLab job once already.
+    # This runner is not short of memory, so here the value is only about keeping the two
+    # pipelines in step -- and about the build being pinned to a measured requirement rather
+    # than to whatever fraction of a host it happens to land on, which is the thing that broke
+    # GitLab twice.
     env:
-      NATIVE_IMAGE_OPTIONS: "--parallelism=4 -J-Xmx6g"
+      NATIVE_IMAGE_OPTIONS: "--parallelism=4 -J-Xmx4g"
 
     # A real PostgreSQL for the binary to talk to. This is the combination nothing else covers:
     # PostgresStorageIntegrationTest is a @SpringBootTest, so it proves the schema and the stores
