@@ -182,26 +182,33 @@ native-image:
     POSTGRES_DB: jclaw
     POSTGRES_USER: jclaw
     POSTGRES_PASSWORD: jclaw-ci-password
-    # This runner has 8 cores and ~16.7 GB of RAM, and native-image sizes both of its budgets
-    # from the host: 8 build threads against a 12.63 GB builder heap. The compile phase holds
-    # per-thread graph state, so eight of them do not fit, and the job died at [6/8] with
-    # "The Native Image build process ran out of memory" on roughly every other pipeline —
-    # passing or failing by whatever else was on the box at the time, which reads like flake
-    # rather than like a budget that is one core too generous.
+    # native-image sizes its heap from the host. This runner has ~16.7 GB, so the builder
+    # claimed 12.63 GB of it and was killed at [6/8] with "The Native Image build process ran
+    # out of memory" on roughly every other pipeline — passing or failing by whatever else was
+    # on the box, which reads like a flaky runner and is not one.
     #
-    # Halving the threads halves that working set. Four is not a guess: the GitHub mirror
-    # builds this same image on a 4-vCPU, 16 GB runner and has never OOMed, so the identical
-    # build is already known to fit in four threads at this heap size. Raising the heap
-    # instead is the wrong direction — PostgreSQL is a co-tenant of those 16.7 GB, and a
-    # builder that overcommits gets the kernel's OOM killer and exit 137 with no message at
-    # all, in place of a diagnosis.
+    # That message says "buy a bigger machine" and means the opposite. The same image, built on
+    # the same architecture and GraalVM major with the heap pinned to 9 GB, peaks at 3.67 GiB
+    # and finishes in 1m23s. The build does not want 12.63 GB; it wants about four. What kills
+    # it is *claiming* twelve on a host that also runs the PostgreSQL service below: a Java
+    # heap is lazy, so a builder handed room it does not need will grow into it before
+    # collecting, and the kernel gets there first.
     #
-    # An environment variable rather than a <buildArg>, so a developer's machine keeps all of
-    # its cores. native-image prints "Picked up NATIVE_IMAGE_OPTIONS:" and then reports
-    # "4 thread(s) ... set via '--parallelism=4'" in the build output, so the job log shows
-    # the cap took effect — a silently ignored setting would look exactly like a fixed build
-    # until the next OOM.
-    NATIVE_IMAGE_OPTIONS: "--parallelism=4"
+    # So the cap goes down, not up. 8 GB is over twice the measured peak and under half the
+    # host, leaving ~8.7 GB for PostgreSQL, the runner and page cache. It is a ceiling rather
+    # than a reservation — a build that ever does need more will collect instead of balloon.
+    #
+    # --parallelism=4 rides along to hold the peak working set down on a shared box, and it is
+    # worth recording that it was tried *alone* first and did nothing: the job OOMed at the
+    # same stage with "4 thread(s) ... set via '--parallelism=4'" in the log. It is margin, not
+    # the fix.
+    #
+    # An environment variable rather than a <buildArg>, so a developer's machine keeps its own
+    # cores and memory. Self-verifying either way: the build output echoes "Picked up
+    # NATIVE_IMAGE_OPTIONS:" and then reports the heap and thread count it actually used, so a
+    # job log shows the cap took effect instead of leaving a silently ignored flag to look like
+    # a fix until the next OOM.
+    NATIVE_IMAGE_OPTIONS: "--parallelism=4 -J-Xmx8g"
   needs: [build-test]
   cache:
     key:
