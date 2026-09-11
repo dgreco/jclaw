@@ -663,8 +663,14 @@ the Anthropic SDK, and tool lanes may not read the process environment.
   ceiling peaks at 3.75 GiB, 4 GB peaks at 3.42 GiB, 3 GB fails outright. A *tighter* ceiling
   lowers the peak, because the difference is garbage the GC had no reason to collect. Both
   pipelines set `NATIVE_IMAGE_OPTIONS: "--parallelism=4 -J-Xmx4g"`, and the GitLab job also
-  caps `MAVEN_OPTS` with `-Xmx512m` — Maven shares those 4.4 GiB and was defaulting to a
+  caps `MAVEN_OPTS` with `-Xmx512m` — Maven shares those 4.2 GiB and was defaulting to a
   quarter of `MemTotal` for a job that resolves a POM and forks a subprocess.
+  **Nothing reduces the ~4 GB requirement itself, so `--parallelism` is not a memory knob.**
+  `-J-Xmx3g` fails at `--parallelism=1`, `2` and `4` alike, so the memory is the analysis and
+  universe structures rather than per-thread compilation state; `-Ob` quick-build fails at 3g
+  too. The flag is retained only to leave half the cores to whatever else shares the box, at
+  roughly 25% build time. Earlier comments in both CI files claimed it held the working set
+  down; that was never measured and is wrong.
   **This fit is tight by necessity and is a stopgap.** ~3.4 GiB of builder plus ~0.5 GiB of
   Maven against ~4.4 GiB available holds only while `MemAvailable` stays there; a dependency
   that grows the image will break it again. The durable fixes are a larger VM or moving

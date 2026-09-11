@@ -183,17 +183,23 @@ native-image:
     POSTGRES_USER: jclaw
     POSTGRES_PASSWORD: jclaw-ci-password
     # native-image sizes its heap from MemTotal, and on this runner MemTotal is fiction. The
-    # VM reports 11.6 GiB, but something on it holds ~7.6 GB before the job starts, so the
-    # build actually has ~4.4 GiB. Left alone the builder claimed ~12.6 GB of memory that was
+    # VM reports 11.6 GiB, but something on it holds ~7.8 GB before the job starts, so the
+    # build actually has ~4.2 GiB. Left alone the builder claimed ~12.6 GB of memory that was
     # never there, and the kernel killed it mid-build with "The Native Image build process ran
     # out of memory" -- a message that says "use a bigger machine" and points away from the
     # cause. There is no cgroup limit involved; this was checked, memory.max reads "max".
     #
-    # Two earlier caps here failed to fix it, and both failures are worth keeping:
-    # --parallelism=4 alone changed nothing, and -J-Xmx8g then -J-Xmx6g still died -- 6g died
-    # at [2/8] with a 4.49 GB peak against its own 5.73 GB ceiling, which is a builder killed
-    # from outside rather than one exhausting its heap. Any ceiling above what the machine can
-    # supply is the same bug wearing a smaller number.
+    # Three earlier caps failed, and the failures are the useful part: --parallelism=4 alone
+    # changed nothing, and -J-Xmx8g then -J-Xmx6g still died -- 6g at [2/8] with a 4.49 GB peak
+    # against its own 5.73 GB ceiling, which is a builder killed from outside rather than one
+    # exhausting its heap. Any ceiling above what the machine can supply is the same bug
+    # wearing a smaller number.
+    #
+    # **Nothing available here reduces the requirement, and an earlier version of this comment
+    # claiming --parallelism did was wrong.** Measured: -J-Xmx3g fails at --parallelism=1, 2
+    # and 4 alike, so the ~4 GB is the analysis and universe structures rather than per-thread
+    # compilation state; -Ob quick-build fails at 3g too. The flag is kept only to leave half
+    # the cores for whatever else shares this box, and it costs ~25% build time for that.
     #
     # So the number comes from measurement at both ends. What the build needs, on the same
     # architecture and GraalVM major: 6 GB ceiling peaks at 3.75 GiB, 4 GB peaks at 3.42 GiB,
@@ -230,13 +236,33 @@ native-image:
     - curl -fsSL "https://repo.maven.apache.org/maven2/org/apache/maven/apache-maven/${MAVEN_VERSION}/apache-maven-${MAVEN_VERSION}-bin.tar.gz" | tar xz -C /opt
     - export PATH="/opt/apache-maven-${MAVEN_VERSION}/bin:$PATH"
     - java -version && native-image --version && mvn -version
-    # Kept, because it is the number this job actually lives or dies by and nothing else in the
-    # log reports it. native-image sizes its heap from MemTotal, but MemTotal is not what this
-    # job may have: something on this VM holds ~7.6 GB before the build starts, so of 11.6 GiB
-    # total only ~4.4 GiB is available. Every OOM here has been the builder planning against
-    # the first number and being killed against the second. When this job fails again, read
-    # MemAvailable first -- if it has dropped, nothing in this file is at fault.
-    - 'grep -E "MemTotal|MemAvailable" /proc/meminfo'
+    # The budget this job lives or dies by, and nothing else in the log reports it.
+    #
+    # native-image sizes its heap from MemTotal, and MemTotal is not what this job may have:
+    # something on this VM holds ~7.8 GB before the build starts, so of ~11.6 GiB total only
+    # ~4.2 GiB is available. Every OOM this job has produced was the builder planning against
+    # the first number and being killed against the second, which is why it reads as a flaky
+    # runner and why tuning -Xmx never settled it.
+    #
+    # A warning rather than a hard failure, deliberately: the margin is a couple of hundred
+    # megabytes, so a check strict enough to be honest would fail builds that would otherwise
+    # have passed. This puts the diagnosis in the log at the moment it matters, and lets the
+    # build try anyway.
+    - |
+      total_mb=$(awk '/MemTotal/{print int($2/1024)}' /proc/meminfo)
+      avail_mb=$(awk '/MemAvailable/{print int($2/1024)}' /proc/meminfo)
+      need_mb=4300     # ~3.5 GiB builder peak + 512m Maven + ~200 MB native-image driver
+      echo "native-image budget: MemTotal ${total_mb}M, MemAvailable ${avail_mb}M, needs ~${need_mb}M"
+      if [ "$avail_mb" -lt "$need_mb" ]; then
+        echo
+        echo "WARNING: this runner has ${avail_mb}M available; the build needs ~${need_mb}M."
+        echo "  If it dies with 'The Native Image build process ran out of memory', this is why."
+        echo "  No -Xmx value fixes it: $((total_mb - avail_mb))M of this VM's ${total_mb}M is held"
+        echo "  by something else before the job starts, and the ~4 GB requirement is structural"
+        echo "  -- measured, neither --parallelism nor -Ob reduces it. Give the runner more"
+        echo "  memory, or move whatever holds the rest off this host."
+        echo
+      fi
   script:
     - mvn $MAVEN_CLI_OPTS install -DskipTests
     - mvn $MAVEN_CLI_OPTS -Pnative -pl jclaw-app package -DskipTests

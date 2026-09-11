@@ -236,7 +236,9 @@ jobs:
     #
     # 4 GB is measured at both ends: a 6 GB ceiling peaks at 3.75 GiB, 4 GB peaks at 3.42 GiB,
     # 3 GB fails outright. A tighter ceiling lowers the peak, since the difference is garbage
-    # the GC had no reason to collect.
+    # the GC had no reason to collect. Nothing reduces the requirement itself -- -J-Xmx3g fails
+    # at --parallelism=1, 2 and 4 alike, and -Ob fails at 3g too -- so ~4 GB is structural and
+    # --parallelism is not a memory knob, whatever an earlier version of this comment said.
     #
     # This runner is not short of memory, so here the value is only about keeping the two
     # pipelines in step -- and about the build being pinned to a measured requirement rather
