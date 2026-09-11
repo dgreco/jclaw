@@ -182,6 +182,26 @@ native-image:
     POSTGRES_DB: jclaw
     POSTGRES_USER: jclaw
     POSTGRES_PASSWORD: jclaw-ci-password
+    # This runner has 8 cores and ~16.7 GB of RAM, and native-image sizes both of its budgets
+    # from the host: 8 build threads against a 12.63 GB builder heap. The compile phase holds
+    # per-thread graph state, so eight of them do not fit, and the job died at [6/8] with
+    # "The Native Image build process ran out of memory" on roughly every other pipeline —
+    # passing or failing by whatever else was on the box at the time, which reads like flake
+    # rather than like a budget that is one core too generous.
+    #
+    # Halving the threads halves that working set. Four is not a guess: the GitHub mirror
+    # builds this same image on a 4-vCPU, 16 GB runner and has never OOMed, so the identical
+    # build is already known to fit in four threads at this heap size. Raising the heap
+    # instead is the wrong direction — PostgreSQL is a co-tenant of those 16.7 GB, and a
+    # builder that overcommits gets the kernel's OOM killer and exit 137 with no message at
+    # all, in place of a diagnosis.
+    #
+    # An environment variable rather than a <buildArg>, so a developer's machine keeps all of
+    # its cores. native-image prints "Picked up NATIVE_IMAGE_OPTIONS:" and then reports
+    # "4 thread(s) ... set via '--parallelism=4'" in the build output, so the job log shows
+    # the cap took effect — a silently ignored setting would look exactly like a fixed build
+    # until the next OOM.
+    NATIVE_IMAGE_OPTIONS: "--parallelism=4"
   needs: [build-test]
   cache:
     key:

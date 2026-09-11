@@ -641,6 +641,20 @@ the Anthropic SDK, and tool lanes may not read the process environment.
   What GitHub genuinely lacks is `reports: junit:` — the totals line goes to the run summary and
   the XML is an artifact, because the alternative is a third-party action in a repository that
   verifies its own extension signatures.
+- **native-image sizes itself from the host, and the GitLab runner is the wrong shape.** That
+  runner has 8 cores and ~16.7 GB, so the builder took 8 threads against a 12.63 GB heap, and
+  the compile phase's per-thread graph state did not fit: the job died at `[6/8]` with "The
+  Native Image build process ran out of memory" on roughly every other pipeline. Alternating
+  pass/fail on unrelated commits reads like a flaky runner, which is the trap — it was a budget
+  one core too generous, tipped either way by whatever else shared the box. Both pipelines now
+  set `NATIVE_IMAGE_OPTIONS: --parallelism=4`, an environment variable rather than a
+  `<buildArg>` so a developer's machine keeps all of its cores. Four is the number the GitHub
+  mirror already proves: it builds the same image on a 4-vCPU, 16 GB runner and has never
+  OOMed. Raising the heap is the wrong direction — PostgreSQL is a co-tenant, and overcommitting
+  trades a diagnosis for exit 137 with no message. The setting is self-verifying: native-image
+  prints `Picked up NATIVE_IMAGE_OPTIONS:` and then reports `4 thread(s) ... set via
+  '--parallelism=4'`, so a job log shows the cap took effect rather than leaving a silently
+  ignored flag to look like a fix until the next OOM.
 - Git: initialized on `main` (September 2026). `.gitignore` excludes `target/`, IDE files, `.claude/settings.local.json`, and `.byte-manifest`; the captured native-image metadata is versioned on purpose.
 
 ## Not built yet

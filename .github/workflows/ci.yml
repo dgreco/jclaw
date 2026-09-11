@@ -229,6 +229,15 @@ jobs:
     outputs:
       arch: ${{ steps.smoke.outputs.arch }}
 
+    # A no-op on today's runner, and set anyway. native-image sizes its thread count from the
+    # host, and this one has 4 vCPUs, so four is already what it picks; the GitLab runner has 8
+    # against the same ~16 GB and ran out of builder heap at [6/8] on about every other
+    # pipeline. What this pins is the *next* runner: moving to a larger one would restore the
+    # GitLab failure here, and it would arrive as an intermittent OOM in a job nobody touched.
+    # Kept identical to the GitLab job's variable rather than left to the hardware.
+    env:
+      NATIVE_IMAGE_OPTIONS: "--parallelism=4"
+
     # A real PostgreSQL for the binary to talk to. This is the combination nothing else covers:
     # PostgresStorageIntegrationTest is a @SpringBootTest, so it proves the schema and the stores
     # work on the JVM, and the smoke steps below prove the binary works — but against embedded
