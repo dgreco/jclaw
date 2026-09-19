@@ -37,7 +37,7 @@ cp -r "$here/parallel-review" "$state/skills/"
 # Note what is *not* pinned here. demo.sh forces `--jclaw.provider=mock` so it runs the same way
 # on every machine; this one deliberately inherits ~/.jclaw/jclaw.yaml and your environment,
 # because the provider is the entire point.
-common=(--jclaw.state-dir="$state" --jclaw.workspace="$workspace")
+common=(--jclaw.state-dir="$state" --jclaw.workspace="$workspace" --logging.level.io.jclaw=DEBUG)
 
 echo "== the provider =="
 # `models --probe` exits non-zero when the active provider does not answer, which is exactly the

@@ -82,9 +82,9 @@ jclaw reimplements the **architecture** of IronClaw — the seven-layer ladder, 
 | **Resume re-authorizes.** | A parked run asks the approval store again on resume; denying a gate produces a denial the model sees, not an effect. |
 | **Recovery fails closed.** | A crashed worker's run is replayed only from a checkpoint proven side-effect-free, and only after a grace period. |
 
-Everything is durable JSONL under `~/.jclaw`: a run can park in one process, be approved in a second, and resume in a third. There is no database, and no server unless you start one (`jclaw serve`).
+Everything is durable JSONL under `~/.jclaw` by default: a run can park in one process, be approved in a second, and resume in a third. There is no server unless you start one (`jclaw serve`), and no database unless you ask for one (`--jclaw.storage=sql`).
 
-**Status.** Milestones M0–M7 plus subagents (synchronous or asynchronous), MCP, streaming on every provider, lease-based crash recovery, a per-thread run lock, context compaction with model summaries, vector memory, configurable denials and egress lists, per-tool rate limits, injection heuristics, auth and process gates with expiry, a scheduler with `submit` and `worker`, an HTTP surface with run projections, event streams, and per-user tenants, attachments, store retention, an encrypted secret vault with host-side credential injection, a container sandbox for the shell lane, a SQL storage backend (embedded H2 or PostgreSQL) with schema migrations, signed extension packages, execution-stage hooks, a second loop family, Prometheus metrics with OTLP trace export, webhook, heartbeat, and event triggers, MCP over HTTP with resources, prompts, lazily started servers, OAuth 2.1 client credentials, and sampling, channel adapters for Slack and Telegram, OIDC login with roles and per-tenant policy, a WebAssembly extension lane, extension registries with versioned upgrades and profiles, subprocess secret staging with an outbound leak scan and a vault per tenant, per-concept SQL tables with pooled connections and materialised projections, latency histograms with W3C trace propagation, hooks on prompt assembly and gate raising with loop families from configuration, and filesystem, inbound-message, and fan-out triggers. 416 tests pass across the modules, including 15 machine-checked architecture rules (ArchUnit). Both the uber jar and the native image are verified end to end, including subprocess spawning for MCP servers and shell tools. [PARITY.md](PARITY.md) lists what IronClaw still has that jclaw does not.
+**Status.** Milestones M0–M7 plus subagents (synchronous or asynchronous), MCP, streaming on every provider, lease-based crash recovery, a per-thread run lock, context compaction with model summaries, vector memory, configurable denials and egress lists, per-tool rate limits, injection heuristics, auth and process gates with expiry, a scheduler with `submit` and `worker`, an HTTP surface with run projections, event streams, and per-user tenants, attachments, store retention, an encrypted secret vault with host-side credential injection, a container sandbox for the shell lane, a SQL storage backend (embedded H2 or PostgreSQL) with schema migrations, signed extension packages, execution-stage hooks, a second loop family, Prometheus metrics with OTLP trace export, webhook, heartbeat, and event triggers, MCP over HTTP with resources, prompts, lazily started servers, OAuth 2.1 client credentials, and sampling, channel adapters for Slack and Telegram, OIDC login with roles and per-tenant policy, a WebAssembly extension lane, extension registries with versioned upgrades and profiles, subprocess secret staging with an outbound leak scan and a vault per tenant, per-concept SQL tables with pooled connections and materialised projections, latency histograms with W3C trace propagation, hooks on prompt assembly and gate raising with loop families from configuration, and filesystem, inbound-message, and fan-out triggers. 499 tests pass across the modules, including 16 machine-checked architecture rules (ArchUnit). Both the uber jar and the native image are verified end to end, including subprocess spawning for MCP servers and shell tools. [PARITY.md](PARITY.md) lists what IronClaw still has that jclaw does not.
 
 ---
 
@@ -138,7 +138,7 @@ The Spring Boot Maven plugin repackages `jclaw-app` into an executable jar:
 jclaw-app/target/jclaw-app-0.1.0-SNAPSHOT.jar
 ```
 
-Run it with `java -jar`. Startup is about 1.2 s. The manifest carries `Enable-Native-Access: ALL-UNNAMED` so JLine can put the terminal into raw mode without warnings on JDK 24+ (the REPL needs it).
+Run it with `java -jar`. Startup is about 1.2 s bare, 1.48 s in a container. The manifest carries `Enable-Native-Access: ALL-UNNAMED` so JLine can put the terminal into raw mode without warnings on JDK 24+ (the REPL needs it).
 
 ### Native image
 
@@ -151,7 +151,7 @@ mvn -B -Pnative -pl jclaw-app package -DskipTests
 ./jclaw-app/target/jclaw run "hello"
 ```
 
-The `native` profile is declared in `jclaw-app/pom.xml` (the Boot parent only provides `pluginManagement` for it, so `mvn -Pnative native:compile` at the root does nothing useful). It produces `jclaw-app/target/jclaw`: roughly 80 MB, ~78 ms startup versus ~1.2 s for the jar. Build args: `--no-fallback` (a missing reflection registration fails the build instead of shipping a binary that dies at runtime), `--report-unsupported-elements-at-runtime`, and `--enable-native-access=ALL-UNNAMED`.
+The `native` profile is declared in `jclaw-app/pom.xml` (the Boot parent only provides `pluginManagement` for it, so `mvn -Pnative native:compile` at the root does nothing useful). It produces `jclaw-app/target/jclaw`: roughly 80 MB, ~78 ms startup versus ~1.2 s for the jar (bare metal; measured inside a container, the same comparison is 61 ms against 1.48 s). Build args: `--no-fallback` (a missing reflection registration fails the build instead of shipping a binary that dies at runtime), `--report-unsupported-elements-at-runtime`, and `--enable-native-access=ALL-UNNAMED`.
 
 Two pieces of reachability metadata make the binary work, and both matter when you upgrade dependencies:
 
@@ -236,8 +236,7 @@ so neither remote sends a reader to the other for a number it computed itself.
 
 | Job | What it does |
 |---|---|
-| `byte-verify` | `scripts/byte-verify.sh scan` — refuses stray control bytes in sources. |
-| `license-verify` | `scripts/license-check.sh` — SPDX header on every source file, plus `LICENSE`, `NOTICE`, and the POM's `<licenses>` block. Runs before any toolchain exists, so a missing header fails in seconds. |
+| `byte-verify` · `license-verify` · `readme-sync` | The three source guards — `scripts/byte-verify.sh scan` refuses stray control bytes, `scripts/license-check.sh` wants an SPDX header on every source file plus `LICENSE`, `NOTICE`, and the POM's `<licenses>` block, and `scripts/readme-sync.sh --check` fails on README drift. GitLab runs them as three bare-image jobs, GitHub as steps in one `verify` job. All run before any toolchain exists, so a missing header fails in seconds rather than after a compile. |
 | `build-test` | `mvn verify` on Temurin 21, with a real Docker daemon so `PostgresStorageIntegrationTest` runs against PostgreSQL rather than skipping. Publishes the test reports, the coverage report and the uber jar. Maven's local repository is cached per pom hash. |
 | `static-analysis` / `analysis` | `mvn -Panalysis verify -DskipTests` — javac `-Xlint:all` with `failOnWarning`, SpotBugs with FindSecBugs, and PMD. Runs beside `build-test` rather than after it, and all three fail the job. |
 | `coverage-pages` / `pages` | Publishes the JaCoCo report on default-branch pipelines: to [GitHub Pages](https://dgreco.github.io/jclaw/), which is where the README's coverage badge points, and to the mirror's own GitLab Pages, which is where its project badge points. Each remote serves the report it computed. |
@@ -421,6 +420,10 @@ Everything durable is append-only JSONL under `state-dir` (default `~/.jclaw`), 
 ├── secrets.jsonl       vault entries: names, bindings, AES-256-GCM ciphertext
 ├── extensions.jsonl    installed extensions: manifests, trust, digests
 ├── extensions/<name>/  installed extension packages
+├── sessions.jsonl      login sessions minted by `POST /login` (only their SHA-256 stored)
+├── channel-bindings.jsonl   reply targets derived from platform messages, kept across restarts
+├── inbound.jsonl       foreign messages held for review under `inbound-policy: review`
+├── watches.jsonl       a watch routine's last-seen tree fingerprint, so a watch survives a restart
 ├── vault.key           the vault key (owner-only), unless JCLAW_VAULT_KEY is set
 ├── locks/<hash>.lock   per-thread run locks (OS file locks; empty files)
 ├── repl-history        REPL line history
@@ -1006,7 +1009,7 @@ A row is dropped only when it is older than the store's `retention-*` age **and*
 ```bash
 jclaw status               # last 20 events from the audit log (-n to change)
 jclaw status --run run_…   # one run's projection: status, timings, calls, tokens, gates, findings
-jclaw status --run run_… --trace   # plus the run's spans: model calls, capabilities, gates, with durations
+jclaw status --run run_… --spans   # plus the run's spans: model calls, capabilities, gates, with durations
 jclaw tools [--verbose]    # capability surface: effect, trust, unattended?, schemas
 jclaw models [--probe]     # providers and credentials; --probe sends a tiny real request
 jclaw doctor               # configuration, security posture, and checks; exit 1 on a real problem
@@ -1025,7 +1028,7 @@ The event log is the substrate; metrics and traces are projections of it, so nei
 - **Trace context on outbound calls.** When the interpreter is making a model call it opens a W3C trace scope, and the Anthropic, OpenAI-compatible, and MCP-over-HTTP adapters put a `traceparent` header on the request. The ids are the run's own: `RunTrace.traceId(run)` and the span id of the model-call span, so a collector holding the provider's span and jclaw's OTLP export of the same run puts them under one trace and one parent — not two that merely overlap in time. The header carries two opaque identifiers and nothing else; the trace id is a SHA-256 of the run id, so it is not the run id.
 
   `builtin.http_fetch` deliberately does **not** send one. That URL is model-controlled, and a trace id sent to an arbitrary host is a correlator handed to somebody who did not need it.
-- **Traces.** A run's events become one trace: a root span for the run (status, tokens, iterations, thread), a child span per model call and capability call with their measured latency, a span per gate from raised to resolved, and span events for claims, checkpoints, injection findings, secret injections, and hook firings. Trace and span ids derive from the run id, so re-exporting deduplicates. Read one with `status --run … --trace` or `GET /runs/{run}/trace` (OTLP/JSON), or set `otlp-endpoint` to have every finished run POSTed to a collector.
+- **Traces.** A run's events become one trace: a root span for the run (status, tokens, iterations, thread), a child span per model call and capability call with their measured latency, a span per gate from raised to resolved, and span events for claims, checkpoints, injection findings, secret injections, and hook firings. Trace and span ids derive from the run id, so re-exporting deduplicates. Read one with `status --run … --spans` or `GET /runs/{run}/trace` (OTLP/JSON), or set `otlp-endpoint` to have every finished run POSTed to a collector.
 
 ### Tracing a turn
 
