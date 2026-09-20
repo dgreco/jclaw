@@ -125,7 +125,7 @@ flowchart TB
         SCHED["Schedulers<br/>worker · routines · triggers"]
     end
 
-    subgraph INSIDE["The core — compiles knowing none of the names above or below"]
+    subgraph INSIDE["The core — compiles knowing none of the names around it"]
         direction TB
         RT["JclawRuntime<br/>admission · thread lock · leases · exit validation"]
         INTERP["EffectInterpreter<br/>the only place an effect happens"]
@@ -154,7 +154,7 @@ flowchart TB
     STORES --> PORTS
 ```
 
-Read the bottom row again: the model providers depend on the core, not the other way round. That inversion is the thing being bought, and *What the shape actually buys* below is a list of consequences of it.
+Look again at the arrows leaving the driven adapters: the model providers depend on the core, not the other way round. That inversion is the thing being bought, and *What the shape actually buys* below is a list of consequences of it.
 
 One node in that picture is drawn by role rather than by address. `JclawRuntime` is core — it is the application service the driving adapters all call — but it ships in `jclaw-app` alongside the composition root, for reasons set out in *One honest wrinkle* at the end of this section.
 
