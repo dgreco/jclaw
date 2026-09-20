@@ -1270,7 +1270,7 @@ jclaw/
 └── PARITY.md               what IronClaw has that jclaw does not
 ```
 
-Dependencies flow strictly downward (contracts ← domain ← kernel ← loop/tools/storage ← app; providers depend on contracts only) and `DependencyLawTest` enforces it. Notable choices: Jackson 3 (`tools.jackson`) via Boot 4 — do not add `jackson-databind` 2.x; hand-written codecs for native-image safety; JLine for the REPL; picocli bridged to Spring through its `IFactory`.
+Dependencies flow strictly downward (ports ← domain ← application-authority ← application-usecase and the capability/persistence adapters ← bootstrap; the model adapter depends on ports only) and `DependencyLawTest` enforces it. Notable choices: Jackson 3 (`tools.jackson`) via Boot 4 — do not add `jackson-databind` 2.x; hand-written codecs for native-image safety; JLine for the REPL; picocli bridged to Spring through its `IFactory`.
 
 ## Licence
 

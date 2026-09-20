@@ -54,11 +54,9 @@ flowchart TD
 ```
 
 An arrow means *depends on*, so every one points down the page and stops at `jclaw-ports`.
-That module is at the bottom because there is nothing for it to point at: it names no
-framework, no HTTP client, no database driver, and no other jclaw module. Its one declared
-dependency is `jackson-annotations` — a jar of annotation types and nothing else, no
-serializer and no runtime machinery — and as it stands no class in the module uses even
-that, so the module compiles against the JDK alone.
+That module is at the bottom because there is nothing for it to point at. It declares no
+dependency of any kind — no framework, no HTTP client, no database driver, no serializer,
+no other jclaw module — and compiles against the JDK alone.
 
 Nothing points back up, and that is the dependency rule from section 2, *Ports and adapters*, drawn as a
 build graph rather than asserted: `DependencyLawTest` fails the build if an import ever contradicts it.
@@ -272,7 +270,7 @@ They are ordinary JUnit 5 tests, so they run in `build-test` on both pipelines a
 | group | rules |
 |---|---|
 | *the layer ladder* | one `layeredArchitecture` rule covering all eight modules: `bootstrap` may be accessed by nothing, the three adapter modules and `application-usecase` only by `bootstrap`, `application-authority` by the application and adapters, `domain` by everything above it, `ports` by all. |
-| *the ports module stays neutral* | no Spring · no Jackson databind (annotations only) · no JDBC and no HTTP — *"a port must not name the transport that happens to implement it"* |
+| *the ports module stays neutral* | no Spring · no Jackson, not even the annotations · no JDBC and no HTTP — *"a port must not name the transport that happens to implement it"* |
 | *the domain is a pure functional core* | no Spring, I/O, JDBC or HTTP · never reads the clock, which arrives as a parameter · no randomness |
 | *the application talks to ports, never to adapters* | never imports a secondary adapter · no Spring in the application layer |
 | *vendor SDKs stay behind their secondary adapters* | only the anthropic adapter imports the Anthropic SDK · only the wasm lane imports the WebAssembly runtime · only the model adapter opens an HTTP client to a model |

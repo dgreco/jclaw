@@ -306,7 +306,7 @@ flowchart TD
 ```
 
 An arrow means *depends on*. Every one points down the page toward `jclaw-ports`, which
-depends on nothing but Jackson's annotations; nothing points back up. This is the
+depends on nothing at all; nothing points back up. This is the
 **transitive reduction** — each module also depends on everything reachable below it and the
 POMs declare those directly (`jclaw-bootstrap` names all seven), so do not read a missing
 arrow as a missing dependency. `DependencyLawTest` fails the build on any import that
@@ -364,7 +364,7 @@ the Anthropic SDK, and tool lanes may not read the process environment.
 
 ### Invariants
 
-- `ports` — no Spring, no Jackson databind, no `java.sql`, no HTTP.
+- `ports` — no Spring, no Jackson (not even the annotations), no `java.sql`, no HTTP. It declares no dependency of any kind and compiles against the JDK alone.
 - `domain` — total, deterministic functions; the clock is a parameter, never read.
 - `application-usecase` — ports only; never imports a secondary adapter module.
 - **No credential is ever written to a store.** The vault is the only place a value lives. An
@@ -491,8 +491,10 @@ the Anthropic SDK, and tool lanes may not read the process environment.
 
 - **Jackson 3, not 2.** Boot 4 moved databind to `tools.jackson.core`. Do not add
   `com.fasterxml.jackson.core:jackson-databind` — it resolves to the 2.x line and will not match
-  the mapper Boot auto-configures. `jackson-annotations` correctly stays on the old groupId.
-  Jackson **2** is on the classpath transitively via the Anthropic SDK; the two coexist.
+  the mapper Boot auto-configures. Jackson **2** is on the classpath transitively via the
+  Anthropic SDK; the two coexist. `jclaw-ports` used to declare `jackson-annotations` without
+  ever importing it — removed, and `DependencyLawTest` now forbids the whole of Jackson there
+  so it cannot drift back.
 - **Codecs are hand-written on purpose** (`EventCodec`, `MessageCodec`, `JsonLoopStateCodec`): no
   reflection for native image, no accidental field disclosure, and a wire format decoupled from
   the records. Adding a field to an event requires editing its codec — that is the point.

@@ -85,13 +85,15 @@ class DependencyLawTest {
         }
 
         @Test
-        @DisplayName("no Jackson databind — annotations only")
-        void noJacksonDatabind() {
+        @DisplayName("no Jackson at all — not even the annotations")
+        void noJackson() {
             noClasses().that().resideInAPackage("io.jclaw.ports..")
                     .should().dependOnClassesThat()
-                    .resideInAnyPackage("tools.jackson..", "com.fasterxml.jackson.databind..")
-                    .because("serialization is an adapter detail; contracts describes shapes, "
-                            + "not how they are written to disk or a wire")
+                    .resideInAnyPackage("tools.jackson..", "com.fasterxml.jackson..")
+                    .because("serialization is an adapter detail; the ports module describes "
+                            + "shapes, not how they are written to disk or a wire. It once "
+                            + "declared jackson-annotations and never used them; the rule is "
+                            + "what stops that drifting back in")
                     .check(classes);
         }
 
