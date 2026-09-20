@@ -1,6 +1,6 @@
 # jclaw — Architecture
 
-This document explains the architecture of **jclaw**. It starts with the shape the whole codebase is built from — **ports and adapters**, often called hexagonal architecture — explained from scratch in §2 for readers who have not met it. It then zooms in through the [C4 model](https://c4model.org) (Context → Container → Component → Code), walks the complete lifecycle of a turn from the moment a prompt is admitted to the moment a result is produced, and closes with a sequence diagram showing every step.
+This document explains the architecture of **jclaw**. It starts with the shape the whole codebase is built from — **ports and adapters**, often called hexagonal architecture — explained from scratch in §2, *Ports and adapters*, for readers who have not met it. It then zooms in through the [C4 model](https://c4model.org) (Context → Container → Component → Code), walks the complete lifecycle of a turn from the moment a prompt is admitted to the moment a result is produced, and closes with a sequence diagram showing every step.
 
 jclaw is a Java 21 / Spring Boot 4.1 reimplementation of the **architecture** of [IronClaw](https://github.com/nearai/ironclaw) (a ~1.4M-line Rust agent harness, internally "Reborn"). It is an architectural clone, not a port: the layering, the turn/run lifecycle, the untrusted-`LoopExit` trust model, and the `CapabilityHost` authority boundary are faithful; the feature surface is a fraction of IronClaw's (see [PARITY.md](PARITY.md)).
 
@@ -12,7 +12,7 @@ jclaw is a Java 21 / Spring Boot 4.1 reimplementation of the **architecture** of
 
 ## 1. Architectural intent
 
-jclaw is built in the shape called **ports and adapters** — more often, and more picturesquely, *hexagonal architecture*. The whole of §2 explains that shape for a reader who has never met it; the one-sentence version is that the code which decides what the agent should do is kept completely ignorant of the code that talks to models, files, and disks, and the two meet only at interfaces the deciding half owns.
+jclaw is built in the shape called **ports and adapters** — more often, and more picturesquely, *hexagonal architecture*. §2, *Ports and adapters*, explains that shape for a reader who has never met it; the one-sentence version is that the code which decides what the agent should do is kept completely ignorant of the code that talks to models, files, and disks, and the two meet only at interfaces the deciding half owns.
 
 That shape is not decoration. Two rules fall out of it, and between them they account for most of what is unusual about this codebase:
 
@@ -101,6 +101,8 @@ Two kinds of adapter, and the difference matters when reading the diagram:
 - **Driven** (or *secondary*) adapters are called *by* the core when it needs something done: providers, tool lanes, stores.
 
 And the place that introduces ports to adapters — `JclawConfiguration`, the single Spring `@Configuration` class, together with the `app/config` package around it that chooses a storage medium and reads settings — is the **composition root**. It is the only corner of jclaw allowed to know both a port and the adapter picked for it, which is why the choice between Anthropic and Ollama, or between JSONL files and PostgreSQL, is a decision taken in one place and invisible everywhere else.
+
+**A note on the name.** The module holding them is `jclaw-contracts`, not `jclaw-ports`, and the mismatch is worth explaining rather than glossing. Ports are only 24 of its 56 types. The rest is the vocabulary those ports speak — `Observation`, `LoopDecision`, `LoopExit`, the refs, the enums, `Result` — value types that travel *through* a port rather than describing one. No adapter implements `LoopExit` — its four permitted records are the only things that ever will, and they are data rather than a seam anything could plug into. "Contracts" covers both senses, the interfaces the core requires and the language crossing them, where "ports" would misdescribe two thirds of the module. So throughout this document **port** is the concept and `jclaw-contracts` is the place it lives.
 
 > **Why "hexagonal"?** Nothing depends on the number six. Alistair Cockburn drew the core as a hexagon purely so it would have several distinct edges to hang ports on, instead of the two that a box-and-arrows layer diagram gives you. The name stuck; the shape means "many ways in and out, all of them declared".
 
@@ -295,7 +297,7 @@ Container-level decisions:
 
 ## 5. C4 Level 3 — Components
 
-Inside the executable, the modules *are* the components. This is §2's hexagon at a finer grain: `cli` and the HTTP surface are the driving adapters, `providers`, `tools`, and `storage` are the driven ones, and everything between `JclawRuntime` and `TurnMachine` is core. Arrows are compile-time dependencies; the whole diagram is a DAG with the contracts at its bottom, which is the dependency rule drawn rather than stated.
+Inside the executable, the modules *are* the components. This is the hexagon of §2, *Ports and adapters*, at a finer grain: `cli` and the HTTP surface are the driving adapters, `providers`, `tools`, and `storage` are the driven ones, and everything between `JclawRuntime` and `TurnMachine` is core. Arrows are compile-time dependencies; the whole diagram is a DAG with the contracts at its bottom, which is the dependency rule drawn rather than stated.
 
 ```mermaid
 C4Component
@@ -355,7 +357,7 @@ C4Component
 
 ### The turn vocabulary (jclaw-contracts)
 
-If the ports in §2 are the holes in the hexagon's wall, these sealed types are the language spoken through them. They are the entire protocol between machine, interpreter, and runtime, and none of them names a technology:
+If the ports of §2, *Ports and adapters*, are the holes in the hexagon's wall, these sealed types are the language spoken through them. They are the entire protocol between machine, interpreter, and runtime, and none of them names a technology:
 
 - **In** — `Observation`: `Start`, `Resumed`, `ModelReplied`, `ModelFailed`, `AuthRequired`, `CapabilitiesCompleted`, `ReplyPersisted`, `Checkpointed`, `CancelRequested`. Everything non-deterministic arrives as one of these.
 - **Out** — `LoopDecision`: `CallModel` (with a `userFacing` flag: a context summary is a model call that must not be streamed as the agent speaking), `InvokeCapabilities`, `PersistReply`, `Checkpoint`, `Finish`. Five constructors, and that is the complete set of effects an agent can cause.
@@ -481,7 +483,7 @@ This is the complete, ordered story of one `jclaw run "…"` (and, through `subm
 
 9. **Call the model.** If the context policy would drop history and summarisation is on, a non-user-facing summary call goes first and its answer replaces the dropped span in the state. Then `provider.complete(request)` — or `stream` when a sink is present and the call is user-facing; streaming is presentation-only and both paths yield the same `ModelResponse`. On success the interpreter appends `ModelCalled` (provider, model, usage, latency) and returns `ModelReplied`; on an `AUTH` failure it raises a durable auth gate and returns `AuthRequired`, which parks the run `BLOCKED_AUTH`; on any other failure it appends `ModelFailed` with the provider's detail **redacted then bounded to 200 chars** (the detail explains a rejection, but it originates outside the host) and returns `ModelFailed` mapped onto the loop's `FailureKind` (`EGRESS_DENIED` → `POLICY_DENIED`, rate-limit/upstream/transport → `PROVIDER_ERROR`, unknown model → `PROVIDER_UNAVAILABLE`, invalid request → `INVALID_REQUEST`).
 10. **Charge and branch.** Back in the machine: usage is charged to the budget, the success/failure counter updated, the assistant message appended to the state. If the reply contains `tool_use` blocks → `InvokeCapabilities`. A plain text reply → `PersistReply` (a plain reply ends the turn — but only once the host has minted a ref for it). A retryable failure → retry (after another checkpoint) while ≤2 consecutive and budget remains; otherwise `Failed`.
-11. **Dispatch each capability through the kernel** (§6.3). The interpreter calls `CapabilityHost.invoke` sequentially and **stops at the first `NeedsApproval`**: running further effects after deciding to block would be exactly the duplicated work checkpointing exists to prevent. Results are stored redacted and bounded; each `Ok` carries a `LoopResultRef`.
+11. **Dispatch each capability through the kernel** (§6.3, *The authority pipeline*). The interpreter calls `CapabilityHost.invoke` sequentially and **stops at the first `NeedsApproval`**: running further effects after deciding to block would be exactly the duplicated work checkpointing exists to prevent. Results are stored redacted and bounded; each `Ok` carries a `LoopResultRef`.
 12. **Fold the outcomes.** The machine builds one `tool_result` message from all outcomes (denied and failed calls become model-visible error text — the model is told, and may change plan), records the `Ok` refs, advances the iteration, and checks the budget: exhausted → `Failed(BUDGET_EXHAUSTED)` with the results already durable; otherwise back to step 8 (another `BEFORE_MODEL` checkpoint, then the model sees the tool results and decides again).
 
 ### Phase C — Parking (when the kernel raises a gate)
