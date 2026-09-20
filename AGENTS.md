@@ -380,6 +380,14 @@ the Anthropic SDK, and tool lanes may not read the process environment.
 - Subagents are **child runs on the same machinery** — same turn machine, same interpreter, same
   `CapabilityHost` — never a second private engine. Nesting depth is derived from the thread id
   (`parent~sub1`) rather than passed as a parameter, so a model cannot understate its own depth.
+  **A child is admitted under its parent's tenant**, through the tenant-taking overloads of
+  `submit`/`enqueue`. Both paths used the three-argument forms, which resolve to `LOCAL_TENANT`,
+  so every child of every tenant ran as the operator: it was handed the *local* vault at dispatch
+  (`DefaultCapabilityHost` resolves `vaults.forTenant(scope.tenant())`), raised its gates in the
+  operator's scope, and charged its tokens to the operator's budget — a credential boundary
+  crossed by delegating, not by any argument a model could write. `SubagentIntegrationTest`
+  and `AsyncSubagentIntegrationTest` pin both paths, each verified to fail with the tenant
+  dropped again.
 - **One active run per thread.** `JclawRuntime.submit` and `resume` take a `ThreadLock` before
   the inbound message is written, so a refused submission leaves no trace and two runs can never
   interleave one transcript. Refusal is `THREAD_BUSY`. The implementation follows the storage

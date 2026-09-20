@@ -29,6 +29,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * a private subagent engine would be a second place for authority, checkpointing, and audit to
  * diverge from the real one.
  *
+ * <p>The child is admitted under the <em>parent's</em> tenant. That is the isolation key: it
+ * chooses the secret vault the kernel hands a lane, scopes the approval gates the child raises,
+ * and names the budget its tokens are charged to. Admitting a child as the local tenant would let
+ * a hosted tenant's agent reach the operator's credentials by delegating.
+ *
  * <p>Depth is encoded in the child's thread id ({@code parent~sub}) and read back from it, rather
  * than passed as a parameter. A depth the caller supplies is a depth the caller can understate;
  * a depth derived from the scope cannot be forged by the model.
@@ -70,8 +75,12 @@ public class RuntimeSubagentHost implements SubagentHost {
 
         ThreadId childThread = childThread(parentScope.thread(), depth, prompt);
 
-        JclawRuntime.TurnResult result =
-                runtime.getObject().submit(childThread, prompt, new AtomicBoolean(false));
+        // The parent's tenant, not the CLI's. The tenant selects the secret vault at dispatch,
+        // scopes approvals, and is what the token ledger charges, so a child admitted as "local"
+        // would run a tenant's work holding the operator's credentials.
+        JclawRuntime.TurnResult result = runtime.getObject().submit(
+                parentScope.tenant(), childThread, ChatMessage.user(prompt),
+                new AtomicBoolean(false), Optional.empty());
 
         return Result.ok(new SubagentResult(
                 result.reply().orElseGet(() -> "status: " + result.status()
@@ -103,7 +112,15 @@ public class RuntimeSubagentHost implements SubagentHost {
                 .filter(record -> record.scope().thread().equals(childThread))
                 .max(Comparator.comparing(RunStore.RunRecord::submittedAt));
         if (latest.isEmpty()) {
-            TurnRunId child = runtime.getObject().enqueue(childThread, prompt);
+            TurnRunId child;
+            try {
+                child = runtime.getObject().enqueue(
+                        parentScope.tenant(), childThread, ChatMessage.user(prompt));
+            } catch (JclawRuntime.TenantOverBudget overBudget) {
+                // The synchronous path reports this as a failed turn rather than throwing, so
+                // report it the same way here instead of letting it surface as "handler_threw".
+                return Result.err("subagent_tenant_over_budget");
+            }
             return Result.ok(new Progress.Running(child));
         }
         RunStore.RunRecord child = latest.get();

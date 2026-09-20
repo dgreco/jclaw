@@ -4,6 +4,7 @@
 package io.jclaw.app.runtime;
 
 import io.jclaw.contracts.event.EventLog;
+import io.jclaw.contracts.model.ChatMessage;
 import io.jclaw.contracts.model.ModelProvider;
 import io.jclaw.contracts.thread.ThreadService;
 import io.jclaw.contracts.turn.RunStore;
@@ -27,6 +28,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -161,5 +163,33 @@ class SubagentIntegrationTest {
                 .map(Object::toString)
                 .reduce("", String::concat);
         assertNotEquals("", capabilityEvents, "the refused spawn should still be audited");
+    }
+
+    @Test
+    @DisplayName("a child run inherits its parent's tenant, never the operator's")
+    void childInheritsTheParentTenant() {
+        script(
+                new Script.ToolCall("t1", "builtin.spawn_subagent",
+                        Map.of("prompt", "which tenant am I?")),
+                new Script.Text("child done."),
+                new Script.Text("parent done."));
+
+        JclawRuntime.TurnResult parent = runtime.submit(
+                "alice", new ThreadId("tenanted"), ChatMessage.user("delegate this"),
+                new AtomicBoolean(false), Optional.empty());
+
+        assertEquals(TurnStatus.COMPLETED, parent.status());
+
+        RunStore.RunRecord child = runs.recent(50).stream()
+                .filter(record -> record.scope().thread().value().startsWith("tenanted~sub"))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("the parent should have produced a child run"));
+
+        // The tenant is the isolation key: it selects the secret vault at dispatch
+        // (DefaultCapabilityHost resolves vaults.forTenant(scope.tenant())), scopes approvals,
+        // and is what the token ledger charges. A child that ran as "local" would hold the
+        // operator's credentials rather than its own tenant's.
+        assertEquals("alice", child.scope().tenant(),
+                "a child must not be admitted under a different tenant than its parent");
     }
 }

@@ -5,6 +5,7 @@ package io.jclaw.app.runtime;
 
 import io.jclaw.contracts.capability.ApprovalStore;
 import io.jclaw.contracts.loop.GateKind;
+import io.jclaw.contracts.model.ChatMessage;
 import io.jclaw.contracts.model.ModelProvider;
 import io.jclaw.contracts.turn.RunStore;
 import io.jclaw.contracts.turn.ThreadId;
@@ -28,6 +29,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -121,5 +123,30 @@ class AsyncSubagentIntegrationTest {
                 .map(Object::toString)
                 .reduce("", String::concat);
         assertTrue(toolResult.contains("child: three files"), toolResult);
+    }
+
+    @Test
+    @DisplayName("a queued child is enqueued under its parent's tenant")
+    void queuedChildInheritsTheParentTenant() {
+        MockModelProvider mock = (MockModelProvider) provider;
+        mock.reprogram(List.of(
+                new Script.ToolCall("s2", "builtin.spawn_subagent",
+                        Map.of("prompt", "which tenant am I?"))));
+
+        JclawRuntime.TurnResult parked = runtime.submit(
+                "alice", new ThreadId("async-tenanted"), ChatMessage.user("delegate"),
+                new AtomicBoolean(false), Optional.empty());
+
+        assertEquals(TurnStatus.WAITING_PROCESS, parked.status());
+
+        RunStore.RunRecord child = runs.byStatus(TurnStatus.QUEUED, Integer.MAX_VALUE).stream()
+                .filter(record -> record.scope().thread().value().startsWith("async-tenanted~sub"))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("the parent should have queued a child run"));
+
+        // Same reasoning as the synchronous path: the tenant chooses the vault, the approvals,
+        // and the budget. Enqueueing is where it is fixed, so it must be right here.
+        assertEquals("alice", child.scope().tenant(),
+                "a queued child must carry its parent's tenant");
     }
 }
