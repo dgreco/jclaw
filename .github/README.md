@@ -15,7 +15,7 @@
 <!-- BADGES:START -->
 [![CI](https://github.com/dgreco/jclaw/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dgreco/jclaw/actions/workflows/ci.yml)
 [![coverage](https://img.shields.io/badge/coverage-77.1%25-brightgreen)](https://dgreco.github.io/jclaw/)
-[![tests](https://img.shields.io/badge/tests-499-brightgreen)](#coverage)
+[![tests](https://img.shields.io/badge/tests-501-brightgreen)](#coverage)
 [![license](https://img.shields.io/github/license/dgreco/jclaw?color=blue)](../LICENSE)
 [![Java](https://img.shields.io/badge/Java-21%2B-orange)](#building)
 [![GraalVM](https://img.shields.io/badge/GraalVM-native%20image-blue)](#native-image)
@@ -85,7 +85,7 @@ jclaw reimplements the **architecture** of IronClaw — the seven-layer ladder, 
 
 Everything is durable JSONL under `~/.jclaw` by default: a run can park in one process, be approved in a second, and resume in a third. There is no server unless you start one (`jclaw serve`), and no database unless you ask for one (`--jclaw.storage=sql`).
 
-**Status.** Milestones M0–M7 plus subagents (synchronous or asynchronous), MCP, streaming on every provider, lease-based crash recovery, a per-thread run lock, context compaction with model summaries, vector memory, configurable denials and egress lists, per-tool rate limits, injection heuristics, auth and process gates with expiry, a scheduler with `submit` and `worker`, an HTTP surface with run projections, event streams, and per-user tenants, attachments, store retention, an encrypted secret vault with host-side credential injection, a container sandbox for the shell lane, a SQL storage backend (embedded H2 or PostgreSQL) with schema migrations, signed extension packages, execution-stage hooks, a second loop family, Prometheus metrics with OTLP trace export, webhook, heartbeat, and event triggers, MCP over HTTP with resources, prompts, lazily started servers, OAuth 2.1 client credentials, and sampling, channel adapters for Slack and Telegram, OIDC login with roles and per-tenant policy, a WebAssembly extension lane, extension registries with versioned upgrades and profiles, subprocess secret staging with an outbound leak scan and a vault per tenant, per-concept SQL tables with pooled connections and materialised projections, latency histograms with W3C trace propagation, hooks on prompt assembly and gate raising with loop families from configuration, and filesystem, inbound-message, and fan-out triggers. 499 tests pass across the modules, including 16 machine-checked architecture rules (ArchUnit). Both the uber jar and the native image are verified end to end, including subprocess spawning for MCP servers and shell tools. [PARITY.md](../PARITY.md) lists what IronClaw still has that jclaw does not.
+**Status.** Milestones M0–M7 plus subagents (synchronous or asynchronous), MCP, streaming on every provider, lease-based crash recovery, a per-thread run lock, context compaction with model summaries, vector memory, configurable denials and egress lists, per-tool rate limits, injection heuristics, auth and process gates with expiry, a scheduler with `submit` and `worker`, an HTTP surface with run projections, event streams, and per-user tenants, attachments, store retention, an encrypted secret vault with host-side credential injection, a container sandbox for the shell lane, a SQL storage backend (embedded H2 or PostgreSQL) with schema migrations, signed extension packages, execution-stage hooks, a second loop family, Prometheus metrics with OTLP trace export, webhook, heartbeat, and event triggers, MCP over HTTP with resources, prompts, lazily started servers, OAuth 2.1 client credentials, and sampling, channel adapters for Slack and Telegram, OIDC login with roles and per-tenant policy, a WebAssembly extension lane, extension registries with versioned upgrades and profiles, subprocess secret staging with an outbound leak scan and a vault per tenant, per-concept SQL tables with pooled connections and materialised projections, latency histograms with W3C trace propagation, hooks on prompt assembly and gate raising with loop families from configuration, and filesystem, inbound-message, and fan-out triggers. 501 tests pass across the modules, including 16 machine-checked architecture rules (ArchUnit). Both the uber jar and the native image are verified end to end, including subprocess spawning for MCP servers and shell tools. [PARITY.md](../PARITY.md) lists what IronClaw still has that jclaw does not.
 
 ---
 
@@ -185,7 +185,7 @@ source. The tree is clean under all three and each fails the build. Their filter
 [`config/pmd-ruleset.xml`](../config/pmd-ruleset.xml) — give a reason in prose for every exclusion,
 because an exclusion nobody can audit is worse than no filter at all.
 
-Test totals by module (verified on this checkout, with a Docker daemon so the PostgreSQL test runs rather than skipping): app 186 · domain 166 · storage 56 · providers 42 · contracts 22 · kernel 14 · tools 13 = **499, 0 failures**.
+Test totals by module (verified on this checkout; the 5 PostgreSQL tests are counted either way and skip without a Docker daemon): app 188 · domain 166 · storage 56 · providers 42 · contracts 22 · kernel 14 · tools 13 = **501, 0 failures**.
 
 ### Coverage
 

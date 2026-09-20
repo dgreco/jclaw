@@ -59,6 +59,10 @@ class SubagentIntegrationTest {
         // spawn_subagent is PROCESS-class, so it gates under the default policy. Trusted here so
         // the delegation path itself is what is under test, not the approval path.
         registry.add("jclaw.approval-mode", () -> "trusted");
+        // childInheritsTheParentTenant asserts tenant-scoped behaviour; a tenant budget in the
+        // developer's own ~/.jclaw/jclaw.yaml would refuse "alice" at admission and read as a
+        // product bug rather than an environment one.
+        registry.add("jclaw.tenant-token-budget", () -> "0");
     }
 
     @TestConfiguration

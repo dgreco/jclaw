@@ -55,6 +55,10 @@ class AsyncSubagentIntegrationTest {
         registry.add("jclaw.state-dir", () -> workspace.resolve(".state").toString());
         registry.add("jclaw.approval-mode", () -> "trusted");
         registry.add("jclaw.subagents-async", () -> "true");
+        // The tenant tests below assert tenant-scoped behaviour, so pin what a developer's
+        // ~/.jclaw/jclaw.yaml could otherwise decide: a tenant budget would refuse "alice" at
+        // admission and a tenant policy would change her agent, model, and approval mode.
+        registry.add("jclaw.tenant-token-budget", () -> "0");
     }
 
     @TestConfiguration
@@ -148,5 +152,12 @@ class AsyncSubagentIntegrationTest {
         // and the budget. Enqueueing is where it is fixed, so it must be right here.
         assertEquals("alice", child.scope().tenant(),
                 "a queued child must carry its parent's tenant");
+
+        // This class shares one Spring context and one state directory across its methods, so a
+        // run left QUEUED here is a run the other test's scheduler pass would claim as well -
+        // which made that test fail whenever JUnit happened to order this one first. Retire both
+        // rather than leave the suite green only by accident of method order.
+        runs.updateStatus(child.run(), TurnStatus.CANCELLED);
+        runs.updateStatus(parked.run(), TurnStatus.CANCELLED);
     }
 }

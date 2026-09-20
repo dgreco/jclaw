@@ -15,8 +15,12 @@ import io.jclaw.contracts.turn.TurnStatus;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.Comparator;
 import java.util.List;
+import java.util.HexFormat;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -75,9 +79,7 @@ public class RuntimeSubagentHost implements SubagentHost {
 
         ThreadId childThread = childThread(parentScope.thread(), depth, prompt);
 
-        // The parent's tenant, not the CLI's. The tenant selects the secret vault at dispatch,
-        // scopes approvals, and is what the token ledger charges, so a child admitted as "local"
-        // would run a tenant's work holding the operator's credentials.
+        // The parent's tenant, not the CLI's — see the class javadoc for why that matters.
         JclawRuntime.TurnResult result = runtime.getObject().submit(
                 parentScope.tenant(), childThread, ChatMessage.user(prompt),
                 new AtomicBoolean(false), Optional.empty());
@@ -116,10 +118,15 @@ public class RuntimeSubagentHost implements SubagentHost {
             try {
                 child = runtime.getObject().enqueue(
                         parentScope.tenant(), childThread, ChatMessage.user(prompt));
-            } catch (JclawRuntime.TenantOverBudget overBudget) {
-                // The synchronous path reports this as a failed turn rather than throwing, so
-                // report it the same way here instead of letting it surface as "handler_threw".
-                return Result.err("subagent_tenant_over_budget");
+            } catch (JclawRuntime.TenantOverBudget | JclawRuntime.PromptRefused refused) {
+                // Both refusals happen before enqueue writes anything durable, so there is no
+                // child to report on later. Catching them keeps the reason out of the generic
+                // "handler_threw" the kernel gives an escaping exception. It still reaches the
+                // model as a lane failure rather than a denial, because SubagentTool maps every
+                // spawn error through HandlerError::failed - as it already does for
+                // subagent_depth_exceeded. That conflation predates this method and is worth
+                // fixing at the tool, not papering over here.
+                return Result.err("subagent_not_admitted");
             }
             return Result.ok(new Progress.Running(child));
         }
@@ -142,8 +149,27 @@ public class RuntimeSubagentHost implements SubagentHost {
      * parent's transcript would defeat the purpose, which is to keep detail out of it.
      */
     private static ThreadId childThread(ThreadId parent, int depth, String prompt) {
-        return new ThreadId(parent.value() + DEPTH_MARKER + (depth + 1) + "-"
-                + Integer.toHexString(prompt.hashCode()));
+        return new ThreadId(parent.value() + DEPTH_MARKER + (depth + 1) + "-" + taskId(prompt));
+    }
+
+    /**
+     * A stable id for one delegated task, used to recognise a child the parent already started.
+     *
+     * <p>This was {@code String.hashCode}, which is 32 bits and collides constructibly - and the
+     * input is a prompt the <em>model</em> writes. Two colliding prompts would land on one child
+     * thread: asynchronously the parent would be handed the first child's reply as the answer to
+     * the second task, and synchronously the second child would be seeded from the first's
+     * transcript. A digest prefix costs the same and removes the class of collision rather than
+     * making it unlikely.
+     */
+    private static String taskId(String prompt) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(prompt.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(digest, 0, 8);
+        } catch (NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("SHA-256 is required of every Java platform", impossible);
+        }
     }
 
     /** The parent thread of a subagent thread, if it is one. */
