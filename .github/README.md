@@ -74,7 +74,7 @@ jclaw-domain/src/main/java/io/jclaw/domain/loop/TurnMachine.java ...
 
 ## What it is
 
-jclaw reimplements the **architecture** of IronClaw — the seven-layer ladder, the turn/run lifecycle, the untrusted-exit trust model, and the single capability-authority boundary — in about 32k lines of Java. It is not a port: the feature surface is a fraction of IronClaw's (see [PARITY.md](../PARITY.md)), but the load-bearing ideas are intact:
+jclaw reimplements the **architecture** of IronClaw — the seven-layer ladder, the turn/run lifecycle, the untrusted-exit trust model, and the single capability-authority boundary — in about 34k lines of Java. It is not a port: the feature surface is a fraction of IronClaw's (see [PARITY.md](../PARITY.md)), but the load-bearing ideas are intact:
 
 | Idea | What it means for you |
 |---|---|

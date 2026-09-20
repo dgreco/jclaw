@@ -687,7 +687,7 @@ the Anthropic SDK, and tool lanes may not read the process environment.
 
 ## Not built yet
 
-Honest gaps against IronClaw's surface. jclaw is ~32k lines against IronClaw's ~1.4M; the
+Honest gaps against IronClaw's surface. jclaw is ~34k lines against IronClaw's ~1.4M; the
 architecture and most runtime mechanisms are equivalent, the breadth is not. PARITY.md section
 17 ranks these; section 16 records what the closed items actually delivered.
 
