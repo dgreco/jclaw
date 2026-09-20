@@ -952,6 +952,34 @@ This section is about **more than one agent run at the same time**: what starts 
 - **A subagent is an ordinary run.** It gets its own run id, its own thread, its own transcript, its own budget, and its own checkpoint, and it goes through the same turn machine, the same authority gate, and the same approval policy as the run that started it. There is no second engine for delegated work — a private subagent engine would be a second place for authority, checkpointing, and audit to diverge from the real one.
 - **Delegation is a hand-off of text, not a connection.** The child receives one prompt, which is the whole of its world, and the parent receives one string back: the child's final reply. Neither can read the other's transcript while the work is in flight, and neither can interrupt the other.
 
+The whole thing in one picture:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant P as Parent run
+    participant CH as Capability host
+    participant C as Child run
+    participant SC as Scheduler
+    participant O as Operator queue
+
+    Note over P,O: two ways to get more than one agent, and they behave differently
+    rect rgba(130, 145, 190, 0.14)
+        Note over P,C: an agent delegating: sequential, one child at a time
+        P->>CH: spawn_subagent, prompt one
+        CH->>C: a child run on a derived thread, executed inside the parent's tool call
+        C-->>P: one conclusion, arriving as the tool result
+        P->>CH: spawn_subagent, prompt two
+        Note over P,CH: the first child's conclusion is in context before the second starts. A parked call stops the batch, so children never overlap.
+    end
+    rect rgba(110, 175, 130, 0.16)
+        Note over SC,O: the operator queueing: concurrent, up to the concurrency cap
+        O->>SC: submit x N, a webhook topic, several HTTP clients
+        SC->>SC: claim each queued run onto its own worker thread
+        Note over SC: the runs are independent: separate threads, separate transcripts, no shared parent. They meet only in the shared audit log.
+    end
+```
+
 #### What puts more than one agent on the machine
 
 There are two families, and they behave differently.
