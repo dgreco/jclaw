@@ -1,0 +1,188 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1320 830" width="1320" height="830" role="img"
+     aria-labelledby="t d">
+  <title id="t">jclaw drawn as a hexagonal (ports and adapters) architecture</title>
+  <desc id="d">Primary actors on the far left talk to primary adapters, which depend on a primary
+    port on the hexagon's left edge. The hexagon is the application, with the domain at its centre.
+    Secondary ports line the right edge; secondary adapters depend on them and talk to secondary
+    actors on the far right. The composition root below wires adapters into ports at startup.</desc>
+
+  <style>
+    .bg{fill:#fff} .ink{fill:#111827} .mut{fill:#4b5563} .fnt{fill:#6b7280}
+    .hexf{fill:#6366f1;fill-opacity:.06} .hexs{stroke:#6366f1;stroke-opacity:.6}
+    .domf{fill:#0ea5e9;fill-opacity:.14} .doms{stroke:#0ea5e9;stroke-opacity:.7}
+    .appf{fill:#6366f1;fill-opacity:.11} .apps{stroke:#6366f1;stroke-opacity:.45}
+    .porf{fill:#f59e0b;fill-opacity:.2}  .pors{stroke:#d97706;stroke-opacity:.8}
+    .adaf{fill:#10b981;fill-opacity:.13} .adas{stroke:#059669;stroke-opacity:.6}
+    .actf{fill:#64748b;fill-opacity:.09} .acts{stroke:#64748b;stroke-opacity:.6}
+    .dep{stroke:#6b7280} .head{fill:#6b7280} .talk{stroke:#94a3b8} .wire{stroke:#94a3b8;stroke-dasharray:4 4}
+    text{font-family:ui-sans-serif,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+    .H{font-size:16px;font-weight:700;letter-spacing:.07em}
+    .R{font-size:13px;font-weight:700}
+    .N{font-size:11.5px}
+    .S{font-size:10.5px}
+    @media (prefers-color-scheme:dark){
+      .bg{fill:#0d1117} .ink{fill:#e6edf3} .mut{fill:#b6c0cc} .fnt{fill:#93a1b0}
+      .dep{stroke:#8b949e} .head{fill:#8b949e} .talk{stroke:#6e7681} .wire{stroke:#6e7681}
+      .hexs{stroke:#a5b4fc} .doms{stroke:#7dd3fc} .apps{stroke:#a5b4fc}
+      .pors{stroke:#fbbf24} .adas{stroke:#6ee7b7} .acts{stroke:#94a3b8}
+    }
+  </style>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path class="head" d="M0 0 L10 5 L0 10 z"/>
+    </marker>
+  </defs>
+  <rect class="bg" x="0" y="0" width="1320" height="830"/>
+
+  <!-- ===== column headings ===== -->
+  <text class="H ink" x="84"  y="40" text-anchor="middle">PRIMARY</text>
+  <text class="S fnt" x="84"  y="58" text-anchor="middle">also called DRIVING</text>
+  <text class="S fnt" x="84"  y="72" text-anchor="middle">they start the conversation</text>
+  <text class="H ink" x="1223" y="40" text-anchor="middle">SECONDARY</text>
+  <text class="S fnt" x="1223" y="58" text-anchor="middle">also called DRIVEN</text>
+  <text class="S fnt" x="1223" y="72" text-anchor="middle">the application starts these</text>
+
+  <!-- ===== the hexagon: the application ===== -->
+  <polygon class="hexf hexs" stroke-width="2.2" points="660,123 420,261 420,539 660,677 900,539 900,261"/>
+  <text class="H ink" x="660" y="196" text-anchor="middle">APPLICATION</text>
+  <text class="N fnt" x="660" y="216" text-anchor="middle">what the software does — free of any technology</text>
+
+  <rect class="appf apps" x="486" y="248" width="320" height="86" rx="9" stroke-width="1.5"/>
+  <text class="R ink" x="646" y="270" text-anchor="middle">APPLICATION SERVICES</text>
+  <text class="N mut" x="646" y="291" text-anchor="middle">JclawRuntime · EffectInterpreter · CapabilityHost</text>
+  <text class="S fnt" x="646" y="309" text-anchor="middle">drive the use cases and call the secondary ports;</text>
+  <text class="S fnt" x="646" y="324" text-anchor="middle">they name no adapter and no technology</text>
+
+  <!-- the domain, an inner hexagon at the very centre -->
+  <polygon class="domf doms" stroke-width="1.9" points="660,368 565,423 565,533 660,588 755,533 755,423"/>
+  <text class="R ink" x="660" y="452" text-anchor="middle">DOMAIN</text>
+  <text class="N mut" x="660" y="474" text-anchor="middle">TurnMachine</text>
+  <text class="N mut" x="660" y="492" text-anchor="middle">Budget · Redaction</text>
+  <text class="S fnt" x="660" y="512" text-anchor="middle">pure rules — touches</text>
+  <text class="S fnt" x="660" y="527" text-anchor="middle">no port at all</text>
+
+  <text class="S fnt" x="660" y="627" text-anchor="middle">jclaw-application-usecase · jclaw-application-authority · jclaw-domain</text>
+
+  <!-- ===== primary port (left edge of the hexagon) ===== -->
+  <rect class="porf pors" x="350" y="358" width="140" height="84" rx="8" stroke-width="1.8"/>
+  <text class="R ink" x="420" y="382" text-anchor="middle">PRIMARY PORT</text>
+  <text class="S mut" x="420" y="402" text-anchor="middle">submit · enqueue · resume</text>
+  <text class="S fnt" x="420" y="420" text-anchor="middle">what the application</text>
+  <text class="S fnt" x="420" y="434" text-anchor="middle">offers to be asked</text>
+
+  <!-- ===== primary adapters ===== -->
+  <rect class="adaf adas" x="156" y="262" width="176" height="58" rx="8" stroke-width="1.5"/>
+  <text class="R ink" x="246" y="284" text-anchor="middle">PRIMARY ADAPTER</text>
+  <text class="N mut" x="246" y="304" text-anchor="middle">CLI — run, repl</text>
+
+  <rect class="adaf adas" x="156" y="371" width="176" height="58" rx="8" stroke-width="1.5"/>
+  <text class="R ink" x="246" y="393" text-anchor="middle">PRIMARY ADAPTER</text>
+  <text class="N mut" x="246" y="413" text-anchor="middle">HTTP — serve</text>
+
+  <rect class="adaf adas" x="156" y="480" width="176" height="58" rx="8" stroke-width="1.5"/>
+  <text class="R ink" x="246" y="502" text-anchor="middle">PRIMARY ADAPTER</text>
+  <text class="N mut" x="246" y="522" text-anchor="middle">Scheduler — worker</text>
+
+  <!-- ===== primary actors ===== -->
+  <rect class="actf acts" x="14" y="262" width="126" height="58" rx="8" stroke-width="1.4"/>
+  <text class="S fnt" x="77" y="283" text-anchor="middle">PRIMARY ACTOR</text>
+  <text class="N mut" x="77" y="303" text-anchor="middle">the operator</text>
+
+  <rect class="actf acts" x="14" y="371" width="126" height="58" rx="8" stroke-width="1.4"/>
+  <text class="S fnt" x="77" y="392" text-anchor="middle">PRIMARY ACTOR</text>
+  <text class="N mut" x="77" y="412" text-anchor="middle">an HTTP client</text>
+
+  <rect class="actf acts" x="14" y="480" width="126" height="58" rx="8" stroke-width="1.4"/>
+  <text class="S fnt" x="77" y="501" text-anchor="middle">PRIMARY ACTOR</text>
+  <text class="N mut" x="77" y="521" text-anchor="middle">the clock</text>
+
+  <line class="talk" x1="140" y1="291" x2="156" y2="291" stroke-width="1.5"/>
+  <line class="talk" x1="140" y1="400" x2="156" y2="400" stroke-width="1.5"/>
+  <line class="talk" x1="140" y1="509" x2="156" y2="509" stroke-width="1.5"/>
+  <path class="dep" fill="none" stroke-width="1.7" marker-end="url(#a)" d="M 332 291 L 346 382"/>
+  <path class="dep" fill="none" stroke-width="1.7" marker-end="url(#a)" d="M 332 400 L 346 400"/>
+  <path class="dep" fill="none" stroke-width="1.7" marker-end="url(#a)" d="M 332 509 L 346 418"/>
+
+  <!-- ===== secondary ports (right edge) ===== -->
+  <g>
+    <rect class="porf pors" x="830" y="261" width="140" height="60" rx="8" stroke-width="1.8"/>
+    <text class="R ink" x="900" y="284" text-anchor="middle">SECONDARY PORT</text>
+    <text class="S mut" x="900" y="305" text-anchor="middle">ModelProvider</text>
+
+    <rect class="porf pors" x="830" y="334" width="140" height="60" rx="8" stroke-width="1.8"/>
+    <text class="R ink" x="900" y="357" text-anchor="middle">SECONDARY PORT</text>
+    <text class="S mut" x="900" y="378" text-anchor="middle">CapabilityHandler</text>
+
+    <rect class="porf pors" x="830" y="407" width="140" height="60" rx="8" stroke-width="1.8"/>
+    <text class="R ink" x="900" y="430" text-anchor="middle">SECONDARY PORT</text>
+    <text class="S mut" x="900" y="451" text-anchor="middle">EventLog · RunStore</text>
+
+    <rect class="porf pors" x="830" y="480" width="140" height="60" rx="8" stroke-width="1.8"/>
+    <text class="R ink" x="900" y="503" text-anchor="middle">SECONDARY PORT</text>
+    <text class="S mut" x="900" y="524" text-anchor="middle">ThreadLock · vault</text>
+  </g>
+
+  <!-- ===== secondary adapters ===== -->
+  <rect class="adaf adas" x="992" y="261" width="176" height="60" rx="8" stroke-width="1.5"/>
+  <text class="S fnt" x="1100" y="282" text-anchor="middle">SECONDARY ADAPTER</text>
+  <text class="N mut" x="1100" y="303" text-anchor="middle">anthropic · mock</text>
+
+  <rect class="adaf adas" x="992" y="334" width="176" height="60" rx="8" stroke-width="1.5"/>
+  <text class="S fnt" x="1100" y="355" text-anchor="middle">SECONDARY ADAPTER</text>
+  <text class="N mut" x="1100" y="376" text-anchor="middle">shell · http · MCP</text>
+
+  <rect class="adaf adas" x="992" y="407" width="176" height="60" rx="8" stroke-width="1.5"/>
+  <text class="S fnt" x="1100" y="428" text-anchor="middle">SECONDARY ADAPTER</text>
+  <text class="N mut" x="1100" y="449" text-anchor="middle">JSONL · SQL</text>
+
+  <rect class="adaf adas" x="992" y="480" width="176" height="60" rx="8" stroke-width="1.5"/>
+  <text class="S fnt" x="1100" y="501" text-anchor="middle">SECONDARY ADAPTER</text>
+  <text class="N mut" x="1100" y="521" text-anchor="middle">file lock · vault</text>
+
+  <!-- ===== secondary actors ===== -->
+  <rect class="actf acts" x="1192"  y="261" width="108" height="60" rx="8" stroke-width="1.4"/>
+  <text class="S fnt" x="1246" y="285" text-anchor="middle">SECONDARY</text>
+  <text class="S fnt" x="1246" y="298" text-anchor="middle">ACTOR</text>
+  <text class="S mut" x="1246" y="313" text-anchor="middle">the model</text>
+
+  <rect class="actf acts" x="1192"  y="334" width="108" height="60" rx="8" stroke-width="1.4"/>
+  <text class="S fnt" x="1246" y="358" text-anchor="middle">SECONDARY</text>
+  <text class="S fnt" x="1246" y="371" text-anchor="middle">ACTOR</text>
+  <text class="S mut" x="1246" y="386" text-anchor="middle">the OS</text>
+
+  <rect class="actf acts" x="1192"  y="407" width="108" height="60" rx="8" stroke-width="1.4"/>
+  <text class="S fnt" x="1246" y="431" text-anchor="middle">SECONDARY</text>
+  <text class="S fnt" x="1246" y="444" text-anchor="middle">ACTOR</text>
+  <text class="S mut" x="1246" y="459" text-anchor="middle">the disk</text>
+
+  <rect class="actf acts" x="1192"  y="480" width="108" height="60" rx="8" stroke-width="1.4"/>
+  <text class="S fnt" x="1246" y="504" text-anchor="middle">SECONDARY</text>
+  <text class="S fnt" x="1246" y="517" text-anchor="middle">ACTOR</text>
+  <text class="S mut" x="1246" y="532" text-anchor="middle">the vault</text>
+
+  <path class="dep" fill="none" stroke-width="1.7" marker-end="url(#a)" d="M 990 291 L 974 291"/>
+  <path class="dep" fill="none" stroke-width="1.7" marker-end="url(#a)" d="M 990 364 L 974 364"/>
+  <path class="dep" fill="none" stroke-width="1.7" marker-end="url(#a)" d="M 990 437 L 974 437"/>
+  <path class="dep" fill="none" stroke-width="1.7" marker-end="url(#a)" d="M 990 510 L 974 510"/>
+  <line class="talk" x1="1168" y1="291" x2="1192" y2="291" stroke-width="1.5"/>
+  <line class="talk" x1="1168" y1="364" x2="1192" y2="364" stroke-width="1.5"/>
+  <line class="talk" x1="1168" y1="437" x2="1192" y2="437" stroke-width="1.5"/>
+  <line class="talk" x1="1168" y1="510" x2="1192" y2="510" stroke-width="1.5"/>
+
+  <!-- ===== composition root ===== -->
+  <rect class="actf acts" x="430" y="720" width="460" height="62" rx="9" stroke-width="1.5"/>
+  <text class="R ink" x="660" y="744" text-anchor="middle">COMPOSITION ROOT</text>
+  <text class="N mut" x="660" y="765" text-anchor="middle">JclawConfiguration — the only code that knows both sides</text>
+  <path class="wire" fill="none" stroke-width="1.5" d="M 430 751 C 246 751 246 570 246 542"/>
+  <path class="wire" fill="none" stroke-width="1.5" d="M 890 751 C 1080 751 1080 570 1080 542"/>
+
+  <!-- ===== legend ===== -->
+  <g transform="translate(20,104)">
+    <path class="dep" fill="none" stroke-width="1.7" marker-end="url(#a)" d="M0 8 L34 8"/>
+    <text class="S mut" x="42" y="12">depends on (source code) — every one points inward</text>
+    <line class="talk" x1="0" y1="32" x2="34" y2="32" stroke-width="1.5"/>
+    <text class="S mut" x="42" y="36">talks to, at run time — across the system boundary</text>
+    <path class="wire" fill="none" stroke-width="1.5" d="M0 56 L34 56"/>
+    <text class="S mut" x="42" y="60">wires an adapter into a port, once, at startup</text>
+  </g>
+</svg>

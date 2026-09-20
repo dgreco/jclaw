@@ -13,7 +13,7 @@ Legend: ✅ at parity · 🟡 partial · ❌ missing · ➕ jclaw-only
 | IronClaw area | Upstream crates | jclaw | Status |
 |---|---|---|---|
 | Layer ladder + architecture tests | `crates/AGENTS.md`, `ironclaw_architecture_tests` | 9 modules, `DependencyLawTest` (14 ArchUnit rules) | ✅ |
-| Contracts / turn vocabulary | `contracts/{host_api, common, prompt_envelope, loop_contracts, extension_contracts, product_contracts}` | `jclaw-contracts` (loop + host + product vocabulary in one module; no prompt envelope type, no extension contracts) | 🟡 |
+| Contracts / turn vocabulary | `contracts/{host_api, common, prompt_envelope, loop_contracts, extension_contracts, product_contracts}` | `jclaw-ports` (loop + host + product vocabulary in one module; no prompt envelope type, no extension contracts) | 🟡 |
 | Pure agent loop, checkpoints, resumable state | `ironclaw_agent_loop`, `ironclaw_loop_host`, `ironclaw_turn_runner` | `TurnMachine` + `EffectInterpreter` + `JclawRuntime`; `LoopFamily` (`canonical`, `reflective`) | ✅ |
 | Loop hooks | `ironclaw_hooks` | `LoopHook` at prompt assembly, before/after model, before/after capability, and gate raising; may narrow or veto, never widen, and never approve | ✅ |
 | Kernel: trust, authorization, approvals, capabilities, turns | `ironclaw_trust`, `_authorization`, `_approvals`, `_capabilities`, `_turns`, `_host_runtime` | `DefaultCapabilityHost`, `CapabilityPolicy`, `TrustClass`, `ApprovalStore` (approval, auth, and process gates with expiry), `JclawRuntime.validate` | ✅ |

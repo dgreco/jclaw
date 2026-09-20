@@ -78,7 +78,7 @@ def main(argv):
         print(by_module[name].row(f"`{name}`"))
     print("""
 A module's own figure counts only what its own classes ran, wherever the test that ran them
-lives. Integration tests in `jclaw-app` are what exercise much of `contracts`, `kernel` and
+lives. Integration tests in `jclaw-bootstrap` are what exercise much of `ports`, `application-authority` and
 `tools`, which is why those read low here and the whole-tree number does not.
 """)
     print("## By package\n")

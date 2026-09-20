@@ -3,10 +3,10 @@
 
 package io.jclaw.domain.mcp;
 
-import io.jclaw.contracts.Result;
-import io.jclaw.contracts.model.ChatMessage;
-import io.jclaw.contracts.model.ContentBlock;
-import io.jclaw.contracts.model.ModelExchange.ModelRequest;
+import io.jclaw.ports.Result;
+import io.jclaw.ports.model.ChatMessage;
+import io.jclaw.ports.model.ContentBlock;
+import io.jclaw.ports.model.ModelExchange.ModelRequest;
 
 import java.util.ArrayList;
 import java.util.List;

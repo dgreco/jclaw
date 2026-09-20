@@ -3,22 +3,22 @@
 
 package io.jclaw.domain.loop;
 
-import io.jclaw.contracts.capability.CapabilityOutcome;
-import io.jclaw.contracts.loop.CheckpointKind;
-import io.jclaw.contracts.loop.FailureKind;
-import io.jclaw.contracts.loop.GateKind;
-import io.jclaw.contracts.loop.LoopExit;
-import io.jclaw.contracts.model.ChatMessage;
-import io.jclaw.contracts.model.ContentBlock;
-import io.jclaw.contracts.model.ModelExchange.ModelResponse;
-import io.jclaw.contracts.model.ModelExchange.StopReason;
-import io.jclaw.contracts.model.ModelExchange.Usage;
-import io.jclaw.contracts.turn.CheckpointId;
-import io.jclaw.contracts.turn.GateId;
-import io.jclaw.contracts.turn.MessageId;
-import io.jclaw.contracts.turn.TurnRef.LoopCheckpointStateRef;
-import io.jclaw.contracts.turn.TurnRef.LoopMessageRef;
-import io.jclaw.contracts.turn.TurnRef.LoopResultRef;
+import io.jclaw.ports.capability.CapabilityOutcome;
+import io.jclaw.ports.loop.CheckpointKind;
+import io.jclaw.ports.loop.FailureKind;
+import io.jclaw.ports.loop.GateKind;
+import io.jclaw.ports.loop.LoopExit;
+import io.jclaw.ports.model.ChatMessage;
+import io.jclaw.ports.model.ContentBlock;
+import io.jclaw.ports.model.ModelExchange.ModelResponse;
+import io.jclaw.ports.model.ModelExchange.StopReason;
+import io.jclaw.ports.model.ModelExchange.Usage;
+import io.jclaw.ports.turn.CheckpointId;
+import io.jclaw.ports.turn.GateId;
+import io.jclaw.ports.turn.MessageId;
+import io.jclaw.ports.turn.TurnRef.LoopCheckpointStateRef;
+import io.jclaw.ports.turn.TurnRef.LoopMessageRef;
+import io.jclaw.ports.turn.TurnRef.LoopResultRef;
 import io.jclaw.domain.budget.Budget;
 import io.jclaw.domain.loop.LoopExecutionState.Phase;
 import io.jclaw.domain.loop.TurnMachine.LoopStep;
@@ -152,7 +152,7 @@ class TurnMachineTest {
             LoopExecutionState awaitingModel = advanceToAwaitingModel(fresh());
 
             LoopStep parked = step(awaitingModel,
-                    new Observation.AuthRequired(new io.jclaw.contracts.turn.TurnRef.LoopGateRef("gate_auth")));
+                    new Observation.AuthRequired(new io.jclaw.ports.turn.TurnRef.LoopGateRef("gate_auth")));
             LoopDecision.Checkpoint checkpoint =
                     assertInstanceOf(LoopDecision.Checkpoint.class, parked.decision());
             assertEquals(CheckpointKind.BEFORE_BLOCK, checkpoint.kind(),
@@ -464,8 +464,8 @@ class TurnMachineTest {
         return LoopMessageRef.of(new MessageId(id));
     }
 
-    private static io.jclaw.contracts.turn.TurnRef.LoopGateRef gateRef(String id) {
-        return io.jclaw.contracts.turn.TurnRef.LoopGateRef.of(new GateId(id));
+    private static io.jclaw.ports.turn.TurnRef.LoopGateRef gateRef(String id) {
+        return io.jclaw.ports.turn.TurnRef.LoopGateRef.of(new GateId(id));
     }
 
     private static FailureKind failureOf(LoopStep step) {

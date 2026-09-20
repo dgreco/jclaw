@@ -43,7 +43,7 @@ default:
 .maven-cache: &maven-cache
   cache:
     key:
-      files: [pom.xml, jclaw-app/pom.xml]
+      files: [pom.xml, jclaw-bootstrap/pom.xml]
       prefix: maven
     paths: [.m2/repository]
     policy: pull-push
@@ -129,13 +129,13 @@ build-test:
     reports:
       junit: "*/target/surefire-reports/TEST-*.xml"
     paths:
-      - jclaw-app/target/jclaw-app-*.jar
+      - jclaw-bootstrap/target/jclaw-bootstrap-*.jar
       - "*/target/surefire-reports/"
       # Browsable in the job's artifacts, which is where the per-class detail behind the
       # percentage lives. GitLab renders coverage on the diff itself only from a Cobertura
       # report, and getting one out of JaCoCo means a Python converter and an apt-get in this
       # job — a lot of machinery for diff highlighting, so it is deliberately not here.
-      - jclaw-app/target/site/jacoco-aggregate/
+      - jclaw-bootstrap/target/site/jacoco-aggregate/
 
 static-analysis:
   stage: build
@@ -226,7 +226,7 @@ native-image:
   needs: [build-test]
   cache:
     key:
-      files: [pom.xml, jclaw-app/pom.xml]
+      files: [pom.xml, jclaw-bootstrap/pom.xml]
       prefix: maven
     paths: [.m2/repository]
     policy: pull                       # never write the cache from the slow job
@@ -265,10 +265,10 @@ native-image:
       fi
   script:
     - mvn $MAVEN_CLI_OPTS install -DskipTests
-    - mvn $MAVEN_CLI_OPTS -Pnative -pl jclaw-app package -DskipTests
-    - ls -la jclaw-app/target/jclaw
-    - ./jclaw-app/target/jclaw --version
-    - ./jclaw-app/target/jclaw run "smoke test"          # mock provider, no network
+    - mvn $MAVEN_CLI_OPTS -Pnative -pl jclaw-bootstrap package -DskipTests
+    - ls -la jclaw-bootstrap/target/jclaw
+    - ./jclaw-bootstrap/target/jclaw --version
+    - ./jclaw-bootstrap/target/jclaw run "smoke test"          # mock provider, no network
     # Everything below exercises a path `run` never reaches, and every one of them is the kind
     # a native image breaks: JCA providers for the vault's AES-256-GCM and the extension
     # signature's Ed25519, and a reflectively loaded JDBC driver for `storage=sql`. With
@@ -276,7 +276,7 @@ native-image:
     # way to know the binary works is to make it do the work. They pass today; this is what
     # keeps them passing.
     - export SMOKE=$(mktemp -d)
-    - export JC="./jclaw-app/target/jclaw --jclaw.workspace=$SMOKE --jclaw.state-dir=$SMOKE/state --jclaw.provider=mock --jclaw.approval-mode=trusted"
+    - export JC="./jclaw-bootstrap/target/jclaw --jclaw.workspace=$SMOKE --jclaw.state-dir=$SMOKE/state --jclaw.provider=mock --jclaw.approval-mode=trusted"
     # Vault: AES-256-GCM seal and open, and the owner-only key file generated on first use.
     - printf 's3cret-value-0123456789' | $JC secrets set ci --capability builtin.http_fetch --host api.example.com
     - $JC secrets list | grep -q "api.example.com"
@@ -313,8 +313,8 @@ native-image:
     - $JC extensions search anything > $SMOKE/search.txt 2>&1 || true
     - grep -q 'no registries configured' $SMOKE/search.txt
     # SQL storage: the H2 driver loads, migrations apply, and a turn round-trips through it.
-    - ./jclaw-app/target/jclaw run "sql smoke" --jclaw.workspace=$SMOKE --jclaw.state-dir=$SMOKE/sql --jclaw.provider=mock --jclaw.approval-mode=trusted --jclaw.storage=sql
-    - ./jclaw-app/target/jclaw status -n 3 --jclaw.workspace=$SMOKE --jclaw.state-dir=$SMOKE/sql --jclaw.provider=mock --jclaw.storage=sql | grep -q "run.finished"
+    - ./jclaw-bootstrap/target/jclaw run "sql smoke" --jclaw.workspace=$SMOKE --jclaw.state-dir=$SMOKE/sql --jclaw.provider=mock --jclaw.approval-mode=trusted --jclaw.storage=sql
+    - ./jclaw-bootstrap/target/jclaw status -n 3 --jclaw.workspace=$SMOKE --jclaw.state-dir=$SMOKE/sql --jclaw.provider=mock --jclaw.storage=sql | grep -q "run.finished"
     # Schema 2 (a table per busy store) and 3 (materialised projections) reached the database,
     # and the projection a finished run wrote reads back through the pooled connection.
     # The thread lock is a row under sql, so schema 4 and its table must be there: a missing
@@ -327,7 +327,7 @@ native-image:
     # the H2 steps that follow: they share this shell, their database was created earlier with no
     # password, and an inherited one is then rejected with "Wrong user name or password". Two
     # databases in one script must not share a credential variable.
-    - export JCPG="env JCLAW_DATASOURCE_PASSWORD=jclaw-ci-password ./jclaw-app/target/jclaw --jclaw.workspace=$PGDIR --jclaw.state-dir=$PGDIR/state --jclaw.provider=mock --jclaw.approval-mode=trusted --jclaw.storage=sql --jclaw.datasource-url=jdbc:postgresql://postgres:5432/jclaw --jclaw.datasource-username=jclaw"
+    - export JCPG="env JCLAW_DATASOURCE_PASSWORD=jclaw-ci-password ./jclaw-bootstrap/target/jclaw --jclaw.workspace=$PGDIR --jclaw.state-dir=$PGDIR/state --jclaw.provider=mock --jclaw.approval-mode=trusted --jclaw.storage=sql --jclaw.datasource-url=jdbc:postgresql://postgres:5432/jclaw --jclaw.datasource-username=jclaw"
     # A turn proves the driver loads, every migration applies, and writes land.
     - $JCPG run "native on postgres" --jclaw.mock-script=text:pg-ok | grep -q pg-ok
     # Reads come back out of PostgreSQL, not out of a cache in the same process.
@@ -337,9 +337,9 @@ native-image:
     # The vault over SQL: AES-GCM through a different JDBC driver than the H2 run above.
     - printf 'pg-secret-value-0123456789' | $JCPG secrets set pg --capability builtin.http_fetch --host api.example.com
     - $JCPG secrets list | grep -q api.example.com
-    - ./jclaw-app/target/jclaw doctor --jclaw.workspace=$SMOKE --jclaw.state-dir=$SMOKE/sql --jclaw.provider=mock --jclaw.storage=sql || true
-    - export SQLRUN=$(./jclaw-app/target/jclaw status -n 20 --jclaw.workspace=$SMOKE --jclaw.state-dir=$SMOKE/sql --jclaw.provider=mock --jclaw.storage=sql | grep -o 'run_[0-9a-f]*' | head -1)
-    - ./jclaw-app/target/jclaw status --run $SQLRUN --spans --jclaw.workspace=$SMOKE --jclaw.state-dir=$SMOKE/sql --jclaw.provider=mock --jclaw.storage=sql | grep -q COMPLETED
+    - ./jclaw-bootstrap/target/jclaw doctor --jclaw.workspace=$SMOKE --jclaw.state-dir=$SMOKE/sql --jclaw.provider=mock --jclaw.storage=sql || true
+    - export SQLRUN=$(./jclaw-bootstrap/target/jclaw status -n 20 --jclaw.workspace=$SMOKE --jclaw.state-dir=$SMOKE/sql --jclaw.provider=mock --jclaw.storage=sql | grep -o 'run_[0-9a-f]*' | head -1)
+    - ./jclaw-bootstrap/target/jclaw status --run $SQLRUN --spans --jclaw.workspace=$SMOKE --jclaw.state-dir=$SMOKE/sql --jclaw.provider=mock --jclaw.storage=sql | grep -q COMPLETED
     # A loop family defined in configuration, and the startup validation that catches a typo in
     # one. Both are pure wiring, which is exactly what AOT is most likely to have dropped.
     - $JC run "family" --jclaw.loop-families.strict.base=reflective --jclaw.loop-families.strict.review-instruction=REVIEW-IT --jclaw.loop-family=strict '--jclaw.mock-script[0]=text:draft' '--jclaw.mock-script[1]=text:REVIEWED' | grep -q REVIEWED
@@ -365,11 +365,11 @@ native-image:
     # process-wide for verbosity. Cheap to check and silent to lose.
     - $JC run "metrics" --jclaw.mock-script=text:done
     - $JC status --run $($JC status -n 20 | grep -o 'run_[0-9a-f]*' | head -1) --spans | grep -q "model.call"
-    - ./jclaw-app/target/jclaw doctor || true            # informational in CI
+    - ./jclaw-bootstrap/target/jclaw doctor || true            # informational in CI
     - echo "NATIVE_ARCH=$(uname -m)" > native.env        # the release job names the asset by it
   artifacts:
     expire_in: 4 weeks
-    paths: [jclaw-app/target/jclaw]
+    paths: [jclaw-bootstrap/target/jclaw]
     reports:
       dotenv: native.env
   # Mandatory: no rules of its own, so it runs wherever the workflow admits a pipeline, and
@@ -410,7 +410,7 @@ coverage-report:
   script:
     - SRC=""; for d in */src/main/java; do SRC="$SRC $d"; done
     - python3 scripts/jacoco-to-cobertura.py
-        jclaw-app/target/site/jacoco-aggregate/jacoco.xml $SRC > cobertura.xml
+        jclaw-bootstrap/target/site/jacoco-aggregate/jacoco.xml $SRC > cobertura.xml
   artifacts:
     when: always
     expire_in: 2 weeks
@@ -438,7 +438,7 @@ coverage-wiki:
     - apk add --no-cache git python3
     # Generated first, so the artifact below exists whether or not the page can be published.
     - python3 scripts/coverage-markdown.py
-        jclaw-app/target/site/jacoco-aggregate/jacoco.csv "Coverage" > Coverage.md
+        jclaw-bootstrap/target/site/jacoco-aggregate/jacoco.csv "Coverage" > Coverage.md
     # Says why rather than vanishing. Gating the whole job on $WIKI_TOKEN meant that an instance
     # without one had no coverage-wiki job in the pipeline at all, which looks identical to
     # "nothing was ever configured" — and is what someone reads as the feature being broken.
@@ -541,9 +541,9 @@ pages:
   image: debian:bookworm-slim
   needs: [build-test]
   script:
-    - test -f jclaw-app/target/site/jacoco-aggregate/index.html
+    - test -f jclaw-bootstrap/target/site/jacoco-aggregate/index.html
     - rm -rf public && mkdir -p public
-    - cp -a jclaw-app/target/site/jacoco-aggregate/. public/
+    - cp -a jclaw-bootstrap/target/site/jacoco-aggregate/. public/
   artifacts:
     paths: [public]
     expire_in: 4 weeks
@@ -574,9 +574,9 @@ release:
     - |
       set -eu
       BIN="jclaw-linux-${NATIVE_ARCH}"
-      JAR="$(cd jclaw-app/target && ls jclaw-app-*.jar | head -1)"
-      cp "jclaw-app/target/jclaw" "$BIN"
-      cp "jclaw-app/target/$JAR" "$JAR"
+      JAR="$(cd jclaw-bootstrap/target && ls jclaw-bootstrap-*.jar | head -1)"
+      cp "jclaw-bootstrap/target/jclaw" "$BIN"
+      cp "jclaw-bootstrap/target/$JAR" "$JAR"
       sha256sum "$BIN" "$JAR" | tee SHA256SUMS
       for f in "$BIN" "$JAR" SHA256SUMS; do
         echo "uploading $f"

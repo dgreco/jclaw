@@ -3,11 +3,11 @@
 
 package io.jclaw.domain.loop;
 
-import io.jclaw.contracts.loop.CheckpointKind;
-import io.jclaw.contracts.loop.LoopExit;
-import io.jclaw.contracts.model.ChatMessage;
-import io.jclaw.contracts.model.ContentBlock;
-import io.jclaw.contracts.model.ModelExchange.ModelRequest;
+import io.jclaw.ports.loop.CheckpointKind;
+import io.jclaw.ports.loop.LoopExit;
+import io.jclaw.ports.model.ChatMessage;
+import io.jclaw.ports.model.ContentBlock;
+import io.jclaw.ports.model.ModelExchange.ModelRequest;
 
 import java.util.List;
 import java.util.Objects;
@@ -16,7 +16,7 @@ import java.util.Objects;
  * What the pure machine wants done next.
  *
  * <p>A decision is a <em>request</em>, described in data. The machine performs no I/O and holds no
- * ports; the effect interpreter in {@code jclaw-loop} is the single place that turns these into
+ * ports; the effect interpreter in {@code jclaw-application-usecase} is the single place that turns these into
  * real calls. That split is what makes the loop testable without a network, a filesystem, or a
  * clock — you feed it observations and assert on decisions.
  *

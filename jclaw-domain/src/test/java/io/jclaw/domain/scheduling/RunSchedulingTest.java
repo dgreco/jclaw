@@ -3,11 +3,11 @@
 
 package io.jclaw.domain.scheduling;
 
-import io.jclaw.contracts.turn.RunStore.RunRecord;
-import io.jclaw.contracts.turn.ThreadId;
-import io.jclaw.contracts.turn.TurnRunId;
-import io.jclaw.contracts.turn.TurnScope;
-import io.jclaw.contracts.turn.TurnStatus;
+import io.jclaw.ports.turn.RunStore.RunRecord;
+import io.jclaw.ports.turn.ThreadId;
+import io.jclaw.ports.turn.TurnRunId;
+import io.jclaw.ports.turn.TurnScope;
+import io.jclaw.ports.turn.TurnStatus;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 

@@ -3,7 +3,7 @@
 
 package io.jclaw.domain.trigger;
 
-import io.jclaw.contracts.Result;
+import io.jclaw.ports.Result;
 import io.jclaw.domain.cron.CronSpec;
 
 import java.nio.charset.StandardCharsets;

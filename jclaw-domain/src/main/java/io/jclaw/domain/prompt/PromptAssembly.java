@@ -3,8 +3,8 @@
 
 package io.jclaw.domain.prompt;
 
-import io.jclaw.contracts.secret.SecretVault;
-import io.jclaw.contracts.skill.SkillCatalog;
+import io.jclaw.ports.secret.SecretVault;
+import io.jclaw.ports.skill.SkillCatalog;
 
 import java.nio.file.Path;
 import java.util.Comparator;

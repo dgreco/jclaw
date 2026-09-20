@@ -3,8 +3,8 @@
 
 package io.jclaw.domain.prompt;
 
-import io.jclaw.contracts.model.ChatMessage;
-import io.jclaw.contracts.model.ContentBlock;
+import io.jclaw.ports.model.ChatMessage;
+import io.jclaw.ports.model.ContentBlock;
 import io.jclaw.domain.prompt.ContextCompaction.Compacted;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;

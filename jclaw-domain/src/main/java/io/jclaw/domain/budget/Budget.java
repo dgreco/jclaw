@@ -3,7 +3,7 @@
 
 package io.jclaw.domain.budget;
 
-import io.jclaw.contracts.model.ModelExchange.Usage;
+import io.jclaw.ports.model.ModelExchange.Usage;
 
 import java.time.Duration;
 import java.time.Instant;

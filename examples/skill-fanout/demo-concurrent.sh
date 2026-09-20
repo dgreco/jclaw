@@ -17,7 +17,7 @@
 set -eu
 here="$(cd "$(dirname "$0")" && pwd)"
 . "$here/sample-project.sh"
-jar="${JCLAW_JAR:-$here/../../jclaw-app/target/jclaw-app-0.1.0-SNAPSHOT.jar}"
+jar="${JCLAW_JAR:-$here/../../jclaw-bootstrap/target/jclaw-bootstrap-0.1.0-SNAPSHOT.jar}"
 port="${1:-8791}"
 if [ $# -gt 0 ]; then shift; fi
 extra=("$@")

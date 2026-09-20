@@ -3,16 +3,16 @@
 
 package io.jclaw.domain.loop;
 
-import io.jclaw.contracts.capability.CapabilityOutcome;
-import io.jclaw.contracts.loop.CheckpointKind;
-import io.jclaw.contracts.loop.FailureKind;
-import io.jclaw.contracts.loop.GateKind;
-import io.jclaw.contracts.loop.LoopExit;
-import io.jclaw.contracts.model.ChatMessage;
-import io.jclaw.contracts.model.ContentBlock;
-import io.jclaw.contracts.model.ModelExchange.ModelRequest;
-import io.jclaw.contracts.model.ModelExchange.ModelResponse;
-import io.jclaw.contracts.turn.TurnRef;
+import io.jclaw.ports.capability.CapabilityOutcome;
+import io.jclaw.ports.loop.CheckpointKind;
+import io.jclaw.ports.loop.FailureKind;
+import io.jclaw.ports.loop.GateKind;
+import io.jclaw.ports.loop.LoopExit;
+import io.jclaw.ports.model.ChatMessage;
+import io.jclaw.ports.model.ContentBlock;
+import io.jclaw.ports.model.ModelExchange.ModelRequest;
+import io.jclaw.ports.model.ModelExchange.ModelResponse;
+import io.jclaw.ports.turn.TurnRef;
 import io.jclaw.domain.budget.Budget;
 import io.jclaw.domain.loop.LoopExecutionState.Phase;
 import io.jclaw.domain.prompt.ContextCompaction;
@@ -30,7 +30,7 @@ import java.util.Optional;
  * <p>One total function: {@code (state, observation, policy, now) -> (state, decision)}. It
  * performs no I/O, opens no sockets, reads no clock, and holds no ports. Everything
  * non-deterministic arrives as an {@link Observation}; everything it wants done leaves as a
- * {@link LoopDecision}. The interpreter in {@code jclaw-loop} is the only component that touches
+ * {@link LoopDecision}. The interpreter in {@code jclaw-application-usecase} is the only component that touches
  * the world.
  *
  * <p>Two consequences worth stating plainly. First, the agent's entire control flow is testable

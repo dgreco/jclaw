@@ -3,7 +3,7 @@
 
 package io.jclaw.domain.secret;
 
-import io.jclaw.contracts.secret.SecretVault.SecretName;
+import io.jclaw.ports.secret.SecretVault.SecretName;
 
 import java.util.LinkedHashSet;
 import java.util.Map;

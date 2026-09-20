@@ -9,14 +9,14 @@ WORKDIR /src
 # Poms first: dependency resolution is the slow half, and it only needs to rerun when a pom
 # changes rather than on every source edit.
 COPY pom.xml .
-COPY jclaw-contracts/pom.xml jclaw-contracts/
+COPY jclaw-ports/pom.xml jclaw-ports/
 COPY jclaw-domain/pom.xml jclaw-domain/
-COPY jclaw-kernel/pom.xml jclaw-kernel/
-COPY jclaw-loop/pom.xml jclaw-loop/
-COPY jclaw-providers/pom.xml jclaw-providers/
-COPY jclaw-tools/pom.xml jclaw-tools/
-COPY jclaw-storage/pom.xml jclaw-storage/
-COPY jclaw-app/pom.xml jclaw-app/
+COPY jclaw-application-authority/pom.xml jclaw-application-authority/
+COPY jclaw-application-usecase/pom.xml jclaw-application-usecase/
+COPY jclaw-adapter-out-model/pom.xml jclaw-adapter-out-model/
+COPY jclaw-adapter-out-capability/pom.xml jclaw-adapter-out-capability/
+COPY jclaw-adapter-out-persistence/pom.xml jclaw-adapter-out-persistence/
+COPY jclaw-bootstrap/pom.xml jclaw-bootstrap/
 RUN mvn -B -q dependency:go-offline -DskipTests || true
 COPY . .
 RUN mvn -B -q package -DskipTests
@@ -26,7 +26,7 @@ FROM eclipse-temurin:21-jre
 # should not include the container's own filesystem.
 RUN useradd --create-home --shell /bin/bash jclaw
 WORKDIR /workspace
-COPY --from=build /src/jclaw-app/target/jclaw-app-*.jar /opt/jclaw/jclaw.jar
+COPY --from=build /src/jclaw-bootstrap/target/jclaw-bootstrap-*.jar /opt/jclaw/jclaw.jar
 # The image is a redistribution, so it carries the licence and the notice at a path a person
 # can find without unzipping the jar. They are inside it too, under META-INF.
 COPY --from=build /src/LICENSE /src/NOTICE /opt/jclaw/

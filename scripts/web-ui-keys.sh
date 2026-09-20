@@ -22,7 +22,7 @@ cd "$root"
 chrome="${CHROME:-/Applications/Google Chrome.app/Contents/MacOS/Google Chrome}"
 [ -x "$chrome" ] || { echo "no Chrome at: $chrome (set CHROME=...)"; exit 77; }
 
-jar="jclaw-app/target/jclaw-app-0.1.0-SNAPSHOT.jar"
+jar="jclaw-bootstrap/target/jclaw-bootstrap-0.1.0-SNAPSHOT.jar"
 [ -f "$jar" ] || { echo "build first: mvn -q install -DskipTests"; exit 1; }
 
 work="$(mktemp -d)"

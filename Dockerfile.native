@@ -24,21 +24,21 @@ RUN curl -fsSL "https://archive.apache.org/dist/maven/maven-3/${MAVEN_VERSION}/b
 
 # Poms first: resolution is the slow half and only needs redoing when a pom changes.
 COPY pom.xml .
-COPY jclaw-contracts/pom.xml jclaw-contracts/
+COPY jclaw-ports/pom.xml jclaw-ports/
 COPY jclaw-domain/pom.xml jclaw-domain/
-COPY jclaw-kernel/pom.xml jclaw-kernel/
-COPY jclaw-loop/pom.xml jclaw-loop/
-COPY jclaw-providers/pom.xml jclaw-providers/
-COPY jclaw-tools/pom.xml jclaw-tools/
-COPY jclaw-storage/pom.xml jclaw-storage/
-COPY jclaw-app/pom.xml jclaw-app/
+COPY jclaw-application-authority/pom.xml jclaw-application-authority/
+COPY jclaw-application-usecase/pom.xml jclaw-application-usecase/
+COPY jclaw-adapter-out-model/pom.xml jclaw-adapter-out-model/
+COPY jclaw-adapter-out-capability/pom.xml jclaw-adapter-out-capability/
+COPY jclaw-adapter-out-persistence/pom.xml jclaw-adapter-out-persistence/
+COPY jclaw-bootstrap/pom.xml jclaw-bootstrap/
 RUN mvn -B -q dependency:go-offline -DskipTests || true
 
 COPY . .
 # install first: the native profile builds one module, and it needs the others in the local
 # repository rather than in the reactor.
 RUN mvn -B -q install -DskipTests \
- && mvn -B -Pnative -pl jclaw-app package -DskipTests
+ && mvn -B -Pnative -pl jclaw-bootstrap package -DskipTests
 
 # Debian slim rather than distroless, and the reason is jclaw's own shell lane: `builtin.shell`
 # runs `/bin/sh -c`, so an image without a shell would ship an agent with one of its tools
@@ -51,7 +51,7 @@ RUN apt-get update \
  && mkdir -p /state /workspace \
  && chown -R jclaw:jclaw /state /workspace
 
-COPY --from=build /src/jclaw-app/target/jclaw /usr/local/bin/jclaw
+COPY --from=build /src/jclaw-bootstrap/target/jclaw /usr/local/bin/jclaw
 # The image is a redistribution. The native binary has no META-INF a reader can open, so this
 # is the only copy of the licence that travels with it.
 COPY --from=build /src/LICENSE /src/NOTICE /usr/share/doc/jclaw/

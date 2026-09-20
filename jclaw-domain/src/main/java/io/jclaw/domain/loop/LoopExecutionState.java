@@ -3,13 +3,13 @@
 
 package io.jclaw.domain.loop;
 
-import io.jclaw.contracts.loop.CheckpointKind;
-import io.jclaw.contracts.loop.GateKind;
-import io.jclaw.contracts.model.ChatMessage;
-import io.jclaw.contracts.model.ContentBlock;
-import io.jclaw.contracts.turn.TurnRef.LoopGateRef;
-import io.jclaw.contracts.turn.TurnRef.LoopMessageRef;
-import io.jclaw.contracts.turn.TurnRef.LoopResultRef;
+import io.jclaw.ports.loop.CheckpointKind;
+import io.jclaw.ports.loop.GateKind;
+import io.jclaw.ports.model.ChatMessage;
+import io.jclaw.ports.model.ContentBlock;
+import io.jclaw.ports.turn.TurnRef.LoopGateRef;
+import io.jclaw.ports.turn.TurnRef.LoopMessageRef;
+import io.jclaw.ports.turn.TurnRef.LoopResultRef;
 import io.jclaw.domain.budget.Budget;
 
 import java.util.ArrayList;

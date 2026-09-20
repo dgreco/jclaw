@@ -1,48 +1,64 @@
 # jclaw — Architecture
 
-This document describes the architecture of **jclaw** using the [C4 model](https://c4model.org) (Context → Container → Component → Code), then walks the complete lifecycle of a turn — from the moment a prompt is admitted to the moment a result is produced — and closes with a sequence diagram showing every step.
+This document explains the architecture of **jclaw**. It starts with the shape the whole codebase is built from — **ports and adapters**, often called hexagonal architecture — explained from scratch in §2, *Ports and adapters*, for readers who have not met it. It then zooms in through the [C4 model](https://c4model.org) (Context → Container → Component → Code), walks the complete lifecycle of a turn from the moment a prompt is admitted to the moment a result is produced, and closes with a sequence diagram showing every step.
 
 jclaw is a Java 21 / Spring Boot 4.1 reimplementation of the **architecture** of [IronClaw](https://github.com/nearai/ironclaw) (a ~1.4M-line Rust agent harness, internally "Reborn"). It is an architectural clone, not a port: the layering, the turn/run lifecycle, the untrusted-`LoopExit` trust model, and the `CapabilityHost` authority boundary are faithful; the feature surface is a fraction of IronClaw's (see [PARITY.md](PARITY.md)).
 
 ```
-~20k lines of Java · 8 modules · 240 tests (0 failures, verified) · 13 machine-checked architecture rules
+~34k lines of Java · 8 modules · 501 tests (0 failures; the 5 PostgreSQL tests skip without a Docker daemon) · 16 machine-checked architecture rules
 ```
 
 ---
 
 ## 1. Architectural intent
 
-jclaw is a **hexagonal architecture with a pure functional core**. Two rules shape everything else:
+jclaw is built in the shape called **ports and adapters** — more often, and more picturesquely, *hexagonal architecture*. §2, *Ports and adapters*, explains that shape for a reader who has never met it; the one-sentence version is that the code which decides what the agent should do is kept completely ignorant of the code that talks to models, files, and disks, and the two meet only at interfaces the deciding half owns.
+
+That shape is not decoration. Two rules fall out of it, and between them they account for most of what is unusual about this codebase:
 
 1. **Decisions are separated from effects.** The control flow of an agent — *what to call next, when to stop, what to remember* — lives in `TurnMachine`, a single pure function. Nothing in the decision path performs I/O. One component, `EffectInterpreter`, turns decisions into calls, and it is the only place in the system where an effect happens.
 2. **Authority is a single gate.** A model's request to do something ("read that file", "run that command") is a *claim*. It becomes an effect only after passing one ordered pipeline — the `CapabilityHost` — whose order is itself a security property.
 
-The design maps onto IronClaw's seven-layer ladder (contracts → domains → kernel → lanes → loop → product → app):
+Flattened into Maven modules — the hexagon's rings, innermost first — and named for the role each plays in the pattern rather than for the layer it answers to in IronClaw. The correspondence is still exact, it is just no longer carried by the names: IronClaw's ladder runs contracts → domains → kernel → lanes → loop → product → app, and jclaw's modules below are those seven in order, with `lanes` and `product` folded into the adapter and bootstrap modules. Each module may depend only on those above it in this list:
 
 ```
-contracts   →  (jackson-annotations only)   ports, turn vocabulary, refs, LoopExit, Result,
-                                             ThreadLock, EmbeddingProvider, content blocks
-domain      →  contracts                    PURE: TurnMachine, Budget, Redaction, RrfFusion,
-                                             MemoryRanking, VectorRanking, ContextCompaction,
-                                             ContextSummary, InjectionHeuristics, RunScheduling,
-                                             RateLimit, Retention, RunProjection, SandboxSpec,
-                                             CronSpec, RoutineSchedule, PromptAssembly, LeaseRecovery
-kernel      →  contracts, domain             CapabilityHost, CapabilityPolicy (denials, injection,
-                                             per-tool egress and rate limits), Workspace/Egress guards
-loop        →  contracts, domain, kernel     EffectInterpreter — the ONLY place an effect happens
-providers   →  contracts                     mock, Anthropic (official SDK), OpenAI-compatible
-                                             chat + embeddings (OpenAI / OpenRouter / Ollama / local),
-                                             failover
-tools       →  contracts, domain, kernel     file, shell (host or container), http, memory, skill,
-                                             trigger, subagent, MCP client + capabilities
-storage     →  contracts, domain, kernel     JSONL stores: events, transcript, approvals, checkpoints,
-                                             runs, results, memory, routines, mcp; file thread locks
-app         →  all of the above              Spring wiring, picocli CLI, JclawRuntime, scheduler,
-                                             RoutineRunner, RecoveryService, RetentionService,
-                                             McpRegistry, HTTP surface
+ports                      (jackson-annotations only)
+    the 24 secondary ports, and the turn vocabulary that crosses them:
+    Observation, LoopDecision, LoopExit, Result, refs, ThreadLock, content blocks
+
+domain                     depends on: ports
+    PURE: TurnMachine, Budget, Redaction, RrfFusion, MemoryRanking, VectorRanking,
+    ContextCompaction, ContextSummary, InjectionHeuristics, RunScheduling, RateLimit,
+    Retention, RunProjection, SandboxSpec, CronSpec, RoutineSchedule, PromptAssembly,
+    LeaseRecovery
+
+application-authority      depends on: ports, domain
+    CapabilityHost, CapabilityPolicy (denials, injection, per-tool egress and rate
+    limits), Workspace/Egress guards
+
+application-usecase        depends on: ports, domain, application-authority
+    EffectInterpreter - the ONLY place an effect happens
+
+adapter-out-model          depends on: ports
+    mock, Anthropic (official SDK), OpenAI-compatible chat + embeddings
+    (OpenAI / OpenRouter / Ollama / local), failover
+
+adapter-out-capability     depends on: ports, domain, application-authority
+    file, shell (host or container), http, memory, skill, trigger, subagent,
+    MCP client + capabilities, WASM
+
+adapter-out-persistence    depends on: ports, domain, application-authority
+    row stores (JSONL files or one SQL table via RowStore): events, transcript,
+    approvals, checkpoints, runs, results, memory, routines, mcp, secrets;
+    SqlSchema migrations; file and SQL thread locks; filesystem skill catalog
+
+bootstrap                  depends on: all of the above
+    the composition root, and the primary (driving) adapters: picocli CLI and the
+    HTTP surface. JclawRuntime, TurnRunScheduler, RoutineRunner, RecoveryService,
+    RetentionService, Attachments, McpRegistry
 ```
 
-The layer ladder is not a suggestion. `DependencyLawTest` (jclaw-app) enforces 13 rules with ArchUnit — including "the domain may not read a clock or use randomness", "the loop may not name an adapter", "only the anthropic package may import the Anthropic SDK", and "tool lanes may not read the process environment". The rules were verified to fire by planting deliberate violations, not just by passing.
+The layer ladder is not a suggestion, and it is not kept true by anyone remembering it. `DependencyLawTest` (jclaw-bootstrap) enforces 16 rules with ArchUnit — including "the domain may not read a clock or use randomness", "the loop may not name an adapter", "only the anthropic package may import the Anthropic SDK", and "tool lanes may not read the process environment". The rules were verified to fire by planting deliberate violations, not just by passing.
 
 ### The five ideas worth preserving
 
@@ -54,7 +70,187 @@ The layer ladder is not a suggestion. `DependencyLawTest` (jclaw-app) enforces 1
 
 ---
 
-## 2. C4 Level 1 — System Context
+## 2. Ports and adapters — the shape, from scratch
+
+Everything below this line assumes you have never heard of hexagonal architecture. If you have, skip to the diagram.
+
+### The problem it solves
+
+Write a program that talks to the outside world without a plan, and the outside world ends up deciding how the program is built. The class that works out *what the agent should do next* also opens the HTTP connection to the model, also parses the JSON that comes back, also writes the transcript to a file. None of those jobs is hard alone. Together they produce code with three properties nobody wants:
+
+- **You cannot test the thinking without the world.** To check "does the agent stop when the budget runs out?" you need a model to answer, a disk to write to, and a network that behaves. So the interesting logic is tested through mocks of things that have nothing to do with it, or not tested at all.
+- **Swapping anything means surgery everywhere.** The decision to use one model vendor is spread across every file that ever calls a model.
+- **Nobody can say where the rules live.** "Is this command allowed?" is answered in whichever file happened to need to know, which means it is answered differently in each of them.
+
+### The move
+
+Split the program in two, and be strict about which half is allowed to know about the other.
+
+The **inside** holds the logic that is genuinely about the problem: what the agent decides, what is permitted, what counts as finished. The **outside** holds everything that is about a *technology*: this model vendor's HTTP API, this file format, this database.
+
+The inside is not allowed to know the outside exists. That sounds impossible — the agent plainly has to call a model — and the trick that makes it possible is to have the inside declare *what it needs* without saying *who provides it*. In Java that declaration is an interface:
+
+```java
+// jclaw-ports — written by the inside, in the inside's own vocabulary
+public interface ModelProvider {
+    Result<ModelResponse, ProviderFailure> complete(ModelRequest request);
+}
+```
+
+Note what is absent. No URL, no API key, no JSON, no vendor name. A `ModelRequest` goes in and a `ModelResponse` comes back, and both are jclaw's own types. The inside can now be written, and tested, against this interface alone.
+
+Somewhere outside, a class implements it by actually talking to Anthropic. The inside never names that class. Something has to introduce the two — that job belongs to exactly one place, the very outermost layer, which is the only code permitted to know both halves.
+
+### Every word the pattern uses, named once
+
+That is the whole idea. What remains is vocabulary. The picture in the next section is labelled entirely in it, so here is the complete set — nothing below is jargon this document invented, and nothing in the diagram is a word that is missing here.
+
+**Who is outside**
+
+- **Actor** — anything outside the application that it exchanges information with. A person, another program, a database, a clock. An actor is not code you write; it is the thing your code talks to.
+- **Primary actor** (synonym: **driving**) — an actor that *starts* the conversation. For jclaw: the operator at a terminal, an HTTP client, the clock that makes a scheduled routine fall due.
+- **Secondary actor** (synonym: **driven**) — an actor the application starts a conversation *with*, because it needs something. For jclaw: the model API, the operating system, the disk, the vault.
+
+The distinction is about who speaks first, and nothing else. It is not about importance, and the same technology can appear on both sides in a different system.
+
+**What is inside**
+
+- **Application** — everything inside the hexagon: what the software *does*, expressed without reference to any technology. Where this document says *the core*, it means the application.
+- **Application service** — a component of the application that carries out a use case end to end, calling secondary ports when it needs the outside world. `JclawRuntime`, `EffectInterpreter` and `CapabilityHost` are jclaw's.
+- **Domain** — the innermost part: the rules themselves, with no dealings even with ports. In jclaw that is `TurnMachine` and the pure helpers beside it.
+
+**What joins the two**
+
+- **Port** — an interface the application owns, written in the application's own vocabulary, describing something it needs or offers. `ModelProvider` is a port. jclaw has **24 of them**, all in `jclaw-ports`.
+- **Primary port** (driving) — what the application *offers* to be asked: `submit`, `enqueue`, `resume`. A primary adapter calls it.
+- **Secondary port** (driven) — what the application *requires* from the world: fetch a completion, write a record, take a lock. A secondary adapter implements it.
+- **Adapter** — code that translates between one actor and one port, speaking that actor's technology on one side and the port's vocabulary on the other. `AnthropicModelProvider` is an adapter; so is `JsonlEventLog`; so is the `mock` provider most tests run against.
+- **Primary adapter** (driving) — turns something a primary actor did into a call on a primary port. jclaw's CLI, HTTP surface and scheduler.
+- **Secondary adapter** (driven) — implements a secondary port using one specific technology, and talks to a secondary actor. jclaw's providers, tool lanes and stores.
+
+**What holds it together**
+
+- **Composition root** — the one place that introduces ports to adapters. In jclaw that is `JclawConfiguration`, the single Spring `@Configuration` class, together with the `app/config` package around it that chooses a storage medium and reads settings. It is the only corner of jclaw allowed to know both a port and the adapter picked for it, which is why the choice between Anthropic and Ollama, or between JSONL files and PostgreSQL, is a decision taken in one place and invisible everywhere else.
+
+**A note on the name.** The module holding them is `jclaw-ports`, not `jclaw-ports`, and the mismatch is worth explaining rather than glossing. Ports are only 24 of its 56 types. The rest is the vocabulary those ports speak — `Observation`, `LoopDecision`, `LoopExit`, the refs, the enums, `Result` — value types that travel *through* a port rather than describing one. No adapter implements `LoopExit` — its four permitted records are the only things that ever will, and they are data rather than a seam anything could plug into. "Contracts" covers both senses, the interfaces the core requires and the language crossing them, where "ports" would misdescribe two thirds of the module. So throughout this document **port** is the concept and `jclaw-ports` is the place it lives.
+
+> **Why "hexagonal"?** Nothing depends on the number six. Alistair Cockburn drew the core as a hexagon purely so it would have several distinct edges to hang ports on, instead of the two that a box-and-arrows layer diagram gives you. The name stuck; the shape means "many ways in and out, all of them declared".
+
+### The dependency rule, which is the whole thing
+
+If you remember one sentence: **source-code dependencies point inward, always.**
+
+An adapter names a port. A port never names an adapter. The core compiles with no knowledge that Anthropic, JSONL, or PostgreSQL exist — `jclaw-domain`'s entire dependency list is `jclaw-ports`, and `jclaw-ports` depends on nothing but Jackson's annotations.
+
+The direction of *calls* at runtime is a separate question, and it is what confuses people first. At runtime the core absolutely does call out to Anthropic. But it does so through a `ModelProvider`-shaped hole, holding a reference it was handed and whose concrete type it cannot name. Calls go both ways; dependencies only go inward.
+
+### jclaw's hexagon
+
+![jclaw drawn as a hexagonal architecture. Far left, three primary actors: the operator, an HTTP client, the clock. Next, three primary adapters: CLI, HTTP, scheduler. They depend on a primary port on the hexagon's left edge. The hexagon is the application, holding the application services and, at its centre, the domain. Four secondary ports line the right edge; four secondary adapters depend on them and talk to four secondary actors: the model, the OS, the disk, the vault. Below, the composition root wires adapters into ports.](docs/hexagonal-architecture.svg)
+
+Every label in it is a term from the list above. Read it from the outside in, either side:
+
+- **An actor is outside the system; an adapter is the code that talks to it.** The operator is a primary actor, the CLI is the primary adapter that turns what they typed into a call on a port. The model API is a secondary actor, `AnthropicModelProvider` the secondary adapter that speaks HTTP to it. Split that way, the application deals only in ports and never learns that either exists.
+- **The two sides differ only in who speaks first.** Left of the hexagon the outside starts things; right of it the application does. That is the whole content of *primary* versus *secondary*, and it is why the same hexagon has both kinds of port on it.
+- **Ports sit on the boundary and belong to the application.** They are drawn straddling the edge because that is what they are: declared by the inside, satisfied from the outside.
+- **Every solid arrow points inward.** Those are source-code dependencies, and there is not one leaving the hexagon — the dependency rule, drawn. The plain lines at the far edges are run-time conversations with actors, which is a different relationship and deliberately a different mark.
+- **The domain is at the dead centre**, furthest from every edge, because it is the part that touches nothing: no port, no clock, no I/O.
+- **The composition root sits outside and underneath, joined by dotted lines.** It is neither application nor adapter. It is the one piece allowed to see both, and its dotted lines are wiring done once at startup rather than a dependency the application carries.
+
+One honest detail, since the picture draws both kinds of port as though they were alike. jclaw's 24 ports are all *secondary* — real interfaces in `jclaw-ports`. There is **no primary port interface**: the one drawn on the left edge is `JclawRuntime`'s public surface, which is a class. Strict ports and adapters would put an interface there so a primary adapter depended on a declaration rather than on a concrete type. jclaw does not, for the reason in *One honest wrinkle* at the end of this section — the shape is right, the formality is missing on that one edge.
+
+The same structure as a plain dependency graph, which makes the rule easier to check than to admire — every arrow below is a compile-time dependency, and every one points inward.
+
+```mermaid
+flowchart TB
+    subgraph DRIVING["Primary (driving) adapters — the outside starts a turn"]
+        direction LR
+        CLI["CLI verbs<br/>run · submit · repl · approvals"]
+        HTTP["HTTP surface<br/>serve · browser UI · channels"]
+        SCHED["Schedulers<br/>worker · routines · triggers"]
+    end
+
+    subgraph INSIDE["Application — compiles knowing none of the names around it"]
+        direction TB
+        RT["JclawRuntime<br/>admission · thread lock · leases · exit validation"]
+        INTERP["EffectInterpreter<br/>the only place an effect happens"]
+        MACHINE["TurnMachine<br/>pure: state + observation → decision"]
+        HOST["CapabilityHost<br/>the single authority gate"]
+        PORTS["SECONDARY PORTS<br/>24 interfaces in jclaw-ports"]
+    end
+
+    subgraph DRIVEN["Secondary (driven) adapters — swappable, and swapped in every test run"]
+        direction LR
+        PROV["Model providers<br/>mock · anthropic · OpenAI-compatible · failover"]
+        LANES["Capability lanes<br/>file · shell · http · memory · MCP · WASM"]
+        STORES["Stores<br/>JSONL files · SQL rows"]
+    end
+
+    CLI --> RT
+    HTTP --> RT
+    SCHED --> RT
+    RT --> INTERP
+    INTERP --> MACHINE
+    INTERP --> HOST
+    INTERP --> PORTS
+    HOST --> PORTS
+    PROV --> PORTS
+    LANES --> PORTS
+    STORES --> PORTS
+```
+
+Look again at the arrows leaving the driven adapters: the model providers depend on the core, not the other way round. That inversion is the thing being bought, and *What the shape actually buys* below is a list of consequences of it.
+
+One node in that picture is drawn by role rather than by address. `JclawRuntime` is core — it is the application service the driving adapters all call — but it ships in `jclaw-bootstrap` alongside the composition root, for reasons set out in *One honest wrinkle* at the end of this section.
+
+### The ports, and who answers them
+
+| Port (interface in `jclaw-ports`) | What the core is asking for | Adapters that answer |
+|---|---|---|
+| `ModelProvider` | "finish this conversation" | `mock`, `anthropic` (official SDK), OpenAI-compatible (OpenAI, OpenRouter, Ollama, any local server), `failover` |
+| `EmbeddingProvider` | "turn this text into a vector" | one OpenAI-compatible adapter |
+| `CapabilityHandler` | "carry out this one tool call" | file, shell (host process or container), http, memory, skill, trigger, subagent, MCP, WASM |
+| `EventLog`, `ThreadService`, `RunStore`, `CheckpointStore`, `ApprovalStore`, `CapabilityResultStore`, `MemoryStore`, `RoutineStore`, `McpServerStore`, … | "make this durable", "give it back" | append-only JSONL files, or a SQL table per concept (embedded H2, or PostgreSQL) |
+| `ThreadLock` | "let only one run touch this thread" | an OS file lock (JSONL), or a renewed lease row (SQL) |
+| `SecretVault` / `SecretVaults` | "lease this credential's value for one call" | encrypted vault, one per tenant |
+| `SkillCatalog` | "what skills are installed?" | the filesystem |
+| `SubagentHost` | "run this prompt as a child agent" | `RuntimeSubagentHost`, which calls back into `JclawRuntime` |
+| `ChannelAdapter` | "deliver this reply where it came from" | Slack, Telegram |
+| `LoopHook` | "let host code narrow this, never widen it" | the built-in hooks, plus any Spring bean implementing it |
+
+`CapabilityHost` is the interesting one: it is a port *implemented on the inside*, by `DefaultCapabilityHost` in `jclaw-application-authority`. A port is not a promise that the implementation lives outside — it is a promise that the caller cannot tell where it lives.
+
+### What the shape actually buys
+
+Five payoffs, each pointing at something in this repository rather than at a principle:
+
+1. **The agent's decision-making is tested with plain values and no mocks.** `TurnMachine.step(state, observation, policy, now)` takes four arguments and returns two. It has no ports, reads no clock, opens no socket. A test constructs a state, hands it an observation, and asserts on the decision. That is possible only because every non-deterministic thing in the system was pushed out of it and arrives as an `Observation`.
+2. **The default provider is a test double, so the whole product works with no network and no API key.** `mock` is what `jclaw run "hello"` uses out of the box, and `jclaw.mock-script` drives it through tool calls, approval gates, parks and resumes. The CLI is exercised end to end in CI without a credential, because the core cannot tell a scripted provider from a real one.
+3. **Storage changed medium without the core noticing.** `jclaw.storage=sql` moves every durable record from JSONL files to database rows. The store classes kept their `Jsonl*` names — they still speak one-JSON-document-per-row — and `StorageBackend` picks the medium once. Nothing in `domain`, `loop`, or `kernel` changed, because none of them ever named a file.
+4. **The security boundary is a place, not a habit.** "May this tool call happen?" is answered in exactly one pipeline, `DefaultCapabilityHost.invoke`, because a lane has no other way to be reached. A lane cannot skip the gate, since nothing hands it the means to run itself. Where authority is a habit it is eventually forgotten in one file; where it is a structural bottleneck, bypassing it means inventing a path that does not exist.
+5. **A second front door cost almost nothing.** `serve`'s HTTP surface is just another driving adapter over the same `JclawRuntime`. This is why a turn submitted over HTTP and a turn typed at a terminal are the *same kind of run*, under the same locks, leases, gates, and audit log — and why the browser UI can be a projection of the event log rather than a parallel implementation of anything.
+
+### How the shape is kept true
+
+A dependency rule that lives only in a document is a dependency rule that is already broken somewhere. jclaw's is executable: `DependencyLawTest` (`jclaw-bootstrap/src/test/java/io/jclaw/app/architecture/DependencyLawTest.java`) asserts **16 rules** with ArchUnit, and they fail the build. Among them:
+
+- `jclaw-ports` may not import Spring, Jackson databind, `java.sql`, or anything HTTP.
+- `jclaw-domain` may not read a clock or use randomness. The clock is a parameter, never a call.
+- `jclaw-application-usecase` may not name `providers`, `tools`, or `storage` — it knows ports only.
+- Only the `providers/anthropic` package may import the Anthropic SDK.
+- Tool lanes may not read the process environment, so a credential cannot be picked up by a lane that was never given one.
+
+Each rule was verified to fire by planting a deliberate violation, not merely by passing on a clean tree — a rule nobody has watched fail is a rule that might be asserting nothing.
+
+### One honest wrinkle
+
+In the textbook drawing, the application service sits inside the hexagon. In jclaw, `JclawRuntime` — which admits turns, takes the thread lock, holds leases, and validates exit claims — lives in `jclaw-bootstrap`, the outermost module, next to the composition root and the CLI.
+
+That is a deliberate compromise rather than an oversight. `JclawRuntime` is the one component that needs nearly every port at once, and placing it where Spring already assembles things avoids an extra module whose whole purpose would be to receive constructor arguments. The cost is that the strict inward rule is enforced *below* it rather than around it: `app` is allowed to see everything, so nothing stops `JclawRuntime` reaching for an adapter directly. Nothing but review, at least — which is exactly the kind of guarantee the other modules do not have to rely on.
+
+---
+
+## 3. C4 Level 1 — System Context
 
 The system in its environment: a human operator drives the agent over a CLI/REPL; the agent itself talks to model providers on its operator's behalf; tools reach the workspace and (guarded) the network; scheduled routines fire on their own.
 
@@ -93,9 +289,9 @@ Contextual properties worth stating:
 
 ---
 
-## 3. C4 Level 2 — Containers
+## 4. C4 Level 2 — Containers
 
-Everything ships as one deployable unit — an uber jar or a GraalVM native image (~80 MB, ~78 ms startup). Most commands are short-lived processes; `repl`, `worker`, and `serve` are the long-lived ones, and `serve` adds an HTTP ingress over the same runtime. That is exactly why every store is a durable append-only JSONL file rather than in-process state: a run parks in one process and resumes in another, and a turn enqueued over HTTP is executed by whichever worker claims it.
+Everything ships as one deployable unit — an uber jar or a GraalVM native image (~95 MB, ~50 ms startup). Most commands are short-lived processes; `repl`, `worker`, and `serve` are the long-lived ones, and `serve` adds an HTTP ingress over the same runtime. That is exactly why every store is a durable append-only JSONL file rather than in-process state: a run parks in one process and resumes in another, and a turn enqueued over HTTP is executed by whichever worker claims it.
 
 ```mermaid
 C4Container
@@ -142,23 +338,23 @@ Container-level decisions:
 
 ---
 
-## 4. C4 Level 3 — Components
+## 5. C4 Level 3 — Components
 
-Inside the executable, the modules *are* the components. Arrows are compile-time dependencies; the whole diagram is a DAG with the contracts at its bottom.
+Inside the executable, the modules *are* the components. This is the hexagon of §2, *Ports and adapters*, at a finer grain: `cli` and the HTTP surface are the driving adapters, `providers`, `tools`, and `storage` are the driven ones, and everything between `JclawRuntime` and `TurnMachine` is core. Arrows are compile-time dependencies; the whole diagram is a DAG with the contracts at its bottom, which is the dependency rule drawn rather than stated.
 
 ```mermaid
 C4Component
-  Container(cli, "CLI commands (picocli)", "jclaw-app", "One class per verb, JclawApplication owns boot and arg-splitting")
-  Container(runtimesvc, "JclawRuntime", "jclaw-app", "submit/resume/validate, leases, the product surface")
-  Container(interp, "EffectInterpreter", "jclaw-loop", "Executes LoopDecision, mints no refs itself")
+  Container(cli, "CLI commands (picocli)", "jclaw-bootstrap", "One class per verb, JclawApplication owns boot and arg-splitting")
+  Container(runtimesvc, "JclawRuntime", "jclaw-bootstrap", "submit/resume/validate, leases, the product surface")
+  Container(interp, "EffectInterpreter", "jclaw-application-usecase", "Executes LoopDecision, mints no refs itself")
   Container(tmachine, "TurnMachine", "jclaw-domain", "Pure (state, observation, policy, now) to (state, decision)")
-  Container(gates, "Turn vocabulary", "jclaw-contracts", "Observation, LoopDecision, LoopExit, CheckpointKind, GateKind, refs")
-  Container(hostc, "DefaultCapabilityHost", "jclaw-kernel", "Ordered authority pipeline")
-  Container(policy, "CapabilityPolicy", "jclaw-kernel", "autoApproveCeiling, denied set, interactive flag, injection policy, per-tool egress and rate limits")
-  Container(guards, "Workspace/Egress guards", "jclaw-kernel", "Path confinement, SSRF boundary")
-  Container(provs, "Model adapters", "jclaw-providers", "mock / anthropic / openai-compatible / failover")
-  Container(toolset, "Capability handlers", "jclaw-tools", "core, file, shell, http, memory, skill, trigger, subagent, mcp")
-  Container(stores, "JSONL stores", "jclaw-storage", "Every durable record, hand-written codecs")
+  Container(gates, "Turn vocabulary", "jclaw-ports", "Observation, LoopDecision, LoopExit, CheckpointKind, GateKind, refs")
+  Container(hostc, "DefaultCapabilityHost", "jclaw-application-authority", "Ordered authority pipeline")
+  Container(policy, "CapabilityPolicy", "jclaw-application-authority", "autoApproveCeiling, denied set, interactive flag, injection policy, per-tool egress and rate limits")
+  Container(guards, "Workspace/Egress guards", "jclaw-application-authority", "Path confinement, SSRF boundary")
+  Container(provs, "Model adapters", "jclaw-adapter-out-model", "mock / anthropic / openai-compatible / failover")
+  Container(toolset, "Capability handlers", "jclaw-adapter-out-capability", "core, file, shell, http, memory, skill, trigger, subagent, mcp")
+  Container(stores, "JSONL stores", "jclaw-adapter-out-persistence", "Every durable record, hand-written codecs")
 
   Rel(cli, runtimesvc, "submit / resume")
   Rel(cli, stores, "read for status/memory/skills")
@@ -202,9 +398,9 @@ C4Component
 | `McpClient` / `McpCapabilityHandler` | tools | JSON-RPC 2.0 over stdio: initialize → `tools/list` → `tools/call`; every advertised tool registers as `mcp.<server>.<tool>`, `COMMUNITY` trust. |
 | `Jsonl*` stores + codecs | storage | Append-only JSONL with fsync; hand-written codecs — no reflection (native-image safe), no accidental field disclosure. |
 
-### The turn vocabulary (jclaw-contracts)
+### The turn vocabulary (jclaw-ports)
 
-The sealed interfaces in `jclaw-contracts` are the entire protocol between machine, interpreter, and runtime:
+If the ports of §2, *Ports and adapters*, are the holes in the hexagon's wall, these sealed types are the language spoken through them. They are the entire protocol between machine, interpreter, and runtime, and none of them names a technology:
 
 - **In** — `Observation`: `Start`, `Resumed`, `ModelReplied`, `ModelFailed`, `AuthRequired`, `CapabilitiesCompleted`, `ReplyPersisted`, `Checkpointed`, `CancelRequested`. Everything non-deterministic arrives as one of these.
 - **Out** — `LoopDecision`: `CallModel` (with a `userFacing` flag: a context summary is a model call that must not be streamed as the agent speaking), `InvokeCapabilities`, `PersistReply`, `Checkpoint`, `Finish`. Five constructors, and that is the complete set of effects an agent can cause.
@@ -215,9 +411,9 @@ The sealed interfaces in `jclaw-contracts` are the entire protocol between machi
 
 ---
 
-## 5. C4 Level 4 — Code: the core classes
+## 6. C4 Level 4 — Code: the core classes
 
-### 5.1 The turn state machine (`jclaw-domain/…/TurnMachine.java`)
+### 6.1 The turn state machine (`jclaw-domain/…/TurnMachine.java`)
 
 `step(state, observation, policy, now)` is total: every (phase, observation) pair yields a `(state, decision)`, and a mismatched pair yields a protocol-violation finish rather than an exception. Every model call is preceded by a checkpoint, so an expired lease can always find a safe continuation point.
 
@@ -254,7 +450,7 @@ Transitions that carry weight:
 - `AuthRequired` (a provider refused for want of credentials) parks the run behind a `BEFORE_BLOCK` checkpoint like an approval gate; nothing was appended, so resume goes straight back to the model call.
 - `CancelRequested` is honoured from any phase. The interpreter only delivers it between effects, so stopping cannot orphan an in-flight capability.
 
-### 5.2 The effect interpreter (`jclaw-loop/…/EffectInterpreter.java`)
+### 6.2 The effect interpreter (`jclaw-application-usecase/…/EffectInterpreter.java`)
 
 The interpreter owns the driving loop: `for steps in 0..MAX_STEPS (1000)` — each iteration (1) polls the cancel flag, (2) renews the lease via `RunHooks.heartbeat` and bails with `LEASE_EXPIRED` if the lease was lost, (3) calls `TurnMachine.step`, (4) on `Finish` emits `RunFinished` and returns the exit, (5) otherwise executes the decision via the five-arm `interpret` switch. Each arm is one method, and between them the interpreter contains every side effect the system can perform:
 
@@ -268,7 +464,7 @@ The interpreter owns the driving loop: `for steps in 0..MAX_STEPS (1000)` — ea
 
 The interpreter never mints a ref; every ref it hands the machine came from a store. So a `LoopExit` assembled from those refs is verifiable by construction — and still re-validated, because the trust model treats claims as claims.
 
-### 5.3 The authority pipeline (`jclaw-kernel/…/DefaultCapabilityHost.java`)
+### 6.3 The authority pipeline (`jclaw-application-authority/…/DefaultCapabilityHost.java`)
 
 `invoke(CapabilityInvocation)` runs a fixed order — cheapest and most absolute checks first, so a denied call never reaches code that could have a side effect:
 
@@ -281,7 +477,7 @@ The interpreter never mints a ref; every ref it hands the machine came from a st
 
 `HandlerError` keeps `Denied` (a guard refused) distinct from `Failed` (the lane broke) and from `Waiting` (work continues elsewhere): collapsing the first two would hide blocked attacks among ordinary I/O errors, and the third is how a run parks on a process instead of blocking a thread.
 
-### 5.4 The capability surface
+### 6.4 The capability surface
 
 Builtin ids are `builtin.<name>`, effect/trust as below (approval columns show what the three `jclaw.approval-mode` values do; all builtins are `FIRST_PARTY`, so operator policy is the only ceiling that binds them):
 
@@ -298,7 +494,7 @@ The last row is the point of the trust split: a `COMMUNITY` descriptor's own cei
 
 Notable lane specifics: `builtin.shell` runs `/bin/sh -c` in the workspace root with a scrubbed environment (PATH, HOME, LANG, LC_ALL, TZ, TERM, SHELL, USER, TMPDIR survive; every API key is stripped), 30 s default timeout (1–300 clamped), 64 KiB output cap enforced *while reading*, and `destroyForcibly` on the whole tree at the deadline; with `jclaw.shell-backend=docker` the same lane runs each command as `docker run --rm --network none --memory … --cpus … --pids-limit … --read-only -v <workspace>:/workspace:rw -w /workspace <image> /bin/sh -c <command>` per the pure `SandboxSpec`, with the timeout, scrub, and output bound still applied to the container process. `builtin.http_fetch` is GET-only, applies `EgressGuard` before the socket opens, and re-validates every manual redirect hop (max 5; 20 s timeout; 128 KiB body cap; ≥400 responses fail with the body discarded as attacker-controlled). `builtin.read_file`/`grep` skip files over 256 KiB and non-UTF-8 files. Memories and routines are **project**-scoped (the workspace directory name) — cross-project leakage would be a prompt-injection vector.
 
-### 5.5 Model adapters (`jclaw-providers`)
+### 6.5 Model adapters (`jclaw-adapter-out-model`)
 
 `ModelProvider` is four methods — `id()`, `supports(model)`, `complete(request)`, `stream(request, sink)` — returning `Result<ModelResponse, ProviderFailure>`. Three details are load-bearing:
 
@@ -306,18 +502,18 @@ Notable lane specifics: `builtin.shell` runs `/bin/sh -c` in the workspace root 
 - **Per-request credentials.** The Anthropic adapter reads `ANTHROPIC_API_KEY` at call time, not construction time. A provider bean that threw while wiring would take the whole context down — including `doctor`, the one command whose job is to report the missing key. A missing key surfaces as `AUTH (…)` in the event log and a failed `doctor` check.
 - **HTTP/1.1 pinned** on the OpenAI-compatible adapter: Java's `HttpClient` would send an h2c upgrade on plain-HTTP URLs, and llhttp-based servers (uvicorn's httptools mode — i.e. vLLM) pause body parsing on any Upgrade header. `doesNotAttemptH2cUpgrade` asserts the headers are absent and was verified to fail when the pin is removed.
 
-The `mock` provider (default, no key) can be scripted (`jclaw.mock-script=text:…`/`tool:<cap>:<k=v>`) which is how the whole CLI — including tool calls and the approval flow — is exercised without a network. 8. **Checkpoint, always before the model.** The first decision out of `START` (and out of `RESUMING` when nothing is outstanding) is `Checkpoint(BEFORE_MODEL)`: the interpreter encodes the whole loop state (`JsonLoopStateCodec`, schema v1), writes it to `checkpoints.jsonl`, emits `CheckpointWritten`, and hands back `Checkpointed(ref)`. The machine reads the kind and immediately decides `CallModel`. Because every model call has one, a crash at any point has a checkpoint that can be proven replay-safe or not — recovery never has to guess.
+The `mock` provider (default, no key) can be scripted (`jclaw.mock-script=text:…`/`tool:<cap>:<k=v>`) which is how the whole CLI — including tool calls and the approval flow — is exercised without a network.
 
 ---
 
-## 6. The turn lifecycle — from prompt to result
+## 7. The turn lifecycle — from prompt to result
 
 This is the complete, ordered story of one `jclaw run "…"` (and, through `submit`/`resume`, of every other product surface). File paths are clickable.
 
 ### Phase A — Admission (durable before anything runs)
 
-1. **Parse and inject.** `JclawApplication.main` expands `--debug`/`--trace` into `--logging.*` properties, boots Spring, and hands picocli the argv minus every `--jclaw.*`/`--spring.*`/`--logging.*` argument (both frameworks see the same argv; without the split, `jclaw run --jclaw.provider=anthropic …` would make picocli choke on an unknown option). `RunCommand` (`jclaw-app/src/main/java/io/jclaw/app/cli/RunCommand.java`) registers a shutdown hook that sets a `cancel` flag, then calls `JclawRuntime.submit(thread, text, cancel)`.
-2. **Resolve the run profile.** `JclawRuntime.submit` (`jclaw-app/src/main/java/io/jclaw/app/runtime/JclawRuntime.java`) builds the scope — `TurnScope.local(projectName, thread)`, project = the workspace directory name — then assembles the `LoopPolicy`: model from config, the system prompt (operator base + a `## Workspace` section naming the directory, never its absolute path, + a `## Available skills` block of one-line skill summaries per `PromptAssembly`), the visible capability surface (`CapabilityHost.visibleSurface`, filtered by policy denial, mapped to `ToolSpec`s), max output tokens 8192, max consecutive model failures 2. The profile is assembled **once at admission** and recorded with the run, so a resume tomorrow replays the prompt the run was admitted under, not today's config.
+1. **Parse and inject.** `JclawApplication.main` expands `--debug`/`--trace` into `--logging.*` properties, boots Spring, and hands picocli the argv minus every `--jclaw.*`/`--spring.*`/`--logging.*` argument (both frameworks see the same argv; without the split, `jclaw run --jclaw.provider=anthropic …` would make picocli choke on an unknown option). `RunCommand` (`jclaw-bootstrap/src/main/java/io/jclaw/app/cli/RunCommand.java`) registers a shutdown hook that sets a `cancel` flag, then calls `JclawRuntime.submit(thread, text, cancel)`.
+2. **Resolve the run profile.** `JclawRuntime.submit` (`jclaw-bootstrap/src/main/java/io/jclaw/app/runtime/JclawRuntime.java`) builds the scope — `TurnScope.local(projectName, thread)`, project = the workspace directory name — then assembles the `LoopPolicy`: model from config, the system prompt (operator base + a `## Workspace` section naming the directory, never its absolute path, + a `## Available skills` block of one-line skill summaries per `PromptAssembly`), the visible capability surface (`CapabilityHost.visibleSurface`, filtered by policy denial, mapped to `ToolSpec`s), max output tokens 8192, max consecutive model failures 2. The profile is assembled **once at admission** and recorded with the run, so a resume tomorrow replays the prompt the run was admitted under, not today's config.
 3. **Lock the thread, then persist the inbound message.** (Through `submit` or `enqueue`; an enqueued run skips the rest of this phase and is picked up later by the scheduler, which resumes it under the same lock.) `threadLocks.tryAcquire(scope)` takes an OS file lock for the canonical thread (`FileThreadLock`, `<state-dir>/locks/<hash>.lock`); if another run holds it the submission is refused with `THREAD_BUSY` and nothing below happens. Then `threads.acceptInbound(thread, user)` appends to the durable transcript *before any run exists*, so a crash cannot lose what the user asked for. (The returned `AcceptedMessageRef` is a ref already — inbound messages are facts, not claims.)
 4. **Record and claim the run.** A `RunRecord` with the resolved profile is appended to `runs.jsonl`; a `TurnSubmitted` event is appended to `events.jsonl`; then `runs.claim(run, workerId, now + 2 min)` writes a lease. A fresh run id that is somehow already claimed fails **closed** (`INTERNAL`). `RunClaimed` is emitted. `workerId` is random per process on purpose — a restarted worker must not inherit a claim its predecessor died holding.
 5. **Seed the machine.** The thread's transcript (which includes the message just accepted, attachments and all) becomes `LoopExecutionState.start(messages, budget)`: whole when summarisation is on (the machine summarises what its window drops before the first call), or compacted by the pure `ContextCompaction` under the run's `ContextPolicy` when it is off (message cap + estimated token budget; cuts only at a user or assistant boundary; folds a "N earlier messages omitted" notice into the first kept user message). A queued run is seeded with the conversation as of its own submission, its own message last. The state carries with a `Budget` of `maxTokens` / `maxIterations` / a fixed 10-minute wall-clock cap, and control passes to `EffectInterpreter.run` with per-run hooks: the lease heartbeat and, for `--stream`/REPL streaming, a sink for prose deltas.
@@ -330,12 +526,12 @@ This is the complete, ordered story of one `jclaw run "…"` (and, through `subm
 
 9. **Call the model.** If the context policy would drop history and summarisation is on, a non-user-facing summary call goes first and its answer replaces the dropped span in the state. Then `provider.complete(request)` — or `stream` when a sink is present and the call is user-facing; streaming is presentation-only and both paths yield the same `ModelResponse`. On success the interpreter appends `ModelCalled` (provider, model, usage, latency) and returns `ModelReplied`; on an `AUTH` failure it raises a durable auth gate and returns `AuthRequired`, which parks the run `BLOCKED_AUTH`; on any other failure it appends `ModelFailed` with the provider's detail **redacted then bounded to 200 chars** (the detail explains a rejection, but it originates outside the host) and returns `ModelFailed` mapped onto the loop's `FailureKind` (`EGRESS_DENIED` → `POLICY_DENIED`, rate-limit/upstream/transport → `PROVIDER_ERROR`, unknown model → `PROVIDER_UNAVAILABLE`, invalid request → `INVALID_REQUEST`).
 10. **Charge and branch.** Back in the machine: usage is charged to the budget, the success/failure counter updated, the assistant message appended to the state. If the reply contains `tool_use` blocks → `InvokeCapabilities`. A plain text reply → `PersistReply` (a plain reply ends the turn — but only once the host has minted a ref for it). A retryable failure → retry (after another checkpoint) while ≤2 consecutive and budget remains; otherwise `Failed`.
-11. **Dispatch each capability through the kernel** (§5.3). The interpreter calls `CapabilityHost.invoke` sequentially and **stops at the first `NeedsApproval`**: running further effects after deciding to block would be exactly the duplicated work checkpointing exists to prevent. Results are stored redacted and bounded; each `Ok` carries a `LoopResultRef`.
+11. **Dispatch each capability through the kernel** (§6.3, *The authority pipeline*). The interpreter calls `CapabilityHost.invoke` sequentially and **stops at the first `NeedsApproval`**: running further effects after deciding to block would be exactly the duplicated work checkpointing exists to prevent. Results are stored redacted and bounded; each `Ok` carries a `LoopResultRef`.
 12. **Fold the outcomes.** The machine builds one `tool_result` message from all outcomes (denied and failed calls become model-visible error text — the model is told, and may change plan), records the `Ok` refs, advances the iteration, and checks the budget: exhausted → `Failed(BUDGET_EXHAUSTED)` with the results already durable; otherwise back to step 8 (another `BEFORE_MODEL` checkpoint, then the model sees the tool results and decides again).
 
 ### Phase C — Parking (when the kernel raises a gate)
 
-13. **A gate parks the run.** Any `NeedsApproval` in a batch — an approval gate, or a process gate because a lane started a child run — sets a pending block and decides `Checkpoint(BEFORE_BLOCK)`; the checkpoint records *partial progress* — the tool calls already dispatched have their results in the state; the ones after the gate were never dispatched. On `Checkpointed(BEFORE_BLOCK)` the machine finishes with `Blocked(gate, gateRef, checkpointRef)`. `JclawRuntime.validate` (§14) requires the checkpoint ref to resolve — parking a run that could not be resumed without repeating effects would strand the user — and records `BLOCKED_APPROVAL`. `RunCommand` prints the gate id and exits **2**; the REPL prints the exact `jclaw approvals approve <gate>` command.
+13. **A gate parks the run.** Any `NeedsApproval` in a batch — an approval gate, or a process gate because a lane started a child run — sets a pending block and decides `Checkpoint(BEFORE_BLOCK)`; the checkpoint records *partial progress* — the tool calls already dispatched have their results in the state; the ones after the gate were never dispatched. On `Checkpointed(BEFORE_BLOCK)` the machine finishes with `Blocked(gate, gateRef, checkpointRef)`. `JclawRuntime.validate` (phase E below) requires the checkpoint ref to resolve — parking a run that could not be resumed without repeating effects would strand the user — and records `BLOCKED_APPROVAL`. `RunCommand` prints the gate id and exits **2**; the REPL prints the exact `jclaw approvals approve <gate>` command.
 14. **A human decides, in a separate process.** `jclaw approvals approve <gate>` records the decision in `approvals.jsonl` (the gate file is durable precisely so the decision can outlive the process that raised it) and, by default, resumes immediately; `--no-resume` defers. `deny` records the denial and resumes only with `--resume`. A `GateResolved` event is appended.
 
 ### Phase D — Resume (re-authorize, never assume)
@@ -360,7 +556,7 @@ This is the complete, ordered story of one `jclaw run "…"` (and, through `subm
 
 ---
 
-## 7. Sequence diagram — one turn, every step
+## 8. Sequence diagram — one turn, every step
 
 The diagram below follows a run that calls one tool, parks on its approval gate, is approved by a human in a second process, resumes, and completes. `run --stream` only adds delta events to the provider call; every other arrow is identical.
 
@@ -462,7 +658,7 @@ Failure paths compress to the same frame: a non-retryable or repeated `ModelFail
 
 ---
 
-## 8. Cross-cutting concerns
+## 9. Cross-cutting concerns
 
 ### Durability and the state directory
 
@@ -498,11 +694,11 @@ Nothing inside jclaw is a daemon by default. Routines are fired by `jclaw routin
 
 ### Native image
 
-The `native` Maven profile in `jclaw-app` builds a GraalVM binary (~80 MB, ~78 ms startup vs ~1.2 s for the jar). Two pieces of metadata make it work: `picocli-codegen` generates reflection config for every `@Command`, and the Anthropic SDK's Jackson metadata was *captured* by the GraalVM tracing agent (`META-INF/native-image/io.jclaw/anthropic-sdk/`) and must be regenerated after any SDK upgrade — and, if image attachments are to be sent through the Anthropic adapter from the native binary, captured with a request that carries an image, since the image block types were not exercised by the original capture. Subprocess spawning (MCP servers, `builtin.shell`, the docker sandbox) and the JDK HTTP server are verified to work in the native binary.
+The `native` Maven profile in `jclaw-bootstrap` builds a GraalVM binary (~95 MB, ~50 ms startup against ~1.3 s for the jar; measured on arm64 with GraalVM CE 25, and the size grows with the tree — it was ~80 MB at ~20k lines). Two pieces of metadata make it work: `picocli-codegen` generates reflection config for every `@Command`, and the Anthropic SDK's Jackson metadata was *captured* by the GraalVM tracing agent (`META-INF/native-image/io.jclaw/anthropic-sdk/`) and must be regenerated after any SDK upgrade — and, if image attachments are to be sent through the Anthropic adapter from the native binary, captured with a request that carries an image, since the image block types were not exercised by the original capture. Subprocess spawning (MCP servers, `builtin.shell`, the docker sandbox) and the JDK HTTP server are verified to work in the native binary.
 
 ---
 
-## 9. Design decisions worth knowing before changing things
+## 10. Design decisions worth knowing before changing things
 
 - **Why JSONL and not a database.** A CLI parks in one process and resumes in another; JSONL gives that with zero setup and a human-readable audit trail. At hosted scale it would not do (see PARITY.md).
 - **Why the system prompt is frozen at admission.** The model's instructions must not change underneath a conversation midway through; a resume replays the admitted prompt even if a skill was installed since.

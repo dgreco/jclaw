@@ -57,6 +57,7 @@ jclaw-domain/src/main/java/io/jclaw/domain/loop/TurnMachine.java ...
   - [Scheduled routines: `routines` and `worker`](#scheduled-routines-routines-and-worker)
   - [MCP servers: `mcp`](#mcp-servers-mcp)
   - [Subagents](#subagents)
+  - [Several agents at once](#several-agents-at-once)
   - [Streaming](#streaming)
   - [Crash recovery: `recover`](#crash-recovery-recover)
   - [Retention: `retain`](#retention-retain)
@@ -73,7 +74,7 @@ jclaw-domain/src/main/java/io/jclaw/domain/loop/TurnMachine.java ...
 
 ## What it is
 
-jclaw reimplements the **architecture** of IronClaw — the seven-layer ladder, the turn/run lifecycle, the untrusted-exit trust model, and the single capability-authority boundary — in about 32k lines of Java. It is not a port: the feature surface is a fraction of IronClaw's (see [PARITY.md](../PARITY.md)), but the load-bearing ideas are intact:
+jclaw reimplements the **architecture** of IronClaw — the seven-layer ladder, the turn/run lifecycle, the untrusted-exit trust model, and the single capability-authority boundary — in about 34k lines of Java. It is not a port: the feature surface is a fraction of IronClaw's (see [PARITY.md](../PARITY.md)), but the load-bearing ideas are intact:
 
 | Idea | What it means for you |
 |---|---|
@@ -98,23 +99,23 @@ Requirements: **JDK 21+** and **Maven 3.9+** (the wrapper is not checked in). Fo
 mvn -q clean install -DskipTests
 
 # 2. Try it with no API key — the mock provider is the default
-java -jar jclaw-app/target/jclaw-app-0.1.0-SNAPSHOT.jar run "hello"
+java -jar jclaw-bootstrap/target/jclaw-bootstrap-0.1.0-SNAPSHOT.jar run "hello"
 
 # 3. Point it at a real model
 export ANTHROPIC_API_KEY=sk-ant-...
-java -jar jclaw-app/target/jclaw-app-0.1.0-SNAPSHOT.jar run --jclaw.provider=anthropic \
+java -jar jclaw-bootstrap/target/jclaw-bootstrap-0.1.0-SNAPSHOT.jar run --jclaw.provider=anthropic \
   "summarise the README in this directory"
 
 # 4. Make the choice permanent and verify it
-java -jar jclaw-app/target/jclaw-app-0.1.0-SNAPSHOT.jar onboard      # writes ~/.jclaw/jclaw.yaml
-java -jar jclaw-app/target/jclaw-app-0.1.0-SNAPSHOT.jar doctor       # config + security posture
-java -jar jclaw-app/target/jclaw-app-0.1.0-SNAPSHOT.jar models --probe
+java -jar jclaw-bootstrap/target/jclaw-bootstrap-0.1.0-SNAPSHOT.jar onboard      # writes ~/.jclaw/jclaw.yaml
+java -jar jclaw-bootstrap/target/jclaw-bootstrap-0.1.0-SNAPSHOT.jar doctor       # config + security posture
+java -jar jclaw-bootstrap/target/jclaw-bootstrap-0.1.0-SNAPSHOT.jar models --probe
 ```
 
 The rest of this document writes `jclaw …`; define an alias or use the native binary:
 
 ```bash
-alias jclaw='java -jar /path/to/jclaw-app/target/jclaw-app-0.1.0-SNAPSHOT.jar'
+alias jclaw='java -jar /path/to/jclaw-bootstrap/target/jclaw-bootstrap-0.1.0-SNAPSHOT.jar'
 ```
 
 The agent operates inside a **workspace** — by default the current directory. Every file path a tool touches is confined to it, and the workspace directory *name* becomes the project scope for memories and routines. Run jclaw from the project you want it to work on, or pass `--jclaw.workspace=/path`.
@@ -133,10 +134,10 @@ mvn clean install            # compiles, runs all tests, installs every module
 mvn -q clean install -DskipTests
 ```
 
-The Spring Boot Maven plugin repackages `jclaw-app` into an executable jar:
+The Spring Boot Maven plugin repackages `jclaw-bootstrap` into an executable jar:
 
 ```
-jclaw-app/target/jclaw-app-0.1.0-SNAPSHOT.jar
+jclaw-bootstrap/target/jclaw-bootstrap-0.1.0-SNAPSHOT.jar
 ```
 
 Run it with `java -jar`. Startup is about 1.2 s bare, 1.48 s in a container. The manifest carries `Enable-Native-Access: ALL-UNNAMED` so JLine can put the terminal into raw mode without warnings on JDK 24+ (the REPL needs it).
@@ -148,21 +149,21 @@ Requires **GraalVM 25 or newer** as `JAVA_HOME` (the toolchain is 25+; bytecode 
 ```bash
 export JAVA_HOME=/path/to/graalvm-25
 mvn -B install -DskipTests                       # install every module first
-mvn -B -Pnative -pl jclaw-app package -DskipTests
-./jclaw-app/target/jclaw run "hello"
+mvn -B -Pnative -pl jclaw-bootstrap package -DskipTests
+./jclaw-bootstrap/target/jclaw run "hello"
 ```
 
-The `native` profile is declared in `jclaw-app/pom.xml` (the Boot parent only provides `pluginManagement` for it, so `mvn -Pnative native:compile` at the root does nothing useful). It produces `jclaw-app/target/jclaw`: roughly 80 MB, ~78 ms startup versus ~1.2 s for the jar (bare metal; measured inside a container, the same comparison is 61 ms against 1.48 s). Build args: `--no-fallback` (a missing reflection registration fails the build instead of shipping a binary that dies at runtime), `--report-unsupported-elements-at-runtime`, and `--enable-native-access=ALL-UNNAMED`.
+The `native` profile is declared in `jclaw-bootstrap/pom.xml` (the Boot parent only provides `pluginManagement` for it, so `mvn -Pnative native:compile` at the root does nothing useful). It produces `jclaw-bootstrap/target/jclaw`: roughly 80 MB, ~78 ms startup versus ~1.2 s for the jar (bare metal; measured inside a container, the same comparison is 61 ms against 1.48 s). Build args: `--no-fallback` (a missing reflection registration fails the build instead of shipping a binary that dies at runtime), `--report-unsupported-elements-at-runtime`, and `--enable-native-access=ALL-UNNAMED`.
 
 Two pieces of reachability metadata make the binary work, and both matter when you upgrade dependencies:
 
 - **picocli-codegen** runs as an annotation processor and emits reflection config for every `@Command`. Without it every subcommand is invisible in the binary.
-- **The Anthropic SDK's Jackson metadata** lives in `jclaw-app/src/main/resources/META-INF/native-image/io.jclaw/anthropic-sdk/` and was *captured* with the GraalVM tracing agent, not hand-written. Regenerate it after any SDK upgrade (a dummy key suffices — serialization happens before the auth failure):
+- **The Anthropic SDK's Jackson metadata** lives in `jclaw-bootstrap/src/main/resources/META-INF/native-image/io.jclaw/anthropic-sdk/` and was *captured* with the GraalVM tracing agent, not hand-written. Regenerate it after any SDK upgrade (a dummy key suffices — serialization happens before the auth failure):
 
   ```bash
   ANTHROPIC_API_KEY=dummy $JAVA_HOME/bin/java \
-    -agentlib:native-image-agent=config-output-dir=jclaw-app/src/main/resources/META-INF/native-image/io.jclaw/anthropic-sdk \
-    -jar jclaw-app/target/jclaw-app-0.1.0-SNAPSHOT.jar run capture --jclaw.provider=anthropic
+    -agentlib:native-image-agent=config-output-dir=jclaw-bootstrap/src/main/resources/META-INF/native-image/io.jclaw/anthropic-sdk \
+    -jar jclaw-bootstrap/target/jclaw-bootstrap-0.1.0-SNAPSHOT.jar run capture --jclaw.provider=anthropic
   ```
 
 Spring's AOT processing (`process-aot`) runs as part of the profile; `JclawApplication` deliberately rethrows `SpringApplication.AbandonedRunException` so that step is not mistaken for a startup failure.
@@ -172,7 +173,7 @@ Spring's AOT processing (`process-aot`) runs as part of the profile; `JclawAppli
 ```bash
 mvn test                                                   # whole suite
 mvn test -Dtest=TurnMachineTest -pl jclaw-domain           # one class
-mvn test -Dtest='ApprovalResumeIntegrationTest#resumeWithoutDecisionParksAgain' -pl jclaw-app -am
+mvn test -Dtest='ApprovalResumeIntegrationTest#resumeWithoutDecisionParksAgain' -pl jclaw-bootstrap -am
 ./scripts/byte-verify.sh scan                              # no stray control bytes in sources
 ./scripts/byte-verify.sh install && ./scripts/byte-verify.sh validate   # manifest drift check
 mvn -Panalysis verify                                      # javac -Xlint, SpotBugs, PMD
@@ -189,7 +190,7 @@ Test totals by module (verified on this checkout; the 5 PostgreSQL tests are cou
 
 ### Coverage
 
-JaCoCo runs in the ordinary build: `mvn verify` writes a per-module report and an aggregate one under `jclaw-app/target/site/jacoco-aggregate`, and `./scripts/coverage.sh` prints the one-line total both pipelines publish. On this checkout: **77.1% of instructions, 59.4% of branches, 76.1% of lines**.
+JaCoCo runs in the ordinary build: `mvn verify` writes a per-module report and an aggregate one under `jclaw-bootstrap/target/site/jacoco-aggregate`, and `./scripts/coverage.sh` prints the one-line total both pipelines publish. On this checkout: **77.1% of instructions, 59.4% of branches, 76.1% of lines**.
 
 Each remote publishes the report its own pipeline computed, and the coverage badge at the top of
 this page opens the one belonging to the host you are reading it on:
@@ -226,7 +227,7 @@ preference to the root one, GitLab renders only the root one. Both are generated
 [`scripts/readme-sync.sh`](../scripts/readme-sync.sh) — edit the root file, run the script, and the
 verify stage of both pipelines fails the build if either copy is stale.
 
-Read the aggregate rather than the per-module figures: most of `contracts`, `kernel` and `tools` is exercised by integration tests that live in `jclaw-app`, so their own reports read 5–16% while the aggregate, which credits a class wherever it actually ran, reads 73%. `DependencyLawTest` in `jclaw-app` machine-checks the layer ladder with ArchUnit; the rules were confirmed to fire by planting deliberate violations.
+Read the aggregate rather than the per-module figures: most of `contracts`, `kernel` and `tools` is exercised by integration tests that live in `jclaw-bootstrap`, so their own reports read 5–16% while the aggregate, which credits a class wherever it actually ran, reads 73%. `DependencyLawTest` in `jclaw-bootstrap` machine-checks the layer ladder with ArchUnit; the rules were confirmed to fire by planting deliberate violations.
 
 ### Continuous integration
 
@@ -271,7 +272,7 @@ a branch run. Superseded runs are cancelled — except on a tag, which is buildi
 
 All settings are Spring Boot properties under the `jclaw.` prefix, bound to an immutable record (`JclawProperties`) once at startup. They can be supplied, in ascending precedence:
 
-1. **Defaults** in `jclaw-app/src/main/resources/application.yaml`.
+1. **Defaults** in `jclaw-bootstrap/src/main/resources/application.yaml`.
 2. **`~/.jclaw/jclaw.yaml`** — user config, imported optionally. `jclaw onboard` writes it. The path is fixed (not derived from `state-dir`, which would be circular).
 3. **Environment variables** in relaxed-binding form: `JCLAW_PROVIDER`, `JCLAW_APPROVAL_MODE`, `JCLAW_LOCAL_BASE_URL`, …
 4. **Command-line arguments** `--jclaw.<name>=<value>` on any command. `JclawApplication` strips `--jclaw.*`, `--spring.*`, `--logging.*`, `--management.*`, and `--server.*` before argv reaches picocli, so both frameworks see the same arguments without conflict. These flags therefore do not appear in `--help`'s option list; the root command's footer documents them.
@@ -942,7 +943,180 @@ Every sampled call is written to the audit log as a `model.called` event under a
 
 The model can call `builtin.spawn_subagent` with a `prompt` (and optional `description`) to delegate a task. The child is an ordinary run on the **same** machinery — same turn machine, same interpreter, same capability host and approval policy — on a fresh thread derived from the parent's (`<parent>~sub1-…`), so it inherits none of the parent's conversation and only its conclusion travels back. Nesting depth is derived from the thread id rather than passed by the model, and is capped at 3. Spawning is `PROCESS`-class, so it is gated in `interactive`.
 
-By default the child runs inside the parent's tool call. With `subagents-async: true` the child is **queued** instead: the parent parks `WAITING_PROCESS` on a process gate that names the child run, a `worker` or `serve` executes the child under the concurrency cap, and when it finishes the scheduler requeues the parent, which re-dispatches the same call and receives the child's conclusion as the tool result. Several children of one parent therefore run in parallel. Without a worker the parent would wait indefinitely, which is why the synchronous mode is the default.
+By default the child runs inside the parent's tool call. With `subagents-async: true` the child is **queued** instead: the parent parks `WAITING_PROCESS` on a process gate that names the child run, a `worker` or `serve` executes the child under the concurrency cap, and when it finishes the scheduler requeues the parent, which re-dispatches the same call and receives the child's conclusion as the tool result. Several `spawn_subagent` calls in one reply do **not** run in parallel, in either mode — a gate anywhere in a batch stops the batch, so the parent starts one child, parks, resumes, and starts the next. Concurrency comes from independent runs, and [Several agents at once](#several-agents-at-once) works through both. Without a worker the parent would wait indefinitely, which is why the synchronous mode is the default.
+
+### Several agents at once
+
+This section is about **more than one agent run at the same time**: what starts a second agent, what it does while the first one is still alive, and what the two of them can and cannot see of each other. Two facts carry everything else, so they are worth having before the first diagram:
+
+- **A subagent is an ordinary run.** It gets its own run id, its own thread, its own transcript, its own budget, and its own checkpoint, and it goes through the same turn machine, the same authority gate, and the same approval policy as the run that started it. There is no second engine for delegated work — a private subagent engine would be a second place for authority, checkpointing, and audit to diverge from the real one.
+- **Delegation is a hand-off of text, not a connection.** The child receives one prompt, which is the whole of its world, and the parent receives one string back: the child's final reply. Neither can read the other's transcript while the work is in flight, and neither can interrupt the other.
+
+The whole thing in one picture:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant P as Parent run
+    participant CH as Capability host
+    participant C as Child run
+    participant SC as Scheduler
+    participant O as Operator queue
+
+    Note over P,O: two ways to get more than one agent, and they behave differently
+    rect rgba(130, 145, 190, 0.14)
+        Note over P,C: an agent delegating: sequential, one child at a time
+        P->>CH: spawn_subagent, prompt one
+        CH->>C: a child run on a derived thread, executed inside the parent's tool call
+        C-->>P: one conclusion, arriving as the tool result
+        P->>CH: spawn_subagent, prompt two
+        Note over P,CH: the first child's conclusion is in context before the second starts. A parked call stops the batch, so children never overlap.
+    end
+    rect rgba(110, 175, 130, 0.16)
+        Note over SC,O: the operator queueing: concurrent, up to the concurrency cap
+        O->>SC: submit x N, a webhook topic, several HTTP clients
+        SC->>SC: claim each queued run onto its own worker thread
+        Note over SC: the runs are independent: separate threads, separate transcripts, no shared parent. They meet only in the shared audit log.
+    end
+```
+
+#### What puts more than one agent on the machine
+
+There are two families, and they behave differently.
+
+**An agent delegating.** `builtin.spawn_subagent` creates a child of *that* run. One reply can ask for several children, and they run **one at a time**, in both modes, because a gate anywhere in a batch stops the batch — running further effects after deciding to park is exactly the duplicated work checkpointing exists to prevent. A fan-out of subagents is therefore a sequence that preserves the parent's context, not parallelism.
+
+**The operator queueing runs.** `submit`, a webhook, a watch, an audit event, or a channel adapter puts several *independent* runs in the queue, and a `worker` or `serve` executes them concurrently, up to `--concurrency` (default 2). These are strangers to each other: separate threads, separate transcripts, no shared parent, one run per thread at a time.
+
+| What happens | Who starts it | How many agents | Do they overlap? |
+|---|---|---|---|
+| `builtin.spawn_subagent` × N in one reply | the agent | N children of one parent | no — one at a time, in both modes |
+| One `POST /hooks/<name>` on a routine with `--topic` | the operator | one run per routine on that topic | yes, up to the concurrency cap |
+| `jclaw submit` × N, several HTTP clients, a channel adapter | the operator | N independent runs | yes, up to the concurrency cap |
+| Several routines coming due on one tick | the clock | one run each | watch, event and webhook triggers are queued, so yes; cron and interval ones are executed inline by `run-due` and `worker`, so no |
+| `jclaw recover` requeueing crashed runs | the operator | one per run | yes, up to the concurrency cap |
+| An audit event (`run.finished`, `gate.raised`, `turn.submitted`) | the world | one per matching `--on` routine | yes — and a *child's* completion is such an event, so a failed delegation can start a routine |
+
+The last row is the coupling worth knowing about: a child run writes an ordinary `run.finished` event, and the only runs excluded from firing triggers are those on a routine's own thread. An agent can also schedule its own future work with `builtin.trigger_create`, but only a cron expression or an interval — webhooks, watches, and event triggers are the operator's, because one of them grants an outside caller a way in and the others react to the world outside the turn.
+
+#### A synchronous subagent, step by step
+
+`subagents-async` is `false` by default, so the child runs to completion **inside** the parent's tool call.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Op as Operator
+    participant P as Parent run
+    participant CH as Capability host
+    participant C as Child run
+    participant ST as Stores
+
+    Note over P: the model's reply carries a tool call
+    P->>CH: builtin.spawn_subagent, prompt "count the files"
+    Note over CH: spawn_subagent is PROCESS-class, so under the default interactive mode the spawn itself is a question
+    CH->>ST: raise an approval gate for this exact invocation
+    CH-->>P: NeedsApproval
+    Note over P: the parent parks BLOCKED_APPROVAL, a resumable run. No child exists yet.
+    Op->>P: approve the gate, then resume the run
+    P->>CH: the same call, dispatched again
+    Note over CH: re-authorised against the approval store, never assumed
+    CH->>C: submit a real child run, on a thread of its own
+    Note over C: the prompt is the whole of its world. No parent transcript, its own gates, its own budget.
+    C->>ST: its own transcript, run record and checkpoint
+    C-->>CH: the child's final reply
+    CH-->>P: tool result, which is that reply and nothing else
+    Note over P: the parent's context grew by one conclusion, not by everything the child read
+```
+
+In words: the model asks for a delegation; because `spawn_subagent` is `PROCESS`-class, the *spawn itself* is a question under the default `interactive` mode, and the parent parks before any child exists. Approving resumes the parent, which re-dispatches the same call — the kernel re-authorizes rather than assuming. The child then runs as a real run: its own thread, its own gates, its own budget. What comes back is one string, so the parent's context grows by a conclusion rather than by everything the child read. Under `trusted` there is no first park; under `read-only` the spawn is denied outright, because a gate nobody can answer would hang the run.
+
+#### An asynchronous subagent, step by step
+
+With `subagents-async: true` the parent does not block: it parks, and a worker does the child.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant P as Parent run
+    participant CH as Capability host
+    participant SC as Scheduler
+    participant C as Child run
+    participant ST as Stores
+
+    P->>CH: builtin.spawn_subagent, prompt "count the files"
+    CH->>ST: enqueue the child on a thread derived from the parent, and raise a PROCESS gate naming it
+    CH-->>P: NeedsApproval(PROCESS)
+    Note over P: WAITING_PROCESS. The parent is parked, and nothing is executing on its thread.
+    SC->>ST: claim the child run
+    SC->>C: execute the child turn
+    C->>ST: run.finished
+    Note over SC: a finished run on a parent~sub... thread wakes the run on that parent thread that is WAITING_PROCESS
+    SC->>ST: requeue the parent to QUEUED
+    SC->>P: resume, taking the parent thread's lock again
+    P->>CH: the same spawn call, dispatched again
+    CH->>ST: is there a run on that child thread yet?
+    ST-->>CH: yes, finished. Here is its final reply.
+    CH-->>P: tool result, which is the reply
+    Note over P: COMPLETED, with the conclusion in context and the child's own run still visible in jclaw status
+```
+
+In words: the parent asks once, parks, and stops holding a thread. A worker executes the child; the scheduler notices the child's thread names its parent, finds the run on that parent thread that is `WAITING_PROCESS`, and requeues it. The parent then re-dispatches the same call, and the lane answers from the child's own record rather than starting a second child — the child thread is a pure function of the parent thread and the prompt, which is what makes the re-dispatch idempotent. The `PROCESS` gate is reused across resumes, so a parent that wakes while its child is still running parks again on the same gate rather than raising a second one. Under `interactive` there are two parks here, and they are different questions: first the approval for the spawn, then the wait on the child.
+
+#### What actually runs at the same time
+
+Only the queue is concurrent, and a webhook topic is the clearest way to see it. Three routines share the topic `review`, and one `POST` — authenticated against *one* of their secrets — fires all three:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Op as Operator
+    participant HTTP as serve
+    participant SC as Scheduler
+    participant RA as Routine auth
+    participant RE as Routine errors
+    participant RP as Routine perf
+
+    Op->>HTTP: POST /hooks/review-auth with one routine's secret
+    Note over HTTP: the topic is the subscription, declared by the operator in the routines. A caller cannot name a topic, discover one, or join one.
+    HTTP->>RA: enqueue
+    HTTP->>RE: enqueue
+    HTTP->>RP: enqueue
+    HTTP-->>Op: 202 with run, thread, and alsoFired naming the others
+    par three independent runs, three threads, three transcripts
+        SC->>RA: claim and execute
+        SC->>RE: claim and execute
+        SC->>RP: claim and execute
+    end
+    RA-->>SC: run.finished
+    RE-->>SC: run.finished
+    RP-->>SC: run.finished
+    Note over SC: up to the concurrency cap at once, and never two runs on one thread
+```
+
+Three things about it are load-bearing. `serve` never executes a turn in the request: it enqueues and answers, and the scheduler executes, which is why one HTTP client cannot pin a thread. The three runs are independent — nothing about them is nested, and none of them can read another's transcript. And none of it happens at all without a `worker` or `serve` running; a queued run with nobody to claim it just sits there.
+
+#### How the agents interact
+
+| | who can see it |
+|---|---|
+| the prompt a child was given | the child, all of it — and the parent that wrote it |
+| a child's transcript | nobody but the child. It is the parent's context that delegation exists to protect. |
+| a child's final reply | the parent, as the tool result |
+| a child's run id | the parent, in the process gate's prompt (asynchronous mode), and anyone reading `jclaw status` |
+| a sibling's work | nobody — siblings never see each other |
+| memories | shared when they are in the same project, which is the workspace directory name, so siblings in one repository do build on each other |
+| the audit log | shared by everything, which is what lets `status`, projections, and event triggers see every run |
+
+So the interaction between agents is not a channel, it is durable state plus the audit log: the parent writes a prompt, the child writes a transcript, and one string crosses back. A child that wants to tell its parent something has exactly one way to do it — put it in the reply — and a parent that wants a child to know something has one way to say it — put it in the prompt.
+
+#### Rules that bite
+
+- **Distinct prompts, or one child.** A child is identified by the parent thread *and* the task, so two facets sent with byte-identical prompts are one child, not two. Asynchronously the parent finds the child it already started, which is exactly what makes a re-dispatched call idempotent. Synchronously a second run lands on the first child's thread and is seeded from that thread's transcript, so it can see the first one's conversation. Neither is usually what was meant, which is why every facet's prompt should be distinct.
+- **Depth is 3, and it is not a parameter.** Nesting is counted from the thread id (`parent~sub1-...~sub2-...`), so a model cannot claim to be shallower than it is. At the cap the spawn is refused with `subagent_depth_exceeded`, which the model is told about rather than crashed on.
+- **Every child's gate is its own question.** Approving a delegation does not approve what the child then does: four children that each want to run a command are four questions, not one.
+- **A child that parks.** Asynchronously the parent stays `WAITING_PROCESS` while the child is unresolved, and the scheduler requeues it when the child finishes — so a child's own gate keeps its parent parked too. Synchronously there is nothing to requeue: the parent is handed "The subagent did not complete: status: BLOCKED_APPROVAL" and moves on, while the child stays parked until someone resolves it.
+- **Where to look.** Every child is a run in its own right, so `jclaw status` lists it, `jclaw status --run <id>` shows its projection, and `jclaw approvals list` shows its gates. The event log is the honest record of who started what. [`examples/skill-fanout`](../examples/skill-fanout) is a runnable version of all three pictures above.
 
 ### Hooks and loop families
 
@@ -1037,7 +1211,7 @@ The event log is the substrate; metrics and traces are projections of it, so nei
 jclaw run --debug "…"    # every pipeline step: admission, phase+observation→decision,
                          # checkpoints, the kernel's authority path, provider timings, exit validation
 jclaw run --trace "…"    # …plus payloads: system prompt, messages, tool args, outputs — redacted and bounded
-jclaw run --logging.level.io.jclaw.kernel=DEBUG "…"   # target one logger
+jclaw run --logging.level.io.jclaw.application.authority=DEBUG "…"   # target one logger
 ```
 
 Default level is INFO and prints only the reply. The domain never logs; the interpreter narrates the machine's decisions.
@@ -1077,14 +1251,14 @@ Posture flags that deserve a second look are printed by `jclaw doctor`: `allow-p
 ```
 jclaw/
 ├── pom.xml                 reactor parent (Boot 4.1.1, Java 21, dependency management)
-├── jclaw-contracts/        ports, turn vocabulary, refs, Result — no Spring, no HTTP
+├── jclaw-ports/        ports, turn vocabulary, refs, Result — no Spring, no HTTP
 ├── jclaw-domain/           pure functions: TurnMachine, Budget, Redaction, ranking, cron, recovery
-├── jclaw-kernel/           CapabilityHost, CapabilityPolicy, WorkspaceGuard, EgressGuard
-├── jclaw-loop/             EffectInterpreter — the only place an effect happens
-├── jclaw-providers/        mock, Anthropic SDK, OpenAI-compatible, failover
-├── jclaw-tools/            built-in capability handlers and the MCP client
-├── jclaw-storage/          JSONL stores, hand-written codecs, filesystem skill catalog
-├── jclaw-app/              Spring wiring, picocli CLI, JclawRuntime, scheduler, HTTP surface, native profile
+├── jclaw-application-authority/           CapabilityHost, CapabilityPolicy, WorkspaceGuard, EgressGuard
+├── jclaw-application-usecase/             EffectInterpreter — the only place an effect happens
+├── jclaw-adapter-out-model/        mock, Anthropic SDK, OpenAI-compatible, failover
+├── jclaw-adapter-out-capability/            built-in capability handlers and the MCP client
+├── jclaw-adapter-out-persistence/          JSONL stores, hand-written codecs, filesystem skill catalog
+├── jclaw-bootstrap/              Spring wiring, picocli CLI, JclawRuntime, scheduler, HTTP surface, native profile
 ├── scripts/byte-verify.sh  source-integrity guard
 ├── scripts/license-check.sh SPDX header guard
 ├── .github/                Actions pipeline, issue and PR templates, Dependabot

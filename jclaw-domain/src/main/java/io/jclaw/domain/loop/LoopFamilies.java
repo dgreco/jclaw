@@ -3,10 +3,10 @@
 
 package io.jclaw.domain.loop;
 
-import io.jclaw.contracts.loop.FailureKind;
-import io.jclaw.contracts.loop.LoopExit;
-import io.jclaw.contracts.model.ChatMessage;
-import io.jclaw.contracts.model.ModelExchange.ModelRequest;
+import io.jclaw.ports.loop.FailureKind;
+import io.jclaw.ports.loop.LoopExit;
+import io.jclaw.ports.model.ChatMessage;
+import io.jclaw.ports.model.ModelExchange.ModelRequest;
 import io.jclaw.domain.loop.LoopExecutionState.Phase;
 import io.jclaw.domain.loop.TurnMachine.LoopStep;
 import io.jclaw.domain.prompt.ContextCompaction;

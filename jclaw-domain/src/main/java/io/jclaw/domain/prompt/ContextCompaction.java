@@ -3,8 +3,8 @@
 
 package io.jclaw.domain.prompt;
 
-import io.jclaw.contracts.model.ChatMessage;
-import io.jclaw.contracts.model.ContentBlock;
+import io.jclaw.ports.model.ChatMessage;
+import io.jclaw.ports.model.ContentBlock;
 
 import java.util.ArrayList;
 import java.util.List;

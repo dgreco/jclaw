@@ -26,9 +26,9 @@ examples/*/dist/
 # The captured Anthropic SDK metadata under src/main/resources/META-INF/native-image is
 # deliberately versioned; only build artefacts are ignored.
 *.build_artifacts.txt
-jclaw-app/jclaw
-jclaw-app/*.dylib
-jclaw-app/*.so
+jclaw-bootstrap/jclaw
+jclaw-bootstrap/*.dylib
+jclaw-bootstrap/*.so
 
 # --- Java ---
 *.class

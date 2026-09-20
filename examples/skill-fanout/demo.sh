@@ -6,10 +6,10 @@
 # and delegates two facets. The mock provider scripts every reply, so this needs no API key and
 # no network.
 #
-# Usage: ./demo.sh [path/to/jclaw-app.jar]
+# Usage: ./demo.sh [path/to/jclaw-bootstrap.jar]
 set -eu
 here="$(cd "$(dirname "$0")" && pwd)"
-jar="${1:-$here/../../jclaw-app/target/jclaw-app-0.1.0-SNAPSHOT.jar}"
+jar="${1:-$here/../../jclaw-bootstrap/target/jclaw-bootstrap-0.1.0-SNAPSHOT.jar}"
 
 if [ ! -f "$jar" ]; then
   echo "demo.sh: no jar at $jar — run 'mvn clean install' first, or pass one" >&2

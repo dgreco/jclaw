@@ -3,7 +3,7 @@
 
 package io.jclaw.domain.scheduling;
 
-import io.jclaw.contracts.turn.RunStore.RunRecord;
+import io.jclaw.ports.turn.RunStore.RunRecord;
 
 import java.util.ArrayList;
 import java.util.Comparator;

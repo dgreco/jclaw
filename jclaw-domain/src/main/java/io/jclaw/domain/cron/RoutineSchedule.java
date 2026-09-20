@@ -3,7 +3,7 @@
 
 package io.jclaw.domain.cron;
 
-import io.jclaw.contracts.routine.RoutineStore.Routine;
+import io.jclaw.ports.routine.RoutineStore.Routine;
 import io.jclaw.domain.trigger.Trigger;
 
 import java.time.Instant;

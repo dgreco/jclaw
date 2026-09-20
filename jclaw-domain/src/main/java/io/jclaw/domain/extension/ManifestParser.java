@@ -3,10 +3,10 @@
 
 package io.jclaw.domain.extension;
 
-import io.jclaw.contracts.Result;
-import io.jclaw.contracts.capability.EffectClass;
-import io.jclaw.contracts.extension.ExtensionRegistry.Kind;
-import io.jclaw.contracts.extension.ExtensionRegistry.Manifest;
+import io.jclaw.ports.Result;
+import io.jclaw.ports.capability.EffectClass;
+import io.jclaw.ports.extension.ExtensionRegistry.Kind;
+import io.jclaw.ports.extension.ExtensionRegistry.Manifest;
 
 import java.util.ArrayList;
 import java.util.List;

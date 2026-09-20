@@ -55,14 +55,14 @@
   </properties>
 
   <modules>
-    <module>jclaw-contracts</module>
+    <module>jclaw-ports</module>
     <module>jclaw-domain</module>
-    <module>jclaw-kernel</module>
-    <module>jclaw-loop</module>
-    <module>jclaw-providers</module>
-    <module>jclaw-tools</module>
-    <module>jclaw-storage</module>
-    <module>jclaw-app</module>
+    <module>jclaw-application-authority</module>
+    <module>jclaw-application-usecase</module>
+    <module>jclaw-adapter-out-model</module>
+    <module>jclaw-adapter-out-capability</module>
+    <module>jclaw-adapter-out-persistence</module>
+    <module>jclaw-bootstrap</module>
   </modules>
 
   <dependencyManagement>
@@ -89,13 +89,13 @@
         <version>${endive.version}</version>
       </dependency>
       <!-- jclaw modules -->
-      <dependency><groupId>io.jclaw</groupId><artifactId>jclaw-contracts</artifactId><version>${project.version}</version></dependency>
+      <dependency><groupId>io.jclaw</groupId><artifactId>jclaw-ports</artifactId><version>${project.version}</version></dependency>
       <dependency><groupId>io.jclaw</groupId><artifactId>jclaw-domain</artifactId><version>${project.version}</version></dependency>
-      <dependency><groupId>io.jclaw</groupId><artifactId>jclaw-kernel</artifactId><version>${project.version}</version></dependency>
-      <dependency><groupId>io.jclaw</groupId><artifactId>jclaw-loop</artifactId><version>${project.version}</version></dependency>
-      <dependency><groupId>io.jclaw</groupId><artifactId>jclaw-providers</artifactId><version>${project.version}</version></dependency>
-      <dependency><groupId>io.jclaw</groupId><artifactId>jclaw-tools</artifactId><version>${project.version}</version></dependency>
-      <dependency><groupId>io.jclaw</groupId><artifactId>jclaw-storage</artifactId><version>${project.version}</version></dependency>
+      <dependency><groupId>io.jclaw</groupId><artifactId>jclaw-application-authority</artifactId><version>${project.version}</version></dependency>
+      <dependency><groupId>io.jclaw</groupId><artifactId>jclaw-application-usecase</artifactId><version>${project.version}</version></dependency>
+      <dependency><groupId>io.jclaw</groupId><artifactId>jclaw-adapter-out-model</artifactId><version>${project.version}</version></dependency>
+      <dependency><groupId>io.jclaw</groupId><artifactId>jclaw-adapter-out-capability</artifactId><version>${project.version}</version></dependency>
+      <dependency><groupId>io.jclaw</groupId><artifactId>jclaw-adapter-out-persistence</artifactId><version>${project.version}</version></dependency>
 
       <!-- third-party not covered by the Boot BOM -->
       <dependency>
@@ -108,7 +108,7 @@
         <artifactId>picocli-spring-boot-starter</artifactId>
         <version>${picocli.version}</version>
       </dependency>
-      <!-- Official Anthropic SDK. Confined to the anthropic adapter in jclaw-providers so the
+      <!-- Official Anthropic SDK. Confined to the anthropic adapter in jclaw-adapter-out-model so the
            rest of the harness stays free of any provider's types. -->
       <dependency>
         <groupId>com.anthropic</groupId>
@@ -156,7 +156,7 @@
         `-DargLine=...` becomes `-Djacoco.skip=true -DargLine=...` or it becomes no coverage at all.
 
         Per-module reports land in `<module>/target/site/jacoco`; the whole-tree number comes from
-        `report-aggregate` in jclaw-app, which is the one module that depends on every other.
+        `report-aggregate` in jclaw-bootstrap, which is the one module that depends on every other.
       -->
       <plugin>
         <groupId>org.jacoco</groupId>
