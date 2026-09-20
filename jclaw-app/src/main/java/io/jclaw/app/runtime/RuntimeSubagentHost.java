@@ -15,8 +15,12 @@ import io.jclaw.contracts.turn.TurnStatus;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.Comparator;
 import java.util.List;
+import java.util.HexFormat;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -28,6 +32,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * capability host, and exit validation as any other run. That is the whole design constraint —
  * a private subagent engine would be a second place for authority, checkpointing, and audit to
  * diverge from the real one.
+ *
+ * <p>The child is admitted under the <em>parent's</em> tenant. That is the isolation key: it
+ * chooses the secret vault the kernel hands a lane, scopes the approval gates the child raises,
+ * and names the budget its tokens are charged to. Admitting a child as the local tenant would let
+ * a hosted tenant's agent reach the operator's credentials by delegating.
  *
  * <p>Depth is encoded in the child's thread id ({@code parent~sub}) and read back from it, rather
  * than passed as a parameter. A depth the caller supplies is a depth the caller can understate;
@@ -70,8 +79,10 @@ public class RuntimeSubagentHost implements SubagentHost {
 
         ThreadId childThread = childThread(parentScope.thread(), depth, prompt);
 
-        JclawRuntime.TurnResult result =
-                runtime.getObject().submit(childThread, prompt, new AtomicBoolean(false));
+        // The parent's tenant, not the CLI's — see the class javadoc for why that matters.
+        JclawRuntime.TurnResult result = runtime.getObject().submit(
+                parentScope.tenant(), childThread, ChatMessage.user(prompt),
+                new AtomicBoolean(false), Optional.empty());
 
         return Result.ok(new SubagentResult(
                 result.reply().orElseGet(() -> "status: " + result.status()
@@ -103,7 +114,20 @@ public class RuntimeSubagentHost implements SubagentHost {
                 .filter(record -> record.scope().thread().equals(childThread))
                 .max(Comparator.comparing(RunStore.RunRecord::submittedAt));
         if (latest.isEmpty()) {
-            TurnRunId child = runtime.getObject().enqueue(childThread, prompt);
+            TurnRunId child;
+            try {
+                child = runtime.getObject().enqueue(
+                        parentScope.tenant(), childThread, ChatMessage.user(prompt));
+            } catch (JclawRuntime.TenantOverBudget | JclawRuntime.PromptRefused refused) {
+                // Both refusals happen before enqueue writes anything durable, so there is no
+                // child to report on later. Catching them keeps the reason out of the generic
+                // "handler_threw" the kernel gives an escaping exception. It still reaches the
+                // model as a lane failure rather than a denial, because SubagentTool maps every
+                // spawn error through HandlerError::failed - as it already does for
+                // subagent_depth_exceeded. That conflation predates this method and is worth
+                // fixing at the tool, not papering over here.
+                return Result.err("subagent_not_admitted");
+            }
             return Result.ok(new Progress.Running(child));
         }
         RunStore.RunRecord child = latest.get();
@@ -125,8 +149,27 @@ public class RuntimeSubagentHost implements SubagentHost {
      * parent's transcript would defeat the purpose, which is to keep detail out of it.
      */
     private static ThreadId childThread(ThreadId parent, int depth, String prompt) {
-        return new ThreadId(parent.value() + DEPTH_MARKER + (depth + 1) + "-"
-                + Integer.toHexString(prompt.hashCode()));
+        return new ThreadId(parent.value() + DEPTH_MARKER + (depth + 1) + "-" + taskId(prompt));
+    }
+
+    /**
+     * A stable id for one delegated task, used to recognise a child the parent already started.
+     *
+     * <p>This was {@code String.hashCode}, which is 32 bits and collides constructibly - and the
+     * input is a prompt the <em>model</em> writes. Two colliding prompts would land on one child
+     * thread: asynchronously the parent would be handed the first child's reply as the answer to
+     * the second task, and synchronously the second child would be seeded from the first's
+     * transcript. A digest prefix costs the same and removes the class of collision rather than
+     * making it unlikely.
+     */
+    private static String taskId(String prompt) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(prompt.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(digest, 0, 8);
+        } catch (NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("SHA-256 is required of every Java platform", impossible);
+        }
     }
 
     /** The parent thread of a subagent thread, if it is one. */

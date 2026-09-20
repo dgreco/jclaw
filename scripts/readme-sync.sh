@@ -59,7 +59,7 @@ badges() {   # $1 = github | gitlab
   cat <<EOF
 $status
 $coverage
-[![tests](https://img.shields.io/badge/tests-499-brightgreen)](#coverage)
+[![tests](https://img.shields.io/badge/tests-501-brightgreen)](#coverage)
 [![license](https://img.shields.io/github/license/dgreco/jclaw?color=blue)](LICENSE)
 [![Java](https://img.shields.io/badge/Java-21%2B-orange)](#building)
 [![GraalVM](https://img.shields.io/badge/GraalVM-native%20image-blue)](#native-image)
