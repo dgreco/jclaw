@@ -5,7 +5,7 @@ This document explains the architecture of **jclaw**. It starts with the shape t
 jclaw is a Java 21 / Spring Boot 4.1 reimplementation of the **architecture** of [IronClaw](https://github.com/nearai/ironclaw) (a ~1.4M-line Rust agent harness, internally "Reborn"). It is an architectural clone, not a port: the layering, the turn/run lifecycle, the untrusted-`LoopExit` trust model, and the `CapabilityHost` authority boundary are faithful; the feature surface is a fraction of IronClaw's (see [PARITY.md](PARITY.md)).
 
 ```
-~34k lines of Java · 8 modules · 499 tests (0 failures; 5 skipped without a Docker daemon) · 16 machine-checked architecture rules
+~34k lines of Java · 8 modules · 501 tests (0 failures; the 5 PostgreSQL tests skip without a Docker daemon) · 16 machine-checked architecture rules
 ```
 
 ---
