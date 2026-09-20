@@ -18,7 +18,7 @@
 set -eu
 here="$(cd "$(dirname "$0")" && pwd)"
 . "$here/sample-project.sh"
-jar="${JCLAW_JAR:-$here/../../jclaw-app/target/jclaw-app-0.1.0-SNAPSHOT.jar}"
+jar="${JCLAW_JAR:-$here/../../jclaw-bootstrap/target/jclaw-bootstrap-0.1.0-SNAPSHOT.jar}"
 prompt="${1:-Review the checkout module and report the problems you find. Its three areas - auth, errors and config - can be read independently.}"
 if [ $# -gt 0 ]; then shift; fi
 extra=("$@")                       # anything else is passed straight through to jclaw

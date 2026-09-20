@@ -3,10 +3,10 @@
 
 package io.jclaw.domain.retrieval;
 
-import io.jclaw.contracts.memory.Embedding;
-import io.jclaw.contracts.memory.MemoryRecord;
-import io.jclaw.contracts.turn.ThreadId;
-import io.jclaw.contracts.turn.TurnScope;
+import io.jclaw.ports.memory.Embedding;
+import io.jclaw.ports.memory.MemoryRecord;
+import io.jclaw.ports.turn.ThreadId;
+import io.jclaw.ports.turn.TurnScope;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 

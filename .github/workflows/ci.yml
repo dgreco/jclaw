@@ -127,7 +127,7 @@ jobs:
         with:
           name: coverage-report
           retention-days: 14
-          path: jclaw-app/target/site/jacoco-aggregate/
+          path: jclaw-bootstrap/target/site/jacoco-aggregate/
 
       # Two artifacts rather than one, so the release job can fetch the jar without dragging
       # every surefire report along with it.
@@ -135,7 +135,7 @@ jobs:
         with:
           name: jclaw-jar
           retention-days: 14
-          path: jclaw-app/target/jclaw-app-*.jar
+          path: jclaw-bootstrap/target/jclaw-bootstrap-*.jar
 
       - uses: actions/upload-artifact@v7
         if: always()                 # reports are most wanted exactly when the build failed
@@ -282,14 +282,14 @@ jobs:
 
       - run: java -version && native-image --version && mvn -version
 
-      # Install all modules first: the `native` profile lives in jclaw-app/pom.xml, and the Boot
+      # Install all modules first: the `native` profile lives in jclaw-bootstrap/pom.xml, and the Boot
       # parent contributes only pluginManagement for it, so a bare root-level -Pnative does
       # nothing useful.
       - name: Build the native image
         run: |
           mvn $MAVEN_CLI_OPTS install -DskipTests
-          mvn $MAVEN_CLI_OPTS -Pnative -pl jclaw-app package -DskipTests
-          ls -la jclaw-app/target/jclaw
+          mvn $MAVEN_CLI_OPTS -Pnative -pl jclaw-bootstrap package -DskipTests
+          ls -la jclaw-bootstrap/target/jclaw
 
       # One shell for the whole sequence, deliberately: the steps below share exported paths and
       # a temporary state directory, and splitting them into separate `run:` blocks would lose
@@ -299,8 +299,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          ./jclaw-app/target/jclaw --version
-          ./jclaw-app/target/jclaw run "smoke test"          # mock provider, no network
+          ./jclaw-bootstrap/target/jclaw --version
+          ./jclaw-bootstrap/target/jclaw run "smoke test"          # mock provider, no network
 
           # Everything below exercises a path `run` never reaches, and every one of them is the
           # kind a native image breaks: JCA providers for the vault's AES-256-GCM and the
@@ -308,7 +308,7 @@ jobs:
           # `storage=sql`. With `--no-fallback` a missing registration is a crash rather than a
           # degradation, so the only way to know the binary works is to make it do the work.
           export SMOKE=$(mktemp -d)
-          export JC="./jclaw-app/target/jclaw --jclaw.workspace=$SMOKE --jclaw.state-dir=$SMOKE/state --jclaw.provider=mock --jclaw.approval-mode=trusted"
+          export JC="./jclaw-bootstrap/target/jclaw --jclaw.workspace=$SMOKE --jclaw.state-dir=$SMOKE/state --jclaw.provider=mock --jclaw.approval-mode=trusted"
 
           # Vault: AES-256-GCM seal and open, and the owner-only key file generated on first use.
           printf 's3cret-value-0123456789' | $JC secrets set ci --capability builtin.http_fetch --host api.example.com
@@ -357,8 +357,8 @@ jobs:
           # database, and the projection a finished run wrote reads back through the pooled
           # connection. The thread lock is a row under sql, so schema 4 and its table must be
           # there: a missing lock table would silently mean no exclusion at all between two hosts.
-          ./jclaw-app/target/jclaw run "sql smoke" --jclaw.workspace=$SMOKE --jclaw.state-dir=$SMOKE/sql --jclaw.provider=mock --jclaw.approval-mode=trusted --jclaw.storage=sql
-          ./jclaw-app/target/jclaw status -n 3 --jclaw.workspace=$SMOKE --jclaw.state-dir=$SMOKE/sql --jclaw.provider=mock --jclaw.storage=sql | grep -q "run.finished"
+          ./jclaw-bootstrap/target/jclaw run "sql smoke" --jclaw.workspace=$SMOKE --jclaw.state-dir=$SMOKE/sql --jclaw.provider=mock --jclaw.approval-mode=trusted --jclaw.storage=sql
+          ./jclaw-bootstrap/target/jclaw status -n 3 --jclaw.workspace=$SMOKE --jclaw.state-dir=$SMOKE/sql --jclaw.provider=mock --jclaw.storage=sql | grep -q "run.finished"
 
           # The same binary against a real PostgreSQL, which is where a reflectively loaded
           # driver would actually fail. Everything above this line used embedded H2.
@@ -368,7 +368,7 @@ jobs:
           # earlier with no password, and an inherited one is then rejected with "Wrong user name
           # or password". Two databases in one script must not share a credential variable.
           export PGDIR=$(mktemp -d)
-          export JCPG="env JCLAW_DATASOURCE_PASSWORD=jclaw-ci-password ./jclaw-app/target/jclaw --jclaw.workspace=$PGDIR --jclaw.state-dir=$PGDIR/state --jclaw.provider=mock --jclaw.approval-mode=trusted --jclaw.storage=sql --jclaw.datasource-url=jdbc:postgresql://localhost:5432/jclaw --jclaw.datasource-username=jclaw"
+          export JCPG="env JCLAW_DATASOURCE_PASSWORD=jclaw-ci-password ./jclaw-bootstrap/target/jclaw --jclaw.workspace=$PGDIR --jclaw.state-dir=$PGDIR/state --jclaw.provider=mock --jclaw.approval-mode=trusted --jclaw.storage=sql --jclaw.datasource-url=jdbc:postgresql://localhost:5432/jclaw --jclaw.datasource-username=jclaw"
 
           # A turn proves the driver loads, every migration applies, and writes land.
           $JCPG run "native on postgres" --jclaw.mock-script=text:pg-ok | grep -q pg-ok
@@ -380,9 +380,9 @@ jobs:
           printf 'pg-secret-value-0123456789' | $JCPG secrets set pg --capability builtin.http_fetch --host api.example.com
           $JCPG secrets list | grep -q api.example.com
 
-          ./jclaw-app/target/jclaw doctor --jclaw.workspace=$SMOKE --jclaw.state-dir=$SMOKE/sql --jclaw.provider=mock --jclaw.storage=sql || true
-          export SQLRUN=$(./jclaw-app/target/jclaw status -n 20 --jclaw.workspace=$SMOKE --jclaw.state-dir=$SMOKE/sql --jclaw.provider=mock --jclaw.storage=sql | grep -o 'run_[0-9a-f]*' | head -1)
-          ./jclaw-app/target/jclaw status --run $SQLRUN --spans --jclaw.workspace=$SMOKE --jclaw.state-dir=$SMOKE/sql --jclaw.provider=mock --jclaw.storage=sql | grep -q COMPLETED
+          ./jclaw-bootstrap/target/jclaw doctor --jclaw.workspace=$SMOKE --jclaw.state-dir=$SMOKE/sql --jclaw.provider=mock --jclaw.storage=sql || true
+          export SQLRUN=$(./jclaw-bootstrap/target/jclaw status -n 20 --jclaw.workspace=$SMOKE --jclaw.state-dir=$SMOKE/sql --jclaw.provider=mock --jclaw.storage=sql | grep -o 'run_[0-9a-f]*' | head -1)
+          ./jclaw-bootstrap/target/jclaw status --run $SQLRUN --spans --jclaw.workspace=$SMOKE --jclaw.state-dir=$SMOKE/sql --jclaw.provider=mock --jclaw.storage=sql | grep -q COMPLETED
 
           # A loop family defined in configuration, and the startup validation that catches a
           # typo in one. Both are pure wiring, which is exactly what AOT is most likely to drop.
@@ -413,7 +413,7 @@ jobs:
           # process-wide for verbosity. Cheap to check and silent to lose.
           $JC run "metrics" --jclaw.mock-script=text:done
           $JC status --run $($JC status -n 20 | grep -o 'run_[0-9a-f]*' | head -1) --spans | grep -q "model.call"
-          ./jclaw-app/target/jclaw doctor || true            # informational in CI
+          ./jclaw-bootstrap/target/jclaw doctor || true            # informational in CI
 
           # The release job names the asset by it. GitLab carried this in a dotenv report;
           # GitHub carries it as a job output, declared under `outputs:` above.
@@ -423,7 +423,7 @@ jobs:
         with:
           name: jclaw-native
           retention-days: 28
-          path: jclaw-app/target/jclaw
+          path: jclaw-bootstrap/target/jclaw
 
   # Publishes a GitHub Release for the tag with the native binary and the uber jar attached.
   # Simpler than the GitLab counterpart for one reason: a GitHub release hosts its own assets,
@@ -458,7 +458,7 @@ jobs:
           # ancestor of its paths, so where a file lands after download depends on what else
           # was uploaded beside it. `find` does not care.
           BIN="jclaw-linux-${NATIVE_ARCH}"
-          JAR_PATH="$(find dist -type f -name 'jclaw-app-*.jar' | head -1)"
+          JAR_PATH="$(find dist -type f -name 'jclaw-bootstrap-*.jar' | head -1)"
           BIN_PATH="$(find native -type f -name jclaw | head -1)"
           test -n "$JAR_PATH" && test -n "$BIN_PATH"
           JAR="$(basename "$JAR_PATH")"

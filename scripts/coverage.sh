@@ -11,7 +11,7 @@
 # the project's coverage is — which is the whole reason the number is computed here rather than
 # by a regex in each pipeline.
 #
-# Reads the aggregate report when it exists (jclaw-app aggregates every module) and falls back
+# Reads the aggregate report when it exists (jclaw-bootstrap aggregates every module) and falls back
 # to summing the per-module reports, which is what a partial build leaves behind.
 set -eu
 
@@ -20,7 +20,7 @@ set -eu
 export LC_ALL=C
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
-aggregate="$root/jclaw-app/target/site/jacoco-aggregate/jacoco.csv"
+aggregate="$root/jclaw-bootstrap/target/site/jacoco-aggregate/jacoco.csv"
 
 if [ -f "$aggregate" ]; then
   files=("$aggregate")

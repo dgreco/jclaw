@@ -3,9 +3,9 @@
 
 package io.jclaw.domain.prompt;
 
-import io.jclaw.contracts.model.ChatMessage;
-import io.jclaw.contracts.model.ContentBlock;
-import io.jclaw.contracts.model.ModelExchange.ModelRequest;
+import io.jclaw.ports.model.ChatMessage;
+import io.jclaw.ports.model.ContentBlock;
+import io.jclaw.ports.model.ModelExchange.ModelRequest;
 import io.jclaw.domain.prompt.ContextCompaction.Compacted;
 
 import java.util.ArrayList;

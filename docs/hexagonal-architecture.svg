@@ -61,7 +61,7 @@
   <text class="S fnt" x="660" y="512" text-anchor="middle">pure rules — touches</text>
   <text class="S fnt" x="660" y="527" text-anchor="middle">no port at all</text>
 
-  <text class="S fnt" x="660" y="627" text-anchor="middle">jclaw-app · jclaw-loop · jclaw-kernel · jclaw-domain</text>
+  <text class="S fnt" x="660" y="627" text-anchor="middle">jclaw-application-usecase · jclaw-application-authority · jclaw-domain</text>
 
   <!-- ===== primary port (left edge of the hexagon) ===== -->
   <rect class="porf pors" x="350" y="358" width="140" height="84" rx="8" stroke-width="1.8"/>

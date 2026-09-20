@@ -3,13 +3,13 @@
 
 package io.jclaw.domain.projection;
 
-import io.jclaw.contracts.event.JclawEvent;
-import io.jclaw.contracts.loop.FailureKind;
-import io.jclaw.contracts.loop.GateKind;
-import io.jclaw.contracts.model.ModelExchange.Usage;
-import io.jclaw.contracts.turn.TurnRunId;
-import io.jclaw.contracts.turn.TurnScope;
-import io.jclaw.contracts.turn.TurnStatus;
+import io.jclaw.ports.event.JclawEvent;
+import io.jclaw.ports.loop.FailureKind;
+import io.jclaw.ports.loop.GateKind;
+import io.jclaw.ports.model.ModelExchange.Usage;
+import io.jclaw.ports.turn.TurnRunId;
+import io.jclaw.ports.turn.TurnScope;
+import io.jclaw.ports.turn.TurnStatus;
 
 import java.time.Instant;
 import java.util.ArrayList;

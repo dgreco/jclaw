@@ -3,7 +3,7 @@
 
 package io.jclaw.domain.secret;
 
-import io.jclaw.contracts.secret.SecretVault.SecretName;
+import io.jclaw.ports.secret.SecretVault.SecretName;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 

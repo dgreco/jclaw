@@ -3,8 +3,8 @@
 
 package io.jclaw.domain.retrieval;
 
-import io.jclaw.contracts.memory.Embedding;
-import io.jclaw.contracts.memory.MemoryRecord;
+import io.jclaw.ports.memory.Embedding;
+import io.jclaw.ports.memory.MemoryRecord;
 
 import java.util.ArrayList;
 import java.util.Comparator;

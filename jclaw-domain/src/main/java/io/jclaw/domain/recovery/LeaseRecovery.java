@@ -3,10 +3,10 @@
 
 package io.jclaw.domain.recovery;
 
-import io.jclaw.contracts.loop.CheckpointKind;
-import io.jclaw.contracts.loop.FailureKind;
-import io.jclaw.contracts.turn.RunStore.RunRecord;
-import io.jclaw.contracts.turn.TurnRunId;
+import io.jclaw.ports.loop.CheckpointKind;
+import io.jclaw.ports.loop.FailureKind;
+import io.jclaw.ports.turn.RunStore.RunRecord;
+import io.jclaw.ports.turn.TurnRunId;
 
 import java.time.Duration;
 import java.time.Instant;

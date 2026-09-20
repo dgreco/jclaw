@@ -3,7 +3,7 @@
 
 package io.jclaw.domain.loop;
 
-import io.jclaw.contracts.model.ModelExchange.ToolSpec;
+import io.jclaw.ports.model.ModelExchange.ToolSpec;
 import io.jclaw.domain.prompt.ContextPolicy;
 
 import java.util.List;

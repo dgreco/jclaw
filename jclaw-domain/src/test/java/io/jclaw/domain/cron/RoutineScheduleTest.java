@@ -3,10 +3,10 @@
 
 package io.jclaw.domain.cron;
 
-import io.jclaw.contracts.routine.RoutineStore.Routine;
-import io.jclaw.contracts.routine.RoutineStore.RoutineId;
-import io.jclaw.contracts.turn.ThreadId;
-import io.jclaw.contracts.turn.TurnScope;
+import io.jclaw.ports.routine.RoutineStore.Routine;
+import io.jclaw.ports.routine.RoutineStore.RoutineId;
+import io.jclaw.ports.turn.ThreadId;
+import io.jclaw.ports.turn.TurnScope;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 

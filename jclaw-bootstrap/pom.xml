@@ -1,0 +1,239 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemalocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-model-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>io.jclaw</groupId>
+    <artifactId>jclaw-parent</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+    <relativePath>../</relativePath>
+  </parent>
+  <artifactId>jclaw-bootstrap</artifactId>
+  <name>jclaw-bootstrap</name>
+  <description>The single composition root: picocli CLI, Spring DI wiring, profile loading, completion. The only module that may touch Spring.</description>
+  <dependencies>
+    <dependency><groupId>io.jclaw</groupId><artifactId>jclaw-ports</artifactId></dependency>
+    <dependency><groupId>io.jclaw</groupId><artifactId>jclaw-domain</artifactId></dependency>
+    <dependency><groupId>io.jclaw</groupId><artifactId>jclaw-application-authority</artifactId></dependency>
+    <dependency><groupId>io.jclaw</groupId><artifactId>jclaw-application-usecase</artifactId></dependency>
+    <dependency><groupId>io.jclaw</groupId><artifactId>jclaw-adapter-out-model</artifactId></dependency>
+    <dependency><groupId>io.jclaw</groupId><artifactId>jclaw-adapter-out-capability</artifactId></dependency>
+    <dependency><groupId>io.jclaw</groupId><artifactId>jclaw-adapter-out-persistence</artifactId></dependency>
+    <!-- The hosted database for jclaw.storage=sql. H2 (embedded) comes with jclaw-adapter-out-persistence. -->
+    <dependency>
+      <groupId>org.postgresql</groupId>
+      <artifactId>postgresql</artifactId>
+      <scope>runtime</scope>
+    </dependency>
+
+    <!--
+      PostgreSQL for real, in a container. Everything under jclaw.storage=sql had only ever run
+      against embedded H2, and the migrations claim to be written in the dialect both share —
+      a claim nothing checked. Test scope, so none of this reaches the jar or the native image.
+    -->
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>testcontainers-postgresql</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>testcontainers-junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+
+    <dependency>
+      <groupId>info.picocli</groupId>
+      <artifactId>picocli</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>info.picocli</groupId>
+      <artifactId>picocli-spring-boot-starter</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.jline</groupId>
+      <artifactId>jline-reader</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.jline</groupId>
+      <artifactId>jline-terminal-jni</artifactId>
+    </dependency>
+
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>com.tngtech.archunit</groupId>
+      <artifactId>archunit-junit5</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-resources-plugin</artifactId>
+        <executions>
+          <execution>
+            <!-- Apache-2.0 section 4(a) and 4(d): a redistribution must carry a copy of the
+                 licence and the NOTICE contents. This module is the one that produces a
+                 distributable — the uber jar — and a LICENSE file sitting in the repository
+                 reaches nobody who downloads that jar. Copied rather than referenced because
+                 ${project.basedir}/.. escapes the module and only resolves in a reactor build;
+                 the two files land in META-INF, where every convention looks for them. -->
+            <id>copy-licence-into-jar</id>
+            <phase>process-resources</phase>
+            <goals><goal>copy-resources</goal></goals>
+            <configuration>
+              <outputDirectory>${project.build.outputDirectory}/META-INF</outputDirectory>
+              <resources>
+                <resource>
+                  <directory>${project.basedir}/..</directory>
+                  <includes>
+                    <include>LICENSE</include>
+                    <include>NOTICE</include>
+                  </includes>
+                  <filtering>false</filtering>
+                </resource>
+              </resources>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <configuration>
+          <annotationProcessorPaths>
+            <!-- Generates GraalVM reflect-config for every @Command type, so picocli's
+                 annotation-driven parsing survives native compilation. Without it the CLI
+                 builds but every subcommand is invisible at runtime. -->
+            <path>
+              <groupId>info.picocli</groupId>
+              <artifactId>picocli-codegen</artifactId>
+              <version>${picocli.version}</version>
+            </path>
+          </annotationProcessorPaths>
+          <!-- append: the parent contributes -parameters, and the `analysis` profile contributes
+               the lint flags. Without this attribute this list would replace both, and the module
+               with the most code in it would be the one nothing lints. -->
+          <compilerArgs combine.children="append">
+            <arg>-Aproject=${project.groupId}/${project.artifactId}</arg>
+          </compilerArgs>
+        </configuration>
+        <executions>
+          <execution>
+            <id>default-testCompile</id>
+            <configuration>
+              <!-- Tests hold no @Command types, so the codegen processor has nothing to do there
+                   — and javac warns that nobody claimed its -Aproject option. -->
+              <proc>none</proc>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+      <!--
+        The whole-tree coverage number. `report-aggregate` folds in every module this one depends
+        on, which is all of them — jclaw-bootstrap is the composition root, so aggregating here needs no
+        extra module whose only job is to hold a report.
+      -->
+      <plugin>
+        <groupId>org.jacoco</groupId>
+        <artifactId>jacoco-maven-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>jacoco-aggregate</id>
+            <phase>verify</phase>
+            <goals><goal>report-aggregate</goal></goals>
+            <configuration>
+              <includeCurrentProject>true</includeCurrentProject>
+              <title>jclaw</title>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-jar-plugin</artifactId>
+        <configuration>
+          <archive>
+            <manifestEntries>
+              <!-- JLine's terminal provider calls restricted native methods to put a TTY into
+                   raw mode. Since JDK 24 that warns, and a future release will refuse outright.
+                   Declaring it here (JEP 472) grants the access explicitly instead of relying on
+                   a default that is going away. -->
+              <Enable-Native-Access>ALL-UNNAMED</Enable-Native-Access>
+            </manifestEntries>
+          </archive>
+        </configuration>
+      </plugin>
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>repackage</id>
+            <goals><goal>repackage</goal></goals>
+            <configuration>
+              <mainClass>io.jclaw.bootstrap.JclawApplication</mainClass>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+
+  <profiles>
+    <!--
+      Activate with: mvn -Pnative package -DskipTests   (requires JAVA_HOME on GraalVM)
+
+      The Boot parent contributes only pluginManagement for the native profile, so the
+      native-maven-plugin has to be declared here to actually run. Spring's process-aot
+      goal is already bound via the plugin declaration above.
+    -->
+    <profile>
+      <id>native</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.graalvm.buildtools</groupId>
+            <artifactId>native-maven-plugin</artifactId>
+            <extensions>true</extensions>
+            <configuration>
+              <imageName>jclaw</imageName>
+              <mainClass>io.jclaw.bootstrap.JclawApplication</mainClass>
+              <buildArgs>
+                <!-- Fail the build on a missing registration rather than shipping a binary
+                     that dies at runtime on the first reflective lookup. -->
+                <buildArg>--no-fallback</buildArg>
+                <buildArg>--report-unsupported-elements-at-runtime</buildArg>
+                <!-- JLine loads a native library to put a TTY into raw mode. The jar gets this
+                     from its manifest (JEP 472); a native image has no manifest to read, so the
+                     grant is baked into the binary here instead. Without it every REPL start
+                     prints a restricted-access warning, and a future JDK will refuse outright. -->
+                <buildArg>--enable-native-access=ALL-UNNAMED</buildArg>
+              </buildArgs>
+            </configuration>
+            <executions>
+              <execution>
+                <id>build-native</id>
+                <goals>
+                  <goal>compile-no-fork</goal>
+                </goals>
+                <phase>package</phase>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
+</project>

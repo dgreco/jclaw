@@ -3,8 +3,8 @@
 
 package io.jclaw.domain.observability;
 
-import io.jclaw.contracts.event.JclawEvent;
-import io.jclaw.contracts.turn.TurnRunId;
+import io.jclaw.ports.event.JclawEvent;
+import io.jclaw.ports.turn.TurnRunId;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;

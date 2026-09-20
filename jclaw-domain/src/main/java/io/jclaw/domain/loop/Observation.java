@@ -3,13 +3,13 @@
 
 package io.jclaw.domain.loop;
 
-import io.jclaw.contracts.capability.CapabilityOutcome;
-import io.jclaw.contracts.loop.CheckpointKind;
-import io.jclaw.contracts.loop.FailureKind;
-import io.jclaw.contracts.model.ModelExchange.ModelResponse;
-import io.jclaw.contracts.turn.TurnRef.LoopCheckpointStateRef;
-import io.jclaw.contracts.turn.TurnRef.LoopGateRef;
-import io.jclaw.contracts.turn.TurnRef.LoopMessageRef;
+import io.jclaw.ports.capability.CapabilityOutcome;
+import io.jclaw.ports.loop.CheckpointKind;
+import io.jclaw.ports.loop.FailureKind;
+import io.jclaw.ports.model.ModelExchange.ModelResponse;
+import io.jclaw.ports.turn.TurnRef.LoopCheckpointStateRef;
+import io.jclaw.ports.turn.TurnRef.LoopGateRef;
+import io.jclaw.ports.turn.TurnRef.LoopMessageRef;
 
 import java.util.List;
 import java.util.Objects;

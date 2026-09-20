@@ -3,13 +3,13 @@
 
 package io.jclaw.domain.loop;
 
-import io.jclaw.contracts.loop.FailureKind;
-import io.jclaw.contracts.model.ChatMessage;
-import io.jclaw.contracts.model.ContentBlock;
-import io.jclaw.contracts.model.ModelExchange.ModelResponse;
-import io.jclaw.contracts.model.ModelExchange.StopReason;
-import io.jclaw.contracts.model.ModelExchange.Usage;
-import io.jclaw.contracts.turn.TurnRef.LoopMessageRef;
+import io.jclaw.ports.loop.FailureKind;
+import io.jclaw.ports.model.ChatMessage;
+import io.jclaw.ports.model.ContentBlock;
+import io.jclaw.ports.model.ModelExchange.ModelResponse;
+import io.jclaw.ports.model.ModelExchange.StopReason;
+import io.jclaw.ports.model.ModelExchange.Usage;
+import io.jclaw.ports.turn.TurnRef.LoopMessageRef;
 import io.jclaw.domain.budget.Budget;
 import io.jclaw.domain.loop.LoopExecutionState.Phase;
 import io.jclaw.domain.loop.TurnMachine.LoopStep;
@@ -40,8 +40,8 @@ class ReflectiveFamilyTest {
         LoopExecutionState state = LoopExecutionState.start(List.of(ChatMessage.user("hi")), Budget.interactive(T0));
         LoopStep started = FAMILY.step(state, new Observation.Start(), POLICY, T0);
         LoopStep called = FAMILY.step(started.state(), new Observation.Checkpointed(
-                new io.jclaw.contracts.turn.TurnRef.LoopCheckpointStateRef("ckpt_1"),
-                io.jclaw.contracts.loop.CheckpointKind.BEFORE_MODEL), POLICY, T0);
+                new io.jclaw.ports.turn.TurnRef.LoopCheckpointStateRef("ckpt_1"),
+                io.jclaw.ports.loop.CheckpointKind.BEFORE_MODEL), POLICY, T0);
         assertTrue(called.decision() instanceof LoopDecision.CallModel);
         assertEquals(Phase.AWAITING_MODEL, called.state().phase());
         return called.state();

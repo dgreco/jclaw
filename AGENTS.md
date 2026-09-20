@@ -30,7 +30,7 @@ feature surface is a fraction of IronClaw's. See **Not built yet** for the hones
 - Build everything: `mvn clean install`
 - Test (full suite): `mvn test`
 - Test (single): `mvn test -Dtest=ClassName#methodName -pl <module>` (add `-am` if deps are stale)
-- Run (jar): `java -jar jclaw-app/target/jclaw-app-0.1.0-SNAPSHOT.jar <command>`
+- Run (jar): `java -jar jclaw-bootstrap/target/jclaw-bootstrap-0.1.0-SNAPSHOT.jar <command>`
 - Static analysis (opt-in): `mvn -Panalysis verify` — see below
 - Coverage: any `mvn verify`; `./scripts/coverage.sh` prints the total
 - Source-integrity guard: `./scripts/byte-verify.sh scan`
@@ -57,10 +57,10 @@ somebody got tired of. Add to them only with the reason attached.
 Four things about the wiring are load-bearing, and three of them fail silently:
 
 - **A child module's `<compilerArgs>` replaces the parent's, it does not extend it.**
-  `jclaw-app` declares its own for the picocli annotation processor, so the lint flags never
+  `jclaw-bootstrap` declares its own for the picocli annotation processor, so the lint flags never
   reached the module with the most code in it — the profile passed while linting seven modules out
-  of eight. Fixed with `combine.children="append"` in `jclaw-app/pom.xml`; check with
-  `mvn -Panalysis help:effective-pom -pl jclaw-app`, not by reading the parent.
+  of eight. Fixed with `combine.children="append"` in `jclaw-bootstrap/pom.xml`; check with
+  `mvn -Panalysis help:effective-pom -pl jclaw-bootstrap`, not by reading the parent.
 - **`${maven.multiModuleProjectDirectory}` resolves to `$HOME`** without a `.mvn` directory at the
   root, so the config paths use `${session.executionRootDirectory}`. Run the profile from the
   repository root.
@@ -79,7 +79,7 @@ share"; `PostgresStorageIntegrationTest` is what actually checks that claim, on 
 under Testcontainers.
 
 ```bash
-mvn test -Dtest=PostgresStorageIntegrationTest -pl jclaw-app   # needs a Docker daemon
+mvn test -Dtest=PostgresStorageIntegrationTest -pl jclaw-bootstrap   # needs a Docker daemon
 docker compose run --rm jclaw run "hello"                      # the same thing by hand (jar)
 docker compose -f docker-compose.native.yml run --rm jclaw run "hello"   # the native image
 ```
@@ -118,11 +118,11 @@ measures nothing.
 ```bash
 export JAVA_HOME=/path/to/graalvm        # GraalVM 25+ required
 mvn -B install -DskipTests               # install all modules first
-mvn -B -Pnative -pl jclaw-app package -DskipTests
-./jclaw-app/target/jclaw                 # ~80 MB binary, ~78 ms startup vs ~1.2 s for the jar
+mvn -B -Pnative -pl jclaw-bootstrap package -DskipTests
+./jclaw-bootstrap/target/jclaw                 # ~80 MB binary, ~78 ms startup vs ~1.2 s for the jar
 ```
 
-The `native` profile lives in `jclaw-app/pom.xml`. The Boot parent contributes only
+The `native` profile lives in `jclaw-bootstrap/pom.xml`. The Boot parent contributes only
 `pluginManagement` for it, so the module must declare `native-maven-plugin` itself — a bare
 `mvn -Pnative native:compile` at the root does nothing useful.
 
@@ -173,7 +173,7 @@ uses. Default level is INFO, so plain runs print only the reply; both flags are 
 `--logging.level.io.jclaw=TRACE` works directly. Loggers live in the runtime, loop, kernel,
 providers, and JSONL stores; the domain stays pure — the interpreter logs the machine's
 decisions, `TurnMachine` itself never logs. Lower modules carry `slf4j-api` only; logback comes
-from `jclaw-app`.
+from `jclaw-bootstrap`.
 
 ### Providers
 
@@ -272,29 +272,40 @@ the whole approval flow — is exercised without a network.
 Hexagonal, with a pure functional core, mapping onto IronClaw's seven-layer ladder:
 
 ```
-contracts   →  (jackson-annotations)     ports, turn vocabulary, refs, LoopExit, Result,
-                                         ThreadLock, EmbeddingProvider, content blocks (incl. Image)
-domain      →  contracts                 PURE: TurnMachine, Budget, Redaction, RrfFusion,
-                                         MemoryRanking, VectorRanking, ContextCompaction,
-                                         ContextSummary, InjectionHeuristics, RunScheduling,
-                                         RateLimit, Retention, RunProjection, SandboxSpec,
-                                         CronSpec, RoutineSchedule, PromptAssembly, LeaseRecovery
-kernel      →  contracts, domain         CapabilityHost, CapabilityPolicy, ToolScopedContext,
-                                         Workspace/Egress guards
-loop        →  contracts, domain, kernel EffectInterpreter — the ONLY place an effect happens
-providers   →  contracts                 mock, Anthropic (official SDK), OpenAI-compatible chat
-                                         and embeddings (OpenAI / OpenRouter / Ollama / local),
-                                         failover
-tools       →  contracts, domain, kernel file, shell (host or docker), http, memory, skill,
-                                         trigger, subagent, MCP client + capabilities
-storage     →  contracts, domain, kernel row stores (JSONL files or one SQL table via
-                                         RowStore): events, transcript, approvals, checkpoints,
-                                         runs, results, memory, routines, mcp, secrets; SqlSchema
-                                         migrations; file thread locks;
-                                         filesystem skill catalog
-app         →  all of the above          Spring wiring, picocli CLI, JclawRuntime, TurnRunScheduler,
-                                         RoutineRunner, RecoveryService, RetentionService,
-                                         Attachments, JclawHttpServer
+ports                      (jackson-annotations only)
+    the 24 secondary ports, and the turn vocabulary that crosses them:
+    Observation, LoopDecision, LoopExit, Result, refs, ThreadLock, content blocks
+
+domain                     depends on: ports
+    PURE: TurnMachine, Budget, Redaction, RrfFusion, MemoryRanking, VectorRanking,
+    ContextCompaction, ContextSummary, InjectionHeuristics, RunScheduling, RateLimit,
+    Retention, RunProjection, SandboxSpec, CronSpec, RoutineSchedule, PromptAssembly,
+    LeaseRecovery
+
+application-authority      depends on: ports, domain
+    CapabilityHost, CapabilityPolicy (denials, injection, per-tool egress and rate
+    limits), Workspace/Egress guards
+
+application-usecase        depends on: ports, domain, application-authority
+    EffectInterpreter - the ONLY place an effect happens
+
+adapter-out-model          depends on: ports
+    mock, Anthropic (official SDK), OpenAI-compatible chat + embeddings
+    (OpenAI / OpenRouter / Ollama / local), failover
+
+adapter-out-capability     depends on: ports, domain, application-authority
+    file, shell (host or container), http, memory, skill, trigger, subagent,
+    MCP client + capabilities, WASM
+
+adapter-out-persistence    depends on: ports, domain, application-authority
+    row stores (JSONL files or one SQL table via RowStore): events, transcript,
+    approvals, checkpoints, runs, results, memory, routines, mcp, secrets;
+    SqlSchema migrations; file and SQL thread locks; filesystem skill catalog
+
+bootstrap                  depends on: all of the above
+    the composition root, and the primary (driving) adapters: picocli CLI and the
+    HTTP surface. JclawRuntime, TurnRunScheduler, RoutineRunner, RecoveryService,
+    RetentionService, Attachments, McpRegistry
 ```
 
 ### The five ideas worth preserving
@@ -338,15 +349,15 @@ the Anthropic SDK, and tool lanes may not read the process environment.
 
 ### Invariants
 
-- `contracts` — no Spring, no Jackson databind, no `java.sql`, no HTTP.
+- `ports` — no Spring, no Jackson databind, no `java.sql`, no HTTP.
 - `domain` — total, deterministic functions; the clock is a parameter, never read.
-- `loop` — ports only; never imports `providers`, `tools`, or `storage`.
+- `application-usecase` — ports only; never imports a secondary adapter module.
 - **No credential is ever written to a store.** The vault is the only place a value lives. An
   extension or MCP server records the *name* of a vault entry per environment variable, and
   `McpCredentials` leases the values in the app layer when the server starts; an HTTP server's
   bearer token is leased the same way. A secret used this way must be bound to `mcp.connect`,
   and to the declared hosts when the package declares any.
-- `tools` — no adapter holds a `SecretVault` handle; `HandlerContext` has no method to obtain
+- `adapter-out-capability` — no adapter holds a `SecretVault` handle; `HandlerContext` has no method to obtain
   one. There are two handoffs, both decided by the kernel and neither reversible by a lane.
   **Substitution:** the host replaces `{{secret:NAME}}` in the arguments a lane receives at
   dispatch, only when the secret's binding names that capability and every URL host in the
@@ -471,13 +482,13 @@ the Anthropic SDK, and tool lanes may not read the process environment.
   reflection for native image, no accidental field disclosure, and a wire format decoupled from
   the records. Adding a field to an event requires editing its codec — that is the point.
 - **Native metadata for the Anthropic SDK is captured, not authored.**
-  `jclaw-app/src/main/resources/META-INF/native-image/io.jclaw/anthropic-sdk/` came from the
+  `jclaw-bootstrap/src/main/resources/META-INF/native-image/io.jclaw/anthropic-sdk/` came from the
   GraalVM tracing agent. Without it, native builds fail at request serialization with a Jackson
   `InvalidDefinitionException`. **Regenerate after any SDK upgrade:**
   ```bash
   ANTHROPIC_API_KEY=dummy $JAVA_HOME/bin/java \
-    -agentlib:native-image-agent=config-output-dir=jclaw-app/src/main/resources/META-INF/native-image/io.jclaw/anthropic-sdk \
-    -jar jclaw-app/target/jclaw-app-0.1.0-SNAPSHOT.jar run capture --jclaw.provider=anthropic
+    -agentlib:native-image-agent=config-output-dir=jclaw-bootstrap/src/main/resources/META-INF/native-image/io.jclaw/anthropic-sdk \
+    -jar jclaw-bootstrap/target/jclaw-bootstrap-0.1.0-SNAPSHOT.jar run capture --jclaw.provider=anthropic
   ```
   A dummy key suffices — serialization happens before the auth failure. The capture predates
   image attachments: to send images through the Anthropic adapter from the native binary,
@@ -605,7 +616,7 @@ the Anthropic SDK, and tool lanes may not read the process environment.
   OpenAI-compatible providers — are left duplicated on purpose: about a dozen lines each, and
   folding them together would couple an identity flow to an MCP flow to save less than it costs.
 - **Coverage is in the ordinary build, and the number has one source.** JaCoCo runs on every
-  `mvn verify`; `report-aggregate` in jclaw-app produces the whole-tree figure, which works
+  `mvn verify`; `report-aggregate` in jclaw-bootstrap produces the whole-tree figure, which works
   because that module depends on every other one, so no module exists solely to hold a report.
   Note what GitLab cannot do: without Pages it refuses to render an HTML artifact in the browser
   at all, because inline artifact serving is the Pages daemon's job. Markdown it does render, so on an instance without
@@ -617,7 +628,7 @@ the Anthropic SDK, and tool lanes may not read the process environment.
   `rev-parse --abbrev-ref HEAD` answers the literal "HEAD" and the push refspec becomes nonsense
   (`symbolic-ref --short` is right), and an unchanged report must not produce an empty commit.
   Read the aggregate and ignore the per-module figures: most of `contracts`, `kernel` and
-  `tools` is exercised by integration tests that live in `jclaw-app`, so their own reports say
+  `tools` is exercised by integration tests that live in `jclaw-bootstrap`, so their own reports say
   5-16% while the aggregate — which credits a class wherever it was executed — says 73%.
   `scripts/coverage.sh` prints the single line both pipelines publish — GitLab scrapes it with
   the `coverage:` keyword for the MR widget and the badge, GitHub appends it to the run summary

@@ -3,8 +3,8 @@
 
 package io.jclaw.domain.mcp;
 
-import io.jclaw.contracts.model.ChatMessage;
-import io.jclaw.contracts.model.ModelExchange.ModelRequest;
+import io.jclaw.ports.model.ChatMessage;
+import io.jclaw.ports.model.ModelExchange.ModelRequest;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 

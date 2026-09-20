@@ -3,14 +3,14 @@
 
 package io.jclaw.domain.recovery;
 
-import io.jclaw.contracts.loop.CheckpointKind;
-import io.jclaw.contracts.loop.FailureKind;
-import io.jclaw.contracts.turn.RunStore.Lease;
-import io.jclaw.contracts.turn.RunStore.RunRecord;
-import io.jclaw.contracts.turn.ThreadId;
-import io.jclaw.contracts.turn.TurnRunId;
-import io.jclaw.contracts.turn.TurnScope;
-import io.jclaw.contracts.turn.TurnStatus;
+import io.jclaw.ports.loop.CheckpointKind;
+import io.jclaw.ports.loop.FailureKind;
+import io.jclaw.ports.turn.RunStore.Lease;
+import io.jclaw.ports.turn.RunStore.RunRecord;
+import io.jclaw.ports.turn.ThreadId;
+import io.jclaw.ports.turn.TurnRunId;
+import io.jclaw.ports.turn.TurnScope;
+import io.jclaw.ports.turn.TurnStatus;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;

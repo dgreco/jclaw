@@ -3,10 +3,10 @@
 
 package io.jclaw.domain.secret;
 
-import io.jclaw.contracts.Result;
-import io.jclaw.contracts.capability.CapabilityId;
-import io.jclaw.contracts.secret.SecretVault.Binding;
-import io.jclaw.contracts.secret.SecretVault.SecretName;
+import io.jclaw.ports.Result;
+import io.jclaw.ports.capability.CapabilityId;
+import io.jclaw.ports.secret.SecretVault.Binding;
+import io.jclaw.ports.secret.SecretVault.SecretName;
 
 import java.util.LinkedHashMap;
 import java.util.Map;

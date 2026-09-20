@@ -98,23 +98,23 @@ Requirements: **JDK 21+** and **Maven 3.9+** (the wrapper is not checked in). Fo
 mvn -q clean install -DskipTests
 
 # 2. Try it with no API key — the mock provider is the default
-java -jar jclaw-app/target/jclaw-app-0.1.0-SNAPSHOT.jar run "hello"
+java -jar jclaw-bootstrap/target/jclaw-bootstrap-0.1.0-SNAPSHOT.jar run "hello"
 
 # 3. Point it at a real model
 export ANTHROPIC_API_KEY=sk-ant-...
-java -jar jclaw-app/target/jclaw-app-0.1.0-SNAPSHOT.jar run --jclaw.provider=anthropic \
+java -jar jclaw-bootstrap/target/jclaw-bootstrap-0.1.0-SNAPSHOT.jar run --jclaw.provider=anthropic \
   "summarise the README in this directory"
 
 # 4. Make the choice permanent and verify it
-java -jar jclaw-app/target/jclaw-app-0.1.0-SNAPSHOT.jar onboard      # writes ~/.jclaw/jclaw.yaml
-java -jar jclaw-app/target/jclaw-app-0.1.0-SNAPSHOT.jar doctor       # config + security posture
-java -jar jclaw-app/target/jclaw-app-0.1.0-SNAPSHOT.jar models --probe
+java -jar jclaw-bootstrap/target/jclaw-bootstrap-0.1.0-SNAPSHOT.jar onboard      # writes ~/.jclaw/jclaw.yaml
+java -jar jclaw-bootstrap/target/jclaw-bootstrap-0.1.0-SNAPSHOT.jar doctor       # config + security posture
+java -jar jclaw-bootstrap/target/jclaw-bootstrap-0.1.0-SNAPSHOT.jar models --probe
 ```
 
 The rest of this document writes `jclaw …`; define an alias or use the native binary:
 
 ```bash
-alias jclaw='java -jar /path/to/jclaw-app/target/jclaw-app-0.1.0-SNAPSHOT.jar'
+alias jclaw='java -jar /path/to/jclaw-bootstrap/target/jclaw-bootstrap-0.1.0-SNAPSHOT.jar'
 ```
 
 The agent operates inside a **workspace** — by default the current directory. Every file path a tool touches is confined to it, and the workspace directory *name* becomes the project scope for memories and routines. Run jclaw from the project you want it to work on, or pass `--jclaw.workspace=/path`.
@@ -133,10 +133,10 @@ mvn clean install            # compiles, runs all tests, installs every module
 mvn -q clean install -DskipTests
 ```
 
-The Spring Boot Maven plugin repackages `jclaw-app` into an executable jar:
+The Spring Boot Maven plugin repackages `jclaw-bootstrap` into an executable jar:
 
 ```
-jclaw-app/target/jclaw-app-0.1.0-SNAPSHOT.jar
+jclaw-bootstrap/target/jclaw-bootstrap-0.1.0-SNAPSHOT.jar
 ```
 
 Run it with `java -jar`. Startup is about 1.2 s bare, 1.48 s in a container. The manifest carries `Enable-Native-Access: ALL-UNNAMED` so JLine can put the terminal into raw mode without warnings on JDK 24+ (the REPL needs it).
@@ -148,21 +148,21 @@ Requires **GraalVM 25 or newer** as `JAVA_HOME` (the toolchain is 25+; bytecode 
 ```bash
 export JAVA_HOME=/path/to/graalvm-25
 mvn -B install -DskipTests                       # install every module first
-mvn -B -Pnative -pl jclaw-app package -DskipTests
-./jclaw-app/target/jclaw run "hello"
+mvn -B -Pnative -pl jclaw-bootstrap package -DskipTests
+./jclaw-bootstrap/target/jclaw run "hello"
 ```
 
-The `native` profile is declared in `jclaw-app/pom.xml` (the Boot parent only provides `pluginManagement` for it, so `mvn -Pnative native:compile` at the root does nothing useful). It produces `jclaw-app/target/jclaw`: roughly 80 MB, ~78 ms startup versus ~1.2 s for the jar (bare metal; measured inside a container, the same comparison is 61 ms against 1.48 s). Build args: `--no-fallback` (a missing reflection registration fails the build instead of shipping a binary that dies at runtime), `--report-unsupported-elements-at-runtime`, and `--enable-native-access=ALL-UNNAMED`.
+The `native` profile is declared in `jclaw-bootstrap/pom.xml` (the Boot parent only provides `pluginManagement` for it, so `mvn -Pnative native:compile` at the root does nothing useful). It produces `jclaw-bootstrap/target/jclaw`: roughly 80 MB, ~78 ms startup versus ~1.2 s for the jar (bare metal; measured inside a container, the same comparison is 61 ms against 1.48 s). Build args: `--no-fallback` (a missing reflection registration fails the build instead of shipping a binary that dies at runtime), `--report-unsupported-elements-at-runtime`, and `--enable-native-access=ALL-UNNAMED`.
 
 Two pieces of reachability metadata make the binary work, and both matter when you upgrade dependencies:
 
 - **picocli-codegen** runs as an annotation processor and emits reflection config for every `@Command`. Without it every subcommand is invisible in the binary.
-- **The Anthropic SDK's Jackson metadata** lives in `jclaw-app/src/main/resources/META-INF/native-image/io.jclaw/anthropic-sdk/` and was *captured* with the GraalVM tracing agent, not hand-written. Regenerate it after any SDK upgrade (a dummy key suffices — serialization happens before the auth failure):
+- **The Anthropic SDK's Jackson metadata** lives in `jclaw-bootstrap/src/main/resources/META-INF/native-image/io.jclaw/anthropic-sdk/` and was *captured* with the GraalVM tracing agent, not hand-written. Regenerate it after any SDK upgrade (a dummy key suffices — serialization happens before the auth failure):
 
   ```bash
   ANTHROPIC_API_KEY=dummy $JAVA_HOME/bin/java \
-    -agentlib:native-image-agent=config-output-dir=jclaw-app/src/main/resources/META-INF/native-image/io.jclaw/anthropic-sdk \
-    -jar jclaw-app/target/jclaw-app-0.1.0-SNAPSHOT.jar run capture --jclaw.provider=anthropic
+    -agentlib:native-image-agent=config-output-dir=jclaw-bootstrap/src/main/resources/META-INF/native-image/io.jclaw/anthropic-sdk \
+    -jar jclaw-bootstrap/target/jclaw-bootstrap-0.1.0-SNAPSHOT.jar run capture --jclaw.provider=anthropic
   ```
 
 Spring's AOT processing (`process-aot`) runs as part of the profile; `JclawApplication` deliberately rethrows `SpringApplication.AbandonedRunException` so that step is not mistaken for a startup failure.
@@ -172,7 +172,7 @@ Spring's AOT processing (`process-aot`) runs as part of the profile; `JclawAppli
 ```bash
 mvn test                                                   # whole suite
 mvn test -Dtest=TurnMachineTest -pl jclaw-domain           # one class
-mvn test -Dtest='ApprovalResumeIntegrationTest#resumeWithoutDecisionParksAgain' -pl jclaw-app -am
+mvn test -Dtest='ApprovalResumeIntegrationTest#resumeWithoutDecisionParksAgain' -pl jclaw-bootstrap -am
 ./scripts/byte-verify.sh scan                              # no stray control bytes in sources
 ./scripts/byte-verify.sh install && ./scripts/byte-verify.sh validate   # manifest drift check
 mvn -Panalysis verify                                      # javac -Xlint, SpotBugs, PMD
@@ -189,7 +189,7 @@ Test totals by module (verified on this checkout; the 5 PostgreSQL tests are cou
 
 ### Coverage
 
-JaCoCo runs in the ordinary build: `mvn verify` writes a per-module report and an aggregate one under `jclaw-app/target/site/jacoco-aggregate`, and `./scripts/coverage.sh` prints the one-line total both pipelines publish. On this checkout: **77.1% of instructions, 59.4% of branches, 76.1% of lines**.
+JaCoCo runs in the ordinary build: `mvn verify` writes a per-module report and an aggregate one under `jclaw-bootstrap/target/site/jacoco-aggregate`, and `./scripts/coverage.sh` prints the one-line total both pipelines publish. On this checkout: **77.1% of instructions, 59.4% of branches, 76.1% of lines**.
 
 Each remote publishes the report its own pipeline computed, and the coverage badge at the top of
 this page opens the one belonging to the host you are reading it on:
@@ -226,7 +226,7 @@ preference to the root one, GitLab renders only the root one. Both are generated
 [`scripts/readme-sync.sh`](scripts/readme-sync.sh) — edit the root file, run the script, and the
 verify stage of both pipelines fails the build if either copy is stale.
 
-Read the aggregate rather than the per-module figures: most of `contracts`, `kernel` and `tools` is exercised by integration tests that live in `jclaw-app`, so their own reports read 5–16% while the aggregate, which credits a class wherever it actually ran, reads 73%. `DependencyLawTest` in `jclaw-app` machine-checks the layer ladder with ArchUnit; the rules were confirmed to fire by planting deliberate violations.
+Read the aggregate rather than the per-module figures: most of `contracts`, `kernel` and `tools` is exercised by integration tests that live in `jclaw-bootstrap`, so their own reports read 5–16% while the aggregate, which credits a class wherever it actually ran, reads 73%. `DependencyLawTest` in `jclaw-bootstrap` machine-checks the layer ladder with ArchUnit; the rules were confirmed to fire by planting deliberate violations.
 
 ### Continuous integration
 
@@ -271,7 +271,7 @@ a branch run. Superseded runs are cancelled — except on a tag, which is buildi
 
 All settings are Spring Boot properties under the `jclaw.` prefix, bound to an immutable record (`JclawProperties`) once at startup. They can be supplied, in ascending precedence:
 
-1. **Defaults** in `jclaw-app/src/main/resources/application.yaml`.
+1. **Defaults** in `jclaw-bootstrap/src/main/resources/application.yaml`.
 2. **`~/.jclaw/jclaw.yaml`** — user config, imported optionally. `jclaw onboard` writes it. The path is fixed (not derived from `state-dir`, which would be circular).
 3. **Environment variables** in relaxed-binding form: `JCLAW_PROVIDER`, `JCLAW_APPROVAL_MODE`, `JCLAW_LOCAL_BASE_URL`, …
 4. **Command-line arguments** `--jclaw.<name>=<value>` on any command. `JclawApplication` strips `--jclaw.*`, `--spring.*`, `--logging.*`, `--management.*`, and `--server.*` before argv reaches picocli, so both frameworks see the same arguments without conflict. These flags therefore do not appear in `--help`'s option list; the root command's footer documents them.
@@ -1210,7 +1210,7 @@ The event log is the substrate; metrics and traces are projections of it, so nei
 jclaw run --debug "…"    # every pipeline step: admission, phase+observation→decision,
                          # checkpoints, the kernel's authority path, provider timings, exit validation
 jclaw run --trace "…"    # …plus payloads: system prompt, messages, tool args, outputs — redacted and bounded
-jclaw run --logging.level.io.jclaw.kernel=DEBUG "…"   # target one logger
+jclaw run --logging.level.io.jclaw.application.authority=DEBUG "…"   # target one logger
 ```
 
 Default level is INFO and prints only the reply. The domain never logs; the interpreter narrates the machine's decisions.
@@ -1250,14 +1250,14 @@ Posture flags that deserve a second look are printed by `jclaw doctor`: `allow-p
 ```
 jclaw/
 ├── pom.xml                 reactor parent (Boot 4.1.1, Java 21, dependency management)
-├── jclaw-contracts/        ports, turn vocabulary, refs, Result — no Spring, no HTTP
+├── jclaw-ports/        ports, turn vocabulary, refs, Result — no Spring, no HTTP
 ├── jclaw-domain/           pure functions: TurnMachine, Budget, Redaction, ranking, cron, recovery
-├── jclaw-kernel/           CapabilityHost, CapabilityPolicy, WorkspaceGuard, EgressGuard
-├── jclaw-loop/             EffectInterpreter — the only place an effect happens
-├── jclaw-providers/        mock, Anthropic SDK, OpenAI-compatible, failover
-├── jclaw-tools/            built-in capability handlers and the MCP client
-├── jclaw-storage/          JSONL stores, hand-written codecs, filesystem skill catalog
-├── jclaw-app/              Spring wiring, picocli CLI, JclawRuntime, scheduler, HTTP surface, native profile
+├── jclaw-application-authority/           CapabilityHost, CapabilityPolicy, WorkspaceGuard, EgressGuard
+├── jclaw-application-usecase/             EffectInterpreter — the only place an effect happens
+├── jclaw-adapter-out-model/        mock, Anthropic SDK, OpenAI-compatible, failover
+├── jclaw-adapter-out-capability/            built-in capability handlers and the MCP client
+├── jclaw-adapter-out-persistence/          JSONL stores, hand-written codecs, filesystem skill catalog
+├── jclaw-bootstrap/              Spring wiring, picocli CLI, JclawRuntime, scheduler, HTTP surface, native profile
 ├── scripts/byte-verify.sh  source-integrity guard
 ├── scripts/license-check.sh SPDX header guard
 ├── .github/                Actions pipeline, issue and PR templates, Dependabot

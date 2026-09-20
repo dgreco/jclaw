@@ -3,16 +3,16 @@
 
 package io.jclaw.domain.projection;
 
-import io.jclaw.contracts.capability.CapabilityId;
-import io.jclaw.contracts.capability.EffectClass;
-import io.jclaw.contracts.event.JclawEvent;
-import io.jclaw.contracts.loop.CheckpointKind;
-import io.jclaw.contracts.loop.GateKind;
-import io.jclaw.contracts.model.ModelExchange.Usage;
-import io.jclaw.contracts.turn.ThreadId;
-import io.jclaw.contracts.turn.TurnRunId;
-import io.jclaw.contracts.turn.TurnScope;
-import io.jclaw.contracts.turn.TurnStatus;
+import io.jclaw.ports.capability.CapabilityId;
+import io.jclaw.ports.capability.EffectClass;
+import io.jclaw.ports.event.JclawEvent;
+import io.jclaw.ports.loop.CheckpointKind;
+import io.jclaw.ports.loop.GateKind;
+import io.jclaw.ports.model.ModelExchange.Usage;
+import io.jclaw.ports.turn.ThreadId;
+import io.jclaw.ports.turn.TurnRunId;
+import io.jclaw.ports.turn.TurnScope;
+import io.jclaw.ports.turn.TurnStatus;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
