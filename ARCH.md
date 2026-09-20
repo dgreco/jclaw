@@ -241,7 +241,7 @@ Five payoffs, each pointing at something in this repository rather than at a pri
 
 1. **The agent's decision-making is tested with plain values and no mocks.** `TurnMachine.step(state, observation, policy, now)` takes four arguments and returns two. It has no ports, reads no clock, opens no socket. A test constructs a state, hands it an observation, and asserts on the decision. That is possible only because every non-deterministic thing in the system was pushed out of it and arrives as an `Observation`.
 2. **The default provider is a test double, so the whole product works with no network and no API key.** `mock` is what `jclaw run "hello"` uses out of the box, and `jclaw.mock-script` drives it through tool calls, approval gates, parks and resumes. The CLI is exercised end to end in CI without a credential, because the core cannot tell a scripted provider from a real one.
-3. **Storage changed medium without the core noticing.** `jclaw.storage=sql` moves every durable record from JSONL files to database rows. The store classes kept their `Jsonl*` names — they still speak one-JSON-document-per-row — and `StorageBackend` picks the medium once. Nothing in `domain`, `loop`, or `kernel` changed, because none of them ever named a file.
+3. **Storage changed medium without the core noticing.** `jclaw.storage=sql` moves every durable record from JSONL files to database rows. The store classes kept their `Jsonl*` names — they still speak one-JSON-document-per-row — and `StorageBackend` picks the medium once. Nothing in `jclaw-domain`, `jclaw-application-usecase` or `jclaw-application-authority` changed, because none of them ever named a file.
 4. **The security boundary is a place, not a habit.** "May this tool call happen?" is answered in exactly one pipeline, `DefaultCapabilityHost.invoke`, because a lane has no other way to be reached. A lane cannot skip the gate, since nothing hands it the means to run itself. Where authority is a habit it is eventually forgotten in one file; where it is a structural bottleneck, bypassing it means inventing a path that does not exist.
 5. **A second front door cost almost nothing.** `serve`'s HTTP surface is just another driving adapter over the same `JclawRuntime`. This is why a turn submitted over HTTP and a turn typed at a terminal are the *same kind of run*, under the same locks, leases, gates, and audit log — and why the browser UI can be a projection of the event log rather than a parallel implementation of anything.
 
@@ -283,7 +283,7 @@ That is not a formality, and a rename is when it matters. **An ArchUnit rule tha
 
 In the textbook drawing, the application service sits inside the hexagon. In jclaw, `JclawRuntime` — which admits turns, takes the thread lock, holds leases, and validates exit claims — lives in `jclaw-bootstrap`, the outermost module, next to the composition root and the CLI.
 
-That is a deliberate compromise rather than an oversight. `JclawRuntime` is the one component that needs nearly every port at once, and placing it where Spring already assembles things avoids an extra module whose whole purpose would be to receive constructor arguments. The cost is that the strict inward rule is enforced *below* it rather than around it: `app` is allowed to see everything, so nothing stops `JclawRuntime` reaching for an adapter directly. Nothing but review, at least — which is exactly the kind of guarantee the other modules do not have to rely on.
+That is a deliberate compromise rather than an oversight. `JclawRuntime` is the one component that needs nearly every port at once, and placing it where Spring already assembles things avoids an extra module whose whole purpose would be to receive constructor arguments. The cost is that the strict inward rule is enforced *below* it rather than around it: `jclaw-bootstrap` is allowed to see everything, so nothing stops `JclawRuntime` reaching for an adapter directly. Nothing but review, at least — which is exactly the kind of guarantee the other modules do not have to rely on.
 
 ---
 
@@ -377,7 +377,7 @@ Container-level decisions:
 
 ## 5. C4 Level 3 — Components
 
-Inside the executable, the modules *are* the components. This is the hexagon of §2, *Ports and adapters*, at a finer grain: `cli` and the HTTP surface are the driving adapters, `providers`, `tools`, and `storage` are the driven ones, and everything between `JclawRuntime` and `TurnMachine` is core. Arrows are compile-time dependencies; the whole diagram is a DAG with the contracts at its bottom, which is the dependency rule drawn rather than stated.
+Inside the executable, the modules *are* the components. This is the hexagon of §2, *Ports and adapters*, at a finer grain: the CLI and the HTTP surface are the primary (driving) adapters, `adapter-out-model`, `adapter-out-capability` and `adapter-out-persistence` are the secondary (driven) ones, and everything between `JclawRuntime` and `TurnMachine` is core. Arrows are compile-time dependencies; the whole diagram is a DAG with the contracts at its bottom, which is the dependency rule drawn rather than stated.
 
 ```mermaid
 C4Component
@@ -444,7 +444,7 @@ If the ports of §2, *Ports and adapters*, are the holes in the hexagon's wall, 
 - **Exit** — `LoopExit`: `Completed(replyRefs, resultRefs)`, `Blocked(gate, gateRef, checkpointRef)`, `Failed(kind, cause)`, `Cancelled`. A *claim*; validated before trusted.
 - **Evidence** — `TurnRef`: `LoopMessageRef`, `LoopResultRef`, `LoopGateRef`, `LoopCheckpointStateRef`, `AcceptedMessageRef`. Host-minted handles; nothing accepts a raw string where a ref is expected.
 - **Vocabulary enums** — `TurnStatus` (QUEUED, RUNNING, BLOCKED_APPROVAL, BLOCKED_AUTH, WAITING_PROCESS, COMPLETED, FAILED, CANCELLED); `FailureKind` (12 values, each with a `retryable`-style wire code such as `driver_protocol_violation`, `budget_exhausted`, `lease_expired`, `thread_busy`); `CheckpointKind` (BEFORE_MODEL, BEFORE_BLOCK, BEFORE_CAPABILITY — each `replaysNoSideEffect = true`; AFTER_CAPABILITY, AFTER_MODEL, UNKNOWN — fail closed); `GateKind` (APPROVAL, AUTH, PROCESS); `EffectClass` ordered PURE < READ_LOCAL < WRITE_LOCAL < NETWORK < PROCESS < DESTRUCTIVE; `TrustClass` (SYSTEM, FIRST_PARTY, VERIFIED, COMMUNITY, UNTRUSTED).
-- **`Result<A, E>`** — a totality type used instead of exceptions for expected failures; it has no Jackson annotations at all, and no class in `contracts` imports Spring, HTTP, or `java.sql`.
+- **`Result<A, E>`** — a totality type used instead of exceptions for expected failures; it has no Jackson annotations at all, and no class in `jclaw-ports` imports Spring, HTTP, or `java.sql`.
 
 ---
 

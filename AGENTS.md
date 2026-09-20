@@ -642,9 +642,10 @@ the Anthropic SDK, and tool lanes may not read the process environment.
   ran: a wiki that exists but has no page clones fine with an unborn HEAD, where
   `rev-parse --abbrev-ref HEAD` answers the literal "HEAD" and the push refspec becomes nonsense
   (`symbolic-ref --short` is right), and an unchanged report must not produce an empty commit.
-  Read the aggregate and ignore the per-module figures: most of `contracts`, `kernel` and
-  `tools` is exercised by integration tests that live in `jclaw-bootstrap`, so their own reports say
-  5-16% while the aggregate — which credits a class wherever it was executed — says 73%.
+  Read the aggregate and ignore the per-module figures: most of `jclaw-ports`,
+  `jclaw-application-authority` and `jclaw-adapter-out-capability` is exercised by integration tests
+  that live in `jclaw-bootstrap`, so their own reports read low while the aggregate — which credits
+  a class wherever it was executed — says 77.1%.
   `scripts/coverage.sh` prints the single line both pipelines publish — GitLab scrapes it with
   the `coverage:` keyword for the MR widget and the badge, GitHub appends it to the run summary
   — so the two cannot report different numbers. The script pins `LC_ALL=C`, because awk formats

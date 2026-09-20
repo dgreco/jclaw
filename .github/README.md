@@ -227,7 +227,7 @@ preference to the root one, GitLab renders only the root one. Both are generated
 [`scripts/readme-sync.sh`](../scripts/readme-sync.sh) — edit the root file, run the script, and the
 verify stage of both pipelines fails the build if either copy is stale.
 
-Read the aggregate rather than the per-module figures: most of `contracts`, `kernel` and `tools` is exercised by integration tests that live in `jclaw-bootstrap`, so their own reports read 5–16% while the aggregate, which credits a class wherever it actually ran, reads 73%. `DependencyLawTest` in `jclaw-bootstrap` machine-checks the layer ladder with ArchUnit; the rules were confirmed to fire by planting deliberate violations.
+Read the aggregate rather than the per-module figures: most of `jclaw-ports`, `jclaw-application-authority` and `jclaw-adapter-out-capability` is exercised by integration tests that live in `jclaw-bootstrap`, so their own reports read 5–16% while the aggregate, which credits a class wherever it actually ran, reads 73%. `DependencyLawTest` in `jclaw-bootstrap` machine-checks the layer ladder with ArchUnit; the rules were confirmed to fire by planting deliberate violations.
 
 ### Continuous integration
 
