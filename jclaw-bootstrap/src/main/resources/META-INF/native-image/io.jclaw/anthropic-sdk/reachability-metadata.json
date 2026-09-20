@@ -3382,37 +3382,37 @@
       "glob": "git.properties"
     },
     {
-      "glob": "io/jclaw/app"
+      "glob": "io/jclaw/bootstrap"
     },
     {
-      "glob": "io/jclaw/app/JclawCommand.class"
+      "glob": "io/jclaw/bootstrap/JclawCommand.class"
     },
     {
-      "glob": "io/jclaw/app/cli/DoctorCommand.class"
+      "glob": "io/jclaw/bootstrap/cli/DoctorCommand.class"
     },
     {
-      "glob": "io/jclaw/app/cli/ReplCommand.class"
+      "glob": "io/jclaw/bootstrap/cli/ReplCommand.class"
     },
     {
-      "glob": "io/jclaw/app/cli/RunCommand.class"
+      "glob": "io/jclaw/bootstrap/cli/RunCommand.class"
     },
     {
-      "glob": "io/jclaw/app/cli/StatusCommand.class"
+      "glob": "io/jclaw/bootstrap/cli/StatusCommand.class"
     },
     {
-      "glob": "io/jclaw/app/cli/ToolsCommand.class"
+      "glob": "io/jclaw/bootstrap/cli/ToolsCommand.class"
     },
     {
-      "glob": "io/jclaw/app/config/JclawConfiguration$StateDirectoryInitializer.class"
+      "glob": "io/jclaw/bootstrap/config/JclawConfiguration$StateDirectoryInitializer.class"
     },
     {
-      "glob": "io/jclaw/app/config/JclawConfiguration.class"
+      "glob": "io/jclaw/bootstrap/config/JclawConfiguration.class"
     },
     {
-      "glob": "io/jclaw/app/runtime/JclawRuntime$TurnResult.class"
+      "glob": "io/jclaw/bootstrap/runtime/JclawRuntime$TurnResult.class"
     },
     {
-      "glob": "io/jclaw/app/runtime/JclawRuntime.class"
+      "glob": "io/jclaw/bootstrap/runtime/JclawRuntime.class"
     },
     {
       "glob": "log4j2.StatusLogger.properties"

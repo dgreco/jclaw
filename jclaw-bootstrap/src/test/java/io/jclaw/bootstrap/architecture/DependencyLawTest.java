@@ -46,26 +46,26 @@ class DependencyLawTest {
         ArchRule ladder = layeredArchitecture()
                 .consideringOnlyDependenciesInLayers()
 
-                .layer("contracts").definedBy("io.jclaw.ports..")
+                .layer("ports").definedBy("io.jclaw.ports..")
                 .layer("domain").definedBy("io.jclaw.domain..")
-                .layer("kernel").definedBy("io.jclaw.application.authority..")
-                .layer("loop").definedBy("io.jclaw.application.usecase..")
-                .layer("providers").definedBy("io.jclaw.adapter.out.model..")
-                .layer("tools").definedBy("io.jclaw.adapter.out.capability..")
-                .layer("storage").definedBy("io.jclaw.adapter.out.persistence..")
-                .layer("app").definedBy("io.jclaw.bootstrap..")
+                .layer("application-authority").definedBy("io.jclaw.application.authority..")
+                .layer("application-usecase").definedBy("io.jclaw.application.usecase..")
+                .layer("adapter-out-model").definedBy("io.jclaw.adapter.out.model..")
+                .layer("adapter-out-capability").definedBy("io.jclaw.adapter.out.capability..")
+                .layer("adapter-out-persistence").definedBy("io.jclaw.adapter.out.persistence..")
+                .layer("bootstrap").definedBy("io.jclaw.bootstrap..")
 
-                // Read bottom-up: contracts is used by everything; app is used by nothing.
-                .whereLayer("app").mayNotBeAccessedByAnyLayer()
-                .whereLayer("providers").mayOnlyBeAccessedByLayers("app")
-                .whereLayer("tools").mayOnlyBeAccessedByLayers("app")
-                .whereLayer("storage").mayOnlyBeAccessedByLayers("app")
-                .whereLayer("loop").mayOnlyBeAccessedByLayers("app")
-                .whereLayer("kernel").mayOnlyBeAccessedByLayers("loop", "tools", "storage", "app")
+                // Read bottom-up: ports is used by everything; bootstrap is used by nothing.
+                .whereLayer("bootstrap").mayNotBeAccessedByAnyLayer()
+                .whereLayer("adapter-out-model").mayOnlyBeAccessedByLayers("bootstrap")
+                .whereLayer("adapter-out-capability").mayOnlyBeAccessedByLayers("bootstrap")
+                .whereLayer("adapter-out-persistence").mayOnlyBeAccessedByLayers("bootstrap")
+                .whereLayer("application-usecase").mayOnlyBeAccessedByLayers("bootstrap")
+                .whereLayer("application-authority").mayOnlyBeAccessedByLayers("application-usecase", "adapter-out-capability", "adapter-out-persistence", "bootstrap")
                 .whereLayer("domain").mayOnlyBeAccessedByLayers(
-                        "kernel", "loop", "tools", "storage", "app")
-                .whereLayer("contracts").mayOnlyBeAccessedByLayers(
-                        "domain", "kernel", "loop", "providers", "tools", "storage", "app");
+                        "application-authority", "application-usecase", "adapter-out-capability", "adapter-out-persistence", "bootstrap")
+                .whereLayer("ports").mayOnlyBeAccessedByLayers(
+                        "domain", "application-authority", "application-usecase", "adapter-out-model", "adapter-out-capability", "adapter-out-persistence", "bootstrap");
 
         ladder.check(classes);
     }

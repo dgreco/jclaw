@@ -247,15 +247,37 @@ Five payoffs, each pointing at something in this repository rather than at a pri
 
 ### How the shape is kept true
 
-A dependency rule that lives only in a document is a dependency rule that is already broken somewhere. jclaw's is executable: `DependencyLawTest` (`jclaw-bootstrap/src/test/java/io/jclaw/app/architecture/DependencyLawTest.java`) asserts **16 rules** with ArchUnit, and they fail the build. Among them:
+A dependency rule that lives only in a document is a dependency rule that is already broken somewhere. jclaw's is executable.
 
-- `jclaw-ports` may not import Spring, Jackson databind, `java.sql`, or anything HTTP.
-- `jclaw-domain` may not read a clock or use randomness. The clock is a parameter, never a call.
-- `jclaw-application-usecase` may not name `providers`, `tools`, or `storage` — it knows ports only.
-- Only the `providers/anthropic` package may import the Anthropic SDK.
-- Tool lanes may not read the process environment, so a credential cannot be picked up by a lane that was never given one.
+**Where it lives.** One file: [`jclaw-bootstrap/src/test/java/io/jclaw/bootstrap/architecture/DependencyLawTest.java`](jclaw-bootstrap/src/test/java/io/jclaw/bootstrap/architecture/DependencyLawTest.java). It sits in `jclaw-bootstrap` because that is the only module that depends on all the others, so it is the only place from which every class is visible. The library is [ArchUnit](https://www.archunit.org) (`com.tngtech.archunit:archunit-junit5`, test scope), which reads compiled bytecode rather than source — so a rule sees what the compiler actually produced, including dependencies introduced by generics, annotations, and inlined constants.
 
-Each rule was verified to fire by planting a deliberate violation, not merely by passing on a clean tree — a rule nobody has watched fail is a rule that might be asserting nothing.
+**How to run it.**
+
+```bash
+mvn test -Dtest=DependencyLawTest -pl jclaw-bootstrap     # just the architecture rules, a second or two
+mvn test                                                   # the whole suite; the rules are 16 of the 501
+```
+
+They are ordinary JUnit 5 tests, so they run in `build-test` on both pipelines and fail the build like any other test. There is no separate stage and no opt-in profile: an architectural violation is a red build, not a report somebody reads later.
+
+**What is scanned.** `@BeforeAll` imports `io.jclaw` with `ImportOption.Predefined.DO_NOT_INCLUDE_TESTS`, so the rules judge production classes only — test code is free to reach across layers to set up a fixture.
+
+**The 16 rules**, in the six groups the nested classes give them:
+
+| group | rules |
+|---|---|
+| *the layer ladder* | one `layeredArchitecture` rule covering all eight modules: `bootstrap` may be accessed by nothing, the three adapter modules and `application-usecase` only by `bootstrap`, `application-authority` by the application and adapters, `domain` by everything above it, `ports` by all. |
+| *the ports module stays neutral* | no Spring · no Jackson databind (annotations only) · no JDBC and no HTTP — *"a port must not name the transport that happens to implement it"* |
+| *the domain is a pure functional core* | no Spring, I/O, JDBC or HTTP · never reads the clock, which arrives as a parameter · no randomness |
+| *the application talks to ports, never to adapters* | never imports a secondary adapter · no Spring in the application layer |
+| *vendor SDKs stay behind their secondary adapters* | only the anthropic adapter imports the Anthropic SDK · only the wasm lane imports the WebAssembly runtime · only the model adapter opens an HTTP client to a model |
+| *security invariants* | capability adapters never read the process environment · secondary adapters never hold the secret vault · only the authority layer and the bootstrap decide capability policy |
+| *the wiring survives ahead-of-time compilation* | no `@Bean` method returns an `Optional` — on the JVM it works, but under AOT it takes the whole context down at startup |
+
+**Each rule was verified to fire by planting a deliberate violation**, not merely by passing on a clean tree. A rule nobody has watched fail is a rule that might be asserting nothing.
+
+That is not a formality, and a rename is when it matters. **An ArchUnit rule that names a package which no longer exists passes vacuously** — it matches no classes, finds no violations, and reports success. Renaming the modules could therefore have disarmed every rule here while the suite stayed green. It was checked the only way that means anything: a *used* `java.sql` reference planted in the ports module, confirming `noJdbcOrHttp` fails. An unused import would not have done, because ArchUnit reads bytecode and an unused import leaves none.
+
 
 ### One honest wrinkle
 
@@ -527,8 +549,8 @@ This is the complete, ordered story of one `jclaw run "…"` (and, through `subm
 
 ### Phase A — Admission (durable before anything runs)
 
-1. **Parse and inject.** `JclawApplication.main` expands `--debug`/`--trace` into `--logging.*` properties, boots Spring, and hands picocli the argv minus every `--jclaw.*`/`--spring.*`/`--logging.*` argument (both frameworks see the same argv; without the split, `jclaw run --jclaw.provider=anthropic …` would make picocli choke on an unknown option). `RunCommand` (`jclaw-bootstrap/src/main/java/io/jclaw/app/cli/RunCommand.java`) registers a shutdown hook that sets a `cancel` flag, then calls `JclawRuntime.submit(thread, text, cancel)`.
-2. **Resolve the run profile.** `JclawRuntime.submit` (`jclaw-bootstrap/src/main/java/io/jclaw/app/runtime/JclawRuntime.java`) builds the scope — `TurnScope.local(projectName, thread)`, project = the workspace directory name — then assembles the `LoopPolicy`: model from config, the system prompt (operator base + a `## Workspace` section naming the directory, never its absolute path, + a `## Available skills` block of one-line skill summaries per `PromptAssembly`), the visible capability surface (`CapabilityHost.visibleSurface`, filtered by policy denial, mapped to `ToolSpec`s), max output tokens 8192, max consecutive model failures 2. The profile is assembled **once at admission** and recorded with the run, so a resume tomorrow replays the prompt the run was admitted under, not today's config.
+1. **Parse and inject.** `JclawApplication.main` expands `--debug`/`--trace` into `--logging.*` properties, boots Spring, and hands picocli the argv minus every `--jclaw.*`/`--spring.*`/`--logging.*` argument (both frameworks see the same argv; without the split, `jclaw run --jclaw.provider=anthropic …` would make picocli choke on an unknown option). `RunCommand` (`jclaw-bootstrap/src/main/java/io/jclaw/bootstrap/cli/RunCommand.java`) registers a shutdown hook that sets a `cancel` flag, then calls `JclawRuntime.submit(thread, text, cancel)`.
+2. **Resolve the run profile.** `JclawRuntime.submit` (`jclaw-bootstrap/src/main/java/io/jclaw/bootstrap/runtime/JclawRuntime.java`) builds the scope — `TurnScope.local(projectName, thread)`, project = the workspace directory name — then assembles the `LoopPolicy`: model from config, the system prompt (operator base + a `## Workspace` section naming the directory, never its absolute path, + a `## Available skills` block of one-line skill summaries per `PromptAssembly`), the visible capability surface (`CapabilityHost.visibleSurface`, filtered by policy denial, mapped to `ToolSpec`s), max output tokens 8192, max consecutive model failures 2. The profile is assembled **once at admission** and recorded with the run, so a resume tomorrow replays the prompt the run was admitted under, not today's config.
 3. **Lock the thread, then persist the inbound message.** (Through `submit` or `enqueue`; an enqueued run skips the rest of this phase and is picked up later by the scheduler, which resumes it under the same lock.) `threadLocks.tryAcquire(scope)` takes an OS file lock for the canonical thread (`FileThreadLock`, `<state-dir>/locks/<hash>.lock`); if another run holds it the submission is refused with `THREAD_BUSY` and nothing below happens. Then `threads.acceptInbound(thread, user)` appends to the durable transcript *before any run exists*, so a crash cannot lose what the user asked for. (The returned `AcceptedMessageRef` is a ref already — inbound messages are facts, not claims.)
 4. **Record and claim the run.** A `RunRecord` with the resolved profile is appended to `runs.jsonl`; a `TurnSubmitted` event is appended to `events.jsonl`; then `runs.claim(run, workerId, now + 2 min)` writes a lease. A fresh run id that is somehow already claimed fails **closed** (`INTERNAL`). `RunClaimed` is emitted. `workerId` is random per process on purpose — a restarted worker must not inherit a claim its predecessor died holding.
 5. **Seed the machine.** The thread's transcript (which includes the message just accepted, attachments and all) becomes `LoopExecutionState.start(messages, budget)`: whole when summarisation is on (the machine summarises what its window drops before the first call), or compacted by the pure `ContextCompaction` under the run's `ContextPolicy` when it is off (message cap + estimated token budget; cuts only at a user or assistant boundary; folds a "N earlier messages omitted" notice into the first kept user message). A queued run is seeded with the conversation as of its own submission, its own message last. The state carries with a `Budget` of `maxTokens` / `maxIterations` / a fixed 10-minute wall-clock cap, and control passes to `EffectInterpreter.run` with per-run hooks: the lease heartbeat and, for `--stream`/REPL streaming, a sink for prose deltas.
