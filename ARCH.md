@@ -87,20 +87,36 @@ Note what is absent. No URL, no API key, no JSON, no vendor name. A `ModelReques
 
 Somewhere outside, a class implements it by actually talking to Anthropic. The inside never names that class. Something has to introduce the two — that job belongs to exactly one place, the very outermost layer, which is the only code permitted to know both halves.
 
-### The three words
+### Every word the pattern uses, named once
 
-That is the whole idea. It comes with a small vocabulary, worth naming once:
+That is the whole idea. What remains is vocabulary. The picture in the next section is labelled entirely in it, so here is the complete set — nothing below is jargon this document invented, and nothing in the diagram is a word that is missing here.
 
-- **Core** (or *the inside*) — the logic that would still make sense if every technology around it were replaced.
-- **Port** — an interface the core owns, written in the core's vocabulary, describing something the core needs done. `ModelProvider` is a port. jclaw has **24 of them**, all in `jclaw-contracts`.
-- **Adapter** — a class outside the core that implements a port using one specific technology. `AnthropicModelProvider` is an adapter. So is `JsonlEventLog`. So is the `mock` provider used by most of the tests.
+**Who is outside**
 
-Two kinds of adapter, and the difference matters when reading the diagram:
+- **Actor** — anything outside the application that it exchanges information with. A person, another program, a database, a clock. An actor is not code you write; it is the thing your code talks to.
+- **Primary actor** (synonym: **driving**) — an actor that *starts* the conversation. For jclaw: the operator at a terminal, an HTTP client, the clock that makes a scheduled routine fall due.
+- **Secondary actor** (synonym: **driven**) — an actor the application starts a conversation *with*, because it needs something. For jclaw: the model API, the operating system, the disk, the vault.
 
-- **Driving** (or *primary*) adapters start things: the CLI verb you typed, the HTTP request, the scheduler tick. They call *into* the core.
-- **Driven** (or *secondary*) adapters are called *by* the core when it needs something done: providers, tool lanes, stores.
+The distinction is about who speaks first, and nothing else. It is not about importance, and the same technology can appear on both sides in a different system.
 
-And the place that introduces ports to adapters — `JclawConfiguration`, the single Spring `@Configuration` class, together with the `app/config` package around it that chooses a storage medium and reads settings — is the **composition root**. It is the only corner of jclaw allowed to know both a port and the adapter picked for it, which is why the choice between Anthropic and Ollama, or between JSONL files and PostgreSQL, is a decision taken in one place and invisible everywhere else.
+**What is inside**
+
+- **Application** — everything inside the hexagon: what the software *does*, expressed without reference to any technology. Where this document says *the core*, it means the application.
+- **Application service** — a component of the application that carries out a use case end to end, calling secondary ports when it needs the outside world. `JclawRuntime`, `EffectInterpreter` and `CapabilityHost` are jclaw's.
+- **Domain** — the innermost part: the rules themselves, with no dealings even with ports. In jclaw that is `TurnMachine` and the pure helpers beside it.
+
+**What joins the two**
+
+- **Port** — an interface the application owns, written in the application's own vocabulary, describing something it needs or offers. `ModelProvider` is a port. jclaw has **24 of them**, all in `jclaw-contracts`.
+- **Primary port** (driving) — what the application *offers* to be asked: `submit`, `enqueue`, `resume`. A primary adapter calls it.
+- **Secondary port** (driven) — what the application *requires* from the world: fetch a completion, write a record, take a lock. A secondary adapter implements it.
+- **Adapter** — code that translates between one actor and one port, speaking that actor's technology on one side and the port's vocabulary on the other. `AnthropicModelProvider` is an adapter; so is `JsonlEventLog`; so is the `mock` provider most tests run against.
+- **Primary adapter** (driving) — turns something a primary actor did into a call on a primary port. jclaw's CLI, HTTP surface and scheduler.
+- **Secondary adapter** (driven) — implements a secondary port using one specific technology, and talks to a secondary actor. jclaw's providers, tool lanes and stores.
+
+**What holds it together**
+
+- **Composition root** — the one place that introduces ports to adapters. In jclaw that is `JclawConfiguration`, the single Spring `@Configuration` class, together with the `app/config` package around it that chooses a storage medium and reads settings. It is the only corner of jclaw allowed to know both a port and the adapter picked for it, which is why the choice between Anthropic and Ollama, or between JSONL files and PostgreSQL, is a decision taken in one place and invisible everywhere else.
 
 **A note on the name.** The module holding them is `jclaw-contracts`, not `jclaw-ports`, and the mismatch is worth explaining rather than glossing. Ports are only 24 of its 56 types. The rest is the vocabulary those ports speak — `Observation`, `LoopDecision`, `LoopExit`, the refs, the enums, `Result` — value types that travel *through* a port rather than describing one. No adapter implements `LoopExit` — its four permitted records are the only things that ever will, and they are data rather than a seam anything could plug into. "Contracts" covers both senses, the interfaces the core requires and the language crossing them, where "ports" would misdescribe two thirds of the module. So throughout this document **port** is the concept and `jclaw-contracts` is the place it lives.
 
@@ -116,38 +132,40 @@ The direction of *calls* at runtime is a separate question, and it is what confu
 
 ### jclaw's hexagon
 
-![jclaw drawn as a hexagonal architecture: driving adapters (CLI, HTTP, scheduler) on the left depend on a driving port; the application core fills the hexagon with the pure domain model at its centre; four driven ports line the right edge and the driven adapters outside (model providers, capability lanes, stores, locks and vault) depend on them; the composition root sits below, wiring adapters into ports.](docs/hexagonal-architecture.svg)
+![jclaw drawn as a hexagonal architecture. Far left, three primary actors: the operator, an HTTP client, the clock. Next, three primary adapters: CLI, HTTP, scheduler. They depend on a primary port on the hexagon's left edge. The hexagon is the application, holding the application services and, at its centre, the domain. Four secondary ports line the right edge; four secondary adapters depend on them and talk to four secondary actors: the model, the OS, the disk, the vault. Below, the composition root wires adapters into ports.](docs/hexagonal-architecture.svg)
 
-The classic drawing, with this codebase's pieces in their places. Four things to read off it:
+Every label in it is a term from the list above. Read it from the outside in, either side:
 
-- **The ports sit on the boundary, and they belong to the core.** They are drawn straddling the hexagon's edge because that is exactly what they are: declared by the inside, implemented by the outside.
-- **Everything outside the hexagon points at it.** Those arrows are compile-time dependencies. There is no arrow leaving the hexagon, which is the dependency rule made visual.
-- **The domain sits at the centre**, furthest from every edge, because it is the part that touches nothing — no port, no clock, no I/O.
-- **The composition root is outside, underneath, and joined by dotted lines.** It is not part of the core and not an adapter; it is the one place allowed to see both, and its dotted lines are wiring done once at startup rather than a dependency the core has.
+- **An actor is outside the system; an adapter is the code that talks to it.** The operator is a primary actor, the CLI is the primary adapter that turns what they typed into a call on a port. The model API is a secondary actor, `AnthropicModelProvider` the secondary adapter that speaks HTTP to it. Split that way, the application deals only in ports and never learns that either exists.
+- **The two sides differ only in who speaks first.** Left of the hexagon the outside starts things; right of it the application does. That is the whole content of *primary* versus *secondary*, and it is why the same hexagon has both kinds of port on it.
+- **Ports sit on the boundary and belong to the application.** They are drawn straddling the edge because that is what they are: declared by the inside, satisfied from the outside.
+- **Every solid arrow points inward.** Those are source-code dependencies, and there is not one leaving the hexagon — the dependency rule, drawn. The plain lines at the far edges are run-time conversations with actors, which is a different relationship and deliberately a different mark.
+- **The domain is at the dead centre**, furthest from every edge, because it is the part that touches nothing: no port, no clock, no I/O.
+- **The composition root sits outside and underneath, joined by dotted lines.** It is neither application nor adapter. It is the one piece allowed to see both, and its dotted lines are wiring done once at startup rather than a dependency the application carries.
 
-One honest detail the picture smooths over. jclaw has 24 *driven* ports — real interfaces in `jclaw-contracts` — but no driving port interface. The driving port drawn on the left is `JclawRuntime`'s public surface, `submit` / `enqueue` / `resume`, which is a class, not an interface. Strict ports-and-adapters would put an interface there so that the CLI depends on a declaration rather than on a concrete type; jclaw does not, for the reason set out in *One honest wrinkle* at the end of this section. The shape is right, the formality is missing on that one edge.
+One honest detail, since the picture draws both kinds of port as though they were alike. jclaw's 24 ports are all *secondary* — real interfaces in `jclaw-contracts`. There is **no primary port interface**: the one drawn on the left edge is `JclawRuntime`'s public surface, which is a class. Strict ports and adapters would put an interface there so a primary adapter depended on a declaration rather than on a concrete type. jclaw does not, for the reason in *One honest wrinkle* at the end of this section — the shape is right, the formality is missing on that one edge.
 
 The same structure as a plain dependency graph, which makes the rule easier to check than to admire — every arrow below is a compile-time dependency, and every one points inward.
 
 ```mermaid
 flowchart TB
-    subgraph DRIVING["Driving adapters — the outside starts a turn"]
+    subgraph DRIVING["Primary (driving) adapters — the outside starts a turn"]
         direction LR
         CLI["CLI verbs<br/>run · submit · repl · approvals"]
         HTTP["HTTP surface<br/>serve · browser UI · channels"]
         SCHED["Schedulers<br/>worker · routines · triggers"]
     end
 
-    subgraph INSIDE["The core — compiles knowing none of the names around it"]
+    subgraph INSIDE["Application — compiles knowing none of the names around it"]
         direction TB
         RT["JclawRuntime<br/>admission · thread lock · leases · exit validation"]
         INTERP["EffectInterpreter<br/>the only place an effect happens"]
         MACHINE["TurnMachine<br/>pure: state + observation → decision"]
         HOST["CapabilityHost<br/>the single authority gate"]
-        PORTS["PORTS<br/>24 interfaces in jclaw-contracts"]
+        PORTS["SECONDARY PORTS<br/>24 interfaces in jclaw-contracts"]
     end
 
-    subgraph DRIVEN["Driven adapters — swappable, and swapped in every test run"]
+    subgraph DRIVEN["Secondary (driven) adapters — swappable, and swapped in every test run"]
         direction LR
         PROV["Model providers<br/>mock · anthropic · OpenAI-compatible · failover"]
         LANES["Capability lanes<br/>file · shell · http · memory · MCP · WASM"]
