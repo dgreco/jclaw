@@ -1,0 +1,171 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1160 700" width="1160" height="700" role="img"
+     aria-labelledby="title desc">
+  <title id="title">jclaw as a ports-and-adapters (hexagonal) architecture</title>
+  <desc id="desc">Driving adapters on the left depend on a driving port; the application core sits
+    inside the hexagon with the pure domain at its centre; driven ports line the right edge and the
+    driven adapters outside depend on them. Every dependency arrow points inward.</desc>
+
+  <style>
+    .bg    { fill: #ffffff; }
+    .ink   { fill: #111827; }
+    .muted { fill: #4b5563; }
+    .faint { fill: #6b7280; }
+    .hexf  { fill: #6366f1; fill-opacity: .07; }
+    .hexs  { stroke: #6366f1; stroke-opacity: .55; }
+    .domf  { fill: #0ea5e9; fill-opacity: .13; }
+    .doms  { stroke: #0ea5e9; stroke-opacity: .65; }
+    .boxf  { fill: #6366f1; fill-opacity: .10; }
+    .boxs  { stroke: #6366f1; stroke-opacity: .45; }
+    .portf { fill: #f59e0b; fill-opacity: .18; }
+    .ports { stroke: #d97706; stroke-opacity: .75; }
+    .adaf  { fill: #10b981; fill-opacity: .12; }
+    .adas  { stroke: #059669; stroke-opacity: .55; }
+    .rootf { fill: #64748b; fill-opacity: .10; }
+    .roots { stroke: #64748b; stroke-opacity: .55; }
+    .arrow { stroke: #6b7280; }
+    .head  { fill: #6b7280; }
+    .dash  { stroke: #94a3b8; stroke-dasharray: 4 4; }
+    text   { font-family: ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    .h     { font-size: 15px; font-weight: 700; letter-spacing: .06em; }
+    .sub   { font-size: 11px; }
+    .lbl   { font-size: 12.5px; font-weight: 600; }
+    .sml   { font-size: 11px; }
+    .tiny  { font-size: 10px; }
+    @media (prefers-color-scheme: dark) {
+      .bg    { fill: #0d1117; }
+      .ink   { fill: #e6edf3; }
+      .muted { fill: #b6c0cc; }
+      .faint { fill: #93a1b0; }
+      .arrow { stroke: #8b949e; }
+      .head  { fill: #8b949e; }
+      .dash  { stroke: #6e7681; }
+      .hexs  { stroke: #a5b4fc; }
+      .doms  { stroke: #7dd3fc; }
+      .boxs  { stroke: #a5b4fc; }
+      .ports { stroke: #fbbf24; }
+      .adas  { stroke: #6ee7b7; }
+      .roots { stroke: #94a3b8; }
+    }
+  </style>
+
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path class="head" d="M 0 0 L 10 5 L 0 10 z"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1160" height="700"/>
+
+  <!-- ============ side headings ============ -->
+  <text class="h ink"   x="115" y="42" text-anchor="middle">DRIVING SIDE</text>
+  <text class="sub faint" x="115" y="60" text-anchor="middle">primary · inbound · starts a turn</text>
+  <text class="h ink"   x="1040" y="42" text-anchor="middle">DRIVEN SIDE</text>
+  <text class="sub faint" x="1040" y="60" text-anchor="middle">secondary · outbound · the core asks</text>
+
+  <!-- ============ the hexagon: the application core ============ -->
+  <polygon class="hexf hexs" stroke-width="2"
+           points="580,90 372,210 372,450 580,570 788,450 788,210"/>
+
+  <text class="h ink"    x="580" y="152" text-anchor="middle">APPLICATION CORE</text>
+  <text class="sub faint" x="580" y="172" text-anchor="middle">inside the hexagon · names no adapter</text>
+
+  <!-- application layer -->
+  <rect class="boxf boxs" x="430" y="196" width="300" height="46" rx="7" stroke-width="1.4"/>
+  <text class="lbl ink"  x="580" y="215" text-anchor="middle">Application service</text>
+  <text class="sml muted" x="580" y="232" text-anchor="middle">JclawRuntime — admission, leases, exit validation</text>
+
+  <rect class="boxf boxs" x="430" y="250" width="300" height="46" rx="7" stroke-width="1.4"/>
+  <text class="lbl ink"  x="580" y="269" text-anchor="middle">Use-case orchestration</text>
+  <text class="sml muted" x="580" y="286" text-anchor="middle">EffectInterpreter — the only place an effect happens</text>
+
+  <rect class="boxf boxs" x="430" y="304" width="300" height="46" rx="7" stroke-width="1.4"/>
+  <text class="lbl ink"  x="580" y="323" text-anchor="middle">Authority policy</text>
+  <text class="sml muted" x="580" y="340" text-anchor="middle">CapabilityHost — the single gate</text>
+
+  <!-- the domain, at the centre -->
+  <rect class="domf doms" x="416" y="360" width="328" height="76" rx="9" stroke-width="1.8"/>
+  <text class="h ink"    x="580" y="382" text-anchor="middle" style="font-size:13px">DOMAIN MODEL</text>
+  <text class="sml muted" x="580" y="401" text-anchor="middle">TurnMachine · Budget · ContextCompaction · LeaseRecovery</text>
+  <text class="tiny faint" x="580" y="417" text-anchor="middle">pure functions — no I/O, no clock, no ports</text>
+  <text class="tiny faint" x="580" y="431" text-anchor="middle">jclaw-domain</text>
+
+  <text class="tiny faint" x="580" y="466" text-anchor="middle">jclaw-app · jclaw-loop · jclaw-kernel</text>
+
+  <!-- ============ driving port (left edge) ============ -->
+  <rect class="portf ports" x="236" y="298" width="136" height="60" rx="7" stroke-width="1.6"/>
+  <text class="lbl ink"   x="304" y="318" text-anchor="middle">DRIVING PORT</text>
+  <text class="sml muted"  x="304" y="334" text-anchor="middle">submit · enqueue</text>
+  <text class="sml muted"  x="304" y="348" text-anchor="middle">resume</text>
+
+  <!-- driving adapters -->
+  <rect class="adaf adas" x="30" y="228" width="170" height="52" rx="7" stroke-width="1.4"/>
+  <text class="lbl ink"  x="115" y="249" text-anchor="middle">Driving adapter</text>
+  <text class="sml muted" x="115" y="266" text-anchor="middle">CLI — run, repl, approvals</text>
+
+  <rect class="adaf adas" x="30" y="292" width="170" height="52" rx="7" stroke-width="1.4"/>
+  <text class="lbl ink"  x="115" y="313" text-anchor="middle">Driving adapter</text>
+  <text class="sml muted" x="115" y="330" text-anchor="middle">HTTP — serve, channels</text>
+
+  <rect class="adaf adas" x="30" y="356" width="170" height="52" rx="7" stroke-width="1.4"/>
+  <text class="lbl ink"  x="115" y="377" text-anchor="middle">Driving adapter</text>
+  <text class="sml muted" x="115" y="394" text-anchor="middle">Scheduler — worker, routines</text>
+
+  <path fill="none" class="arrow" stroke-width="1.6" marker-end="url(#ar)" d="M 200 254 C 220 254 216 322 234 322"/>
+  <path fill="none" class="arrow" stroke-width="1.6" marker-end="url(#ar)" d="M 200 318 L 234 322"/>
+  <path fill="none" class="arrow" stroke-width="1.6" marker-end="url(#ar)" d="M 200 382 C 220 382 216 336 234 334"/>
+
+  <!-- ============ driven ports (right edge) ============ -->
+  <rect class="portf ports" x="788" y="206" width="132" height="52" rx="7" stroke-width="1.6"/>
+  <text class="lbl ink"   x="854" y="226" text-anchor="middle">DRIVEN PORT</text>
+  <text class="sml muted"  x="854" y="243" text-anchor="middle">ModelProvider</text>
+
+  <rect class="portf ports" x="788" y="268" width="132" height="52" rx="7" stroke-width="1.6"/>
+  <text class="lbl ink"   x="854" y="288" text-anchor="middle">DRIVEN PORT</text>
+  <text class="sml muted"  x="854" y="305" text-anchor="middle">CapabilityHandler</text>
+
+  <rect class="portf ports" x="788" y="330" width="132" height="52" rx="7" stroke-width="1.6"/>
+  <text class="lbl ink"   x="854" y="350" text-anchor="middle">DRIVEN PORT</text>
+  <text class="sml muted"  x="854" y="367" text-anchor="middle">EventLog · RunStore · …</text>
+
+  <rect class="portf ports" x="788" y="392" width="132" height="52" rx="7" stroke-width="1.6"/>
+  <text class="lbl ink"   x="854" y="412" text-anchor="middle">DRIVEN PORT</text>
+  <text class="sml muted"  x="854" y="429" text-anchor="middle">ThreadLock · SecretVault</text>
+
+  <!-- driven adapters -->
+  <rect class="adaf adas" x="955" y="206" width="175" height="52" rx="7" stroke-width="1.4"/>
+  <text class="lbl ink"  x="1042" y="226" text-anchor="middle">Driven adapter</text>
+  <text class="sml muted" x="1042" y="243" text-anchor="middle">anthropic · openai · mock</text>
+
+  <rect class="adaf adas" x="955" y="268" width="175" height="52" rx="7" stroke-width="1.4"/>
+  <text class="lbl ink"  x="1042" y="288" text-anchor="middle">Driven adapter</text>
+  <text class="sml muted" x="1042" y="305" text-anchor="middle">file · shell · http · MCP</text>
+
+  <rect class="adaf adas" x="955" y="330" width="175" height="52" rx="7" stroke-width="1.4"/>
+  <text class="lbl ink"  x="1042" y="350" text-anchor="middle">Driven adapter</text>
+  <text class="sml muted" x="1042" y="367" text-anchor="middle">JSONL files · SQL rows</text>
+
+  <rect class="adaf adas" x="955" y="392" width="175" height="52" rx="7" stroke-width="1.4"/>
+  <text class="lbl ink"  x="1042" y="412" text-anchor="middle">Driven adapter</text>
+  <text class="sml muted" x="1042" y="429" text-anchor="middle">file lock · encrypted vault</text>
+
+  <path fill="none" class="arrow" stroke-width="1.6" marker-end="url(#ar)" d="M 953 232 L 922 232"/>
+  <path fill="none" class="arrow" stroke-width="1.6" marker-end="url(#ar)" d="M 953 294 L 922 294"/>
+  <path fill="none" class="arrow" stroke-width="1.6" marker-end="url(#ar)" d="M 953 356 L 922 356"/>
+  <path fill="none" class="arrow" stroke-width="1.6" marker-end="url(#ar)" d="M 953 418 L 922 418"/>
+
+  <!-- ============ composition root ============ -->
+  <rect class="rootf roots" x="360" y="612" width="440" height="56" rx="8" stroke-width="1.5"/>
+  <text class="lbl ink"   x="580" y="633" text-anchor="middle">COMPOSITION ROOT</text>
+  <text class="sml muted"  x="580" y="650" text-anchor="middle">JclawConfiguration — the only place a port meets its adapter</text>
+
+  <path fill="none" class="dash" stroke-width="1.4" d="M 360 640 C 200 640 115 480 115 412"/>
+  <path fill="none" class="dash" stroke-width="1.4" d="M 800 640 C 1010 640 1042 480 1042 448"/>
+
+  <!-- ============ legend ============ -->
+  <g transform="translate(30, 610)">
+    <path fill="none" class="arrow" stroke-width="1.6" marker-end="url(#ar)" d="M 0 8 L 30 8"/>
+    <text class="tiny muted" x="38" y="12">source-code dependency — always inward</text>
+    <path fill="none" class="dash" stroke-width="1.4" d="M 0 30 L 30 30"/>
+    <text class="tiny muted" x="38" y="34">wires an adapter into a port at startup</text>
+  </g>
+</svg>

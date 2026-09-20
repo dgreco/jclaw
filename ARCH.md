@@ -116,7 +116,18 @@ The direction of *calls* at runtime is a separate question, and it is what confu
 
 ### jclaw's hexagon
 
-Every arrow below is a compile-time dependency, and every one points inward.
+![jclaw drawn as a hexagonal architecture: driving adapters (CLI, HTTP, scheduler) on the left depend on a driving port; the application core fills the hexagon with the pure domain model at its centre; four driven ports line the right edge and the driven adapters outside (model providers, capability lanes, stores, locks and vault) depend on them; the composition root sits below, wiring adapters into ports.](docs/hexagonal-architecture.svg)
+
+The classic drawing, with this codebase's pieces in their places. Four things to read off it:
+
+- **The ports sit on the boundary, and they belong to the core.** They are drawn straddling the hexagon's edge because that is exactly what they are: declared by the inside, implemented by the outside.
+- **Everything outside the hexagon points at it.** Those arrows are compile-time dependencies. There is no arrow leaving the hexagon, which is the dependency rule made visual.
+- **The domain sits at the centre**, furthest from every edge, because it is the part that touches nothing — no port, no clock, no I/O.
+- **The composition root is outside, underneath, and joined by dotted lines.** It is not part of the core and not an adapter; it is the one place allowed to see both, and its dotted lines are wiring done once at startup rather than a dependency the core has.
+
+One honest detail the picture smooths over. jclaw has 24 *driven* ports — real interfaces in `jclaw-contracts` — but no driving port interface. The driving port drawn on the left is `JclawRuntime`'s public surface, `submit` / `enqueue` / `resume`, which is a class, not an interface. Strict ports-and-adapters would put an interface there so that the CLI depends on a declaration rather than on a concrete type; jclaw does not, for the reason set out in *One honest wrinkle* at the end of this section. The shape is right, the formality is missing on that one edge.
+
+The same structure as a plain dependency graph, which makes the rule easier to check than to admire — every arrow below is a compile-time dependency, and every one points inward.
 
 ```mermaid
 flowchart TB
