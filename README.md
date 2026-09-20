@@ -56,6 +56,7 @@ jclaw-domain/src/main/java/io/jclaw/domain/loop/TurnMachine.java ...
   - [Scheduled routines: `routines` and `worker`](#scheduled-routines-routines-and-worker)
   - [MCP servers: `mcp`](#mcp-servers-mcp)
   - [Subagents](#subagents)
+  - [Several agents at once](#several-agents-at-once)
   - [Streaming](#streaming)
   - [Crash recovery: `recover`](#crash-recovery-recover)
   - [Retention: `retain`](#retention-retain)
@@ -941,7 +942,152 @@ Every sampled call is written to the audit log as a `model.called` event under a
 
 The model can call `builtin.spawn_subagent` with a `prompt` (and optional `description`) to delegate a task. The child is an ordinary run on the **same** machinery — same turn machine, same interpreter, same capability host and approval policy — on a fresh thread derived from the parent's (`<parent>~sub1-…`), so it inherits none of the parent's conversation and only its conclusion travels back. Nesting depth is derived from the thread id rather than passed by the model, and is capped at 3. Spawning is `PROCESS`-class, so it is gated in `interactive`.
 
-By default the child runs inside the parent's tool call. With `subagents-async: true` the child is **queued** instead: the parent parks `WAITING_PROCESS` on a process gate that names the child run, a `worker` or `serve` executes the child under the concurrency cap, and when it finishes the scheduler requeues the parent, which re-dispatches the same call and receives the child's conclusion as the tool result. Several children of one parent therefore run in parallel. Without a worker the parent would wait indefinitely, which is why the synchronous mode is the default.
+By default the child runs inside the parent's tool call. With `subagents-async: true` the child is **queued** instead: the parent parks `WAITING_PROCESS` on a process gate that names the child run, a `worker` or `serve` executes the child under the concurrency cap, and when it finishes the scheduler requeues the parent, which re-dispatches the same call and receives the child's conclusion as the tool result. Several `spawn_subagent` calls in one reply do **not** run in parallel, in either mode — a gate anywhere in a batch stops the batch, so the parent starts one child, parks, resumes, and starts the next. Concurrency comes from independent runs, and [Several agents at once](#several-agents-at-once) works through both. Without a worker the parent would wait indefinitely, which is why the synchronous mode is the default.
+
+### Several agents at once
+
+This section is about **more than one agent run at the same time**: what starts a second agent, what it does while the first one is still alive, and what the two of them can and cannot see of each other. Two facts carry everything else, so they are worth having before the first diagram:
+
+- **A subagent is an ordinary run.** It gets its own run id, its own thread, its own transcript, its own budget, and its own checkpoint, and it goes through the same turn machine, the same authority gate, and the same approval policy as the run that started it. There is no second engine for delegated work — a private subagent engine would be a second place for authority, checkpointing, and audit to diverge from the real one.
+- **Delegation is a hand-off of text, not a connection.** The child receives one prompt, which is the whole of its world, and the parent receives one string back: the child's final reply. Neither can read the other's transcript while the work is in flight, and neither can interrupt the other.
+
+#### What puts more than one agent on the machine
+
+There are two families, and they behave differently.
+
+**An agent delegating.** `builtin.spawn_subagent` creates a child of *that* run. One reply can ask for several children, and they run **one at a time**, in both modes, because a gate anywhere in a batch stops the batch — running further effects after deciding to park is exactly the duplicated work checkpointing exists to prevent. A fan-out of subagents is therefore a sequence that preserves the parent's context, not parallelism.
+
+**The operator queueing runs.** `submit`, a webhook, a watch, an audit event, or a channel adapter puts several *independent* runs in the queue, and a `worker` or `serve` executes them concurrently, up to `--concurrency` (default 2). These are strangers to each other: separate threads, separate transcripts, no shared parent, one run per thread at a time.
+
+| What happens | Who starts it | How many agents | Do they overlap? |
+|---|---|---|---|
+| `builtin.spawn_subagent` × N in one reply | the agent | N children of one parent | no — one at a time, in both modes |
+| One `POST /hooks/<name>` on a routine with `--topic` | the operator | one run per routine on that topic | yes, up to the concurrency cap |
+| `jclaw submit` × N, several HTTP clients, a channel adapter | the operator | N independent runs | yes, up to the concurrency cap |
+| Several routines coming due on one tick | the clock | one run each | watch, event and webhook triggers are queued, so yes; cron and interval ones are executed inline by `run-due` and `worker`, so no |
+| `jclaw recover` requeueing crashed runs | the operator | one per run | yes, up to the concurrency cap |
+| An audit event (`run.finished`, `gate.raised`, `turn.submitted`) | the world | one per matching `--on` routine | yes — and a *child's* completion is such an event, so a failed delegation can start a routine |
+
+The last row is the coupling worth knowing about: a child run writes an ordinary `run.finished` event, and the only runs excluded from firing triggers are those on a routine's own thread. An agent can also schedule its own future work with `builtin.trigger_create`, but only a cron expression or an interval — webhooks, watches, and event triggers are the operator's, because one of them grants an outside caller a way in and the others react to the world outside the turn.
+
+#### A synchronous subagent, step by step
+
+`subagents-async` is `false` by default, so the child runs to completion **inside** the parent's tool call.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Op as Operator
+    participant P as Parent run
+    participant CH as Capability host
+    participant C as Child run
+    participant ST as Stores
+
+    Note over P: the model's reply carries a tool call
+    P->>CH: builtin.spawn_subagent, prompt "count the files"
+    Note over CH: spawn_subagent is PROCESS-class, so under the default interactive mode the spawn itself is a question
+    CH->>ST: raise an approval gate for this exact invocation
+    CH-->>P: NeedsApproval
+    Note over P: the parent parks BLOCKED_APPROVAL, a resumable run. No child exists yet.
+    Op->>P: approve the gate, then resume the run
+    P->>CH: the same call, dispatched again
+    Note over CH: re-authorised against the approval store, never assumed
+    CH->>C: submit a real child run, on a thread of its own
+    Note over C: the prompt is the whole of its world. No parent transcript, its own gates, its own budget.
+    C->>ST: its own transcript, run record and checkpoint
+    C-->>CH: the child's final reply
+    CH-->>P: tool result, which is that reply and nothing else
+    Note over P: the parent's context grew by one conclusion, not by everything the child read
+```
+
+In words: the model asks for a delegation; because `spawn_subagent` is `PROCESS`-class, the *spawn itself* is a question under the default `interactive` mode, and the parent parks before any child exists. Approving resumes the parent, which re-dispatches the same call — the kernel re-authorizes rather than assuming. The child then runs as a real run: its own thread, its own gates, its own budget. What comes back is one string, so the parent's context grows by a conclusion rather than by everything the child read. Under `trusted` there is no first park; under `read-only` the spawn is denied outright, because a gate nobody can answer would hang the run.
+
+#### An asynchronous subagent, step by step
+
+With `subagents-async: true` the parent does not block: it parks, and a worker does the child.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant P as Parent run
+    participant CH as Capability host
+    participant SC as Scheduler
+    participant C as Child run
+    participant ST as Stores
+
+    P->>CH: builtin.spawn_subagent, prompt "count the files"
+    CH->>ST: enqueue the child on a thread derived from the parent, and raise a PROCESS gate naming it
+    CH-->>P: NeedsApproval(PROCESS)
+    Note over P: WAITING_PROCESS. The parent is parked, and nothing is executing on its thread.
+    SC->>ST: claim the child run
+    SC->>C: execute the child turn
+    C->>ST: run.finished
+    Note over SC: a finished run on a parent~sub... thread wakes the run on that parent thread that is WAITING_PROCESS
+    SC->>ST: requeue the parent to QUEUED
+    SC->>P: resume, taking the parent thread's lock again
+    P->>CH: the same spawn call, dispatched again
+    CH->>ST: is there a run on that child thread yet?
+    ST-->>CH: yes, finished. Here is its final reply.
+    CH-->>P: tool result, which is the reply
+    Note over P: COMPLETED, with the conclusion in context and the child's own run still visible in jclaw status
+```
+
+In words: the parent asks once, parks, and stops holding a thread. A worker executes the child; the scheduler notices the child's thread names its parent, finds the run on that parent thread that is `WAITING_PROCESS`, and requeues it. The parent then re-dispatches the same call, and the lane answers from the child's own record rather than starting a second child — the child thread is a pure function of the parent thread and the prompt, which is what makes the re-dispatch idempotent. The `PROCESS` gate is reused across resumes, so a parent that wakes while its child is still running parks again on the same gate rather than raising a second one. Under `interactive` there are two parks here, and they are different questions: first the approval for the spawn, then the wait on the child.
+
+#### What actually runs at the same time
+
+Only the queue is concurrent, and a webhook topic is the clearest way to see it. Three routines share the topic `review`, and one `POST` — authenticated against *one* of their secrets — fires all three:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Op as Operator
+    participant HTTP as serve
+    participant SC as Scheduler
+    participant RA as Routine auth
+    participant RE as Routine errors
+    participant RP as Routine perf
+
+    Op->>HTTP: POST /hooks/review-auth with one routine's secret
+    Note over HTTP: the topic is the subscription, declared by the operator in the routines. A caller cannot name a topic, discover one, or join one.
+    HTTP->>RA: enqueue
+    HTTP->>RE: enqueue
+    HTTP->>RP: enqueue
+    HTTP-->>Op: 202 with run, thread, and alsoFired naming the others
+    par three independent runs, three threads, three transcripts
+        SC->>RA: claim and execute
+        SC->>RE: claim and execute
+        SC->>RP: claim and execute
+    end
+    RA-->>SC: run.finished
+    RE-->>SC: run.finished
+    RP-->>SC: run.finished
+    Note over SC: up to the concurrency cap at once, and never two runs on one thread
+```
+
+Three things about it are load-bearing. `serve` never executes a turn in the request: it enqueues and answers, and the scheduler executes, which is why one HTTP client cannot pin a thread. The three runs are independent — nothing about them is nested, and none of them can read another's transcript. And none of it happens at all without a `worker` or `serve` running; a queued run with nobody to claim it just sits there.
+
+#### How the agents interact
+
+| | who can see it |
+|---|---|
+| the prompt a child was given | the child, all of it — and the parent that wrote it |
+| a child's transcript | nobody but the child. It is the parent's context that delegation exists to protect. |
+| a child's final reply | the parent, as the tool result |
+| a child's run id | the parent, in the process gate's prompt (asynchronous mode), and anyone reading `jclaw status` |
+| a sibling's work | nobody — siblings never see each other |
+| memories | shared when they are in the same project, which is the workspace directory name, so siblings in one repository do build on each other |
+| the audit log | shared by everything, which is what lets `status`, projections, and event triggers see every run |
+
+So the interaction between agents is not a channel, it is durable state plus the audit log: the parent writes a prompt, the child writes a transcript, and one string crosses back. A child that wants to tell its parent something has exactly one way to do it — put it in the reply — and a parent that wants a child to know something has one way to say it — put it in the prompt.
+
+#### Rules that bite
+
+- **Distinct prompts, or one child.** A child is identified by the parent thread *and* the task, so two facets sent with byte-identical prompts are one child, not two. Asynchronously the parent finds the child it already started, which is exactly what makes a re-dispatched call idempotent. Synchronously a second run lands on the first child's thread and is seeded from that thread's transcript, so it can see the first one's conversation. Neither is usually what was meant, which is why every facet's prompt should be distinct.
+- **Depth is 3, and it is not a parameter.** Nesting is counted from the thread id (`parent~sub1-...~sub2-...`), so a model cannot claim to be shallower than it is. At the cap the spawn is refused with `subagent_depth_exceeded`, which the model is told about rather than crashed on.
+- **Every child's gate is its own question.** Approving a delegation does not approve what the child then does: four children that each want to run a command are four questions, not one.
+- **A child that parks.** Asynchronously the parent stays `WAITING_PROCESS` while the child is unresolved, and the scheduler requeues it when the child finishes — so a child's own gate keeps its parent parked too. Synchronously there is nothing to requeue: the parent is handed "The subagent did not complete: status: BLOCKED_APPROVAL" and moves on, while the child stays parked until someone resolves it.
+- **Where to look.** Every child is a run in its own right, so `jclaw status` lists it, `jclaw status --run <id>` shows its projection, and `jclaw approvals list` shows its gates. The event log is the honest record of who started what. [`examples/skill-fanout`](examples/skill-fanout) is a runnable version of all three pictures above.
 
 ### Hooks and loop families
 
