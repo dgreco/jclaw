@@ -269,44 +269,59 @@ the whole approval flow — is exercised without a network.
 
 ## Architecture
 
-Hexagonal, with a pure functional core, mapping onto IronClaw's seven-layer ladder:
+Hexagonal (ports and adapters). Modules are named for the role each plays in the pattern;
+IronClaw's seven-layer ladder — contracts → domains → kernel → lanes → loop → product → app —
+is these seven, with `lanes` and `product` folded into the adapter and bootstrap modules.
 
+```mermaid
+flowchart TD
+    B["jclaw-bootstrap<br/>composition root · primary adapters"]
+
+    subgraph SEC["secondary (driven) adapters"]
+        direction LR
+        AM["jclaw-adapter-out-model"]
+        AC["jclaw-adapter-out-capability"]
+        AP["jclaw-adapter-out-persistence"]
+    end
+
+    subgraph APP["application"]
+        direction LR
+        AU["jclaw-application-usecase"]
+        AA["jclaw-application-authority"]
+    end
+
+    D["jclaw-domain"]
+    P["jclaw-ports"]
+
+    B --> AM
+    B --> AC
+    B --> AP
+    B --> AU
+    AU --> AA
+    AC --> AA
+    AP --> AA
+    AM --> P
+    AA --> D
+    D --> P
 ```
-ports                      (jackson-annotations only)
-    the 24 secondary ports, and the turn vocabulary that crosses them:
-    Observation, LoopDecision, LoopExit, Result, refs, ThreadLock, content blocks
 
-domain                     depends on: ports
-    PURE: TurnMachine, Budget, Redaction, RrfFusion, MemoryRanking, VectorRanking,
-    ContextCompaction, ContextSummary, InjectionHeuristics, RunScheduling, RateLimit,
-    Retention, RunProjection, SandboxSpec, CronSpec, RoutineSchedule, PromptAssembly,
-    LeaseRecovery
+An arrow means *depends on*. Every one points down the page toward `jclaw-ports`, which
+depends on nothing but Jackson's annotations; nothing points back up. This is the
+**transitive reduction** — each module also depends on everything reachable below it and the
+POMs declare those directly (`jclaw-bootstrap` names all seven), so do not read a missing
+arrow as a missing dependency. `DependencyLawTest` fails the build on any import that
+contradicts the shape.
 
-application-authority      depends on: ports, domain
-    CapabilityHost, CapabilityPolicy (denials, injection, per-tool egress and rate
-    limits), Workspace/Egress guards
-
-application-usecase        depends on: ports, domain, application-authority
-    EffectInterpreter - the ONLY place an effect happens
-
-adapter-out-model          depends on: ports
-    mock, Anthropic (official SDK), OpenAI-compatible chat + embeddings
-    (OpenAI / OpenRouter / Ollama / local), failover
-
-adapter-out-capability     depends on: ports, domain, application-authority
-    file, shell (host or container), http, memory, skill, trigger, subagent,
-    MCP client + capabilities, WASM
-
-adapter-out-persistence    depends on: ports, domain, application-authority
-    row stores (JSONL files or one SQL table via RowStore): events, transcript,
-    approvals, checkpoints, runs, results, memory, routines, mcp, secrets;
-    SqlSchema migrations; file and SQL thread locks; filesystem skill catalog
-
-bootstrap                  depends on: all of the above
-    the composition root, and the primary (driving) adapters: picocli CLI and the
-    HTTP surface. JclawRuntime, TurnRunScheduler, RoutineRunner, RecoveryService,
-    RetentionService, Attachments, McpRegistry
-```
+| module | role | what lives there |
+|---|---|---|
+| `jclaw-ports` | ports + the language crossing them | the 24 secondary ports; `Observation`, `LoopDecision`, `LoopExit`, `Result`, refs, `ThreadLock`, content blocks |
+| `jclaw-domain` | domain | PURE: `TurnMachine`, `Budget`, `Redaction`, `RrfFusion`, `MemoryRanking`, `ContextCompaction`, `InjectionHeuristics`, `RunScheduling`, `RateLimit`, `Retention`, `RunProjection`, `SandboxSpec`, `CronSpec`, `RoutineSchedule`, `PromptAssembly`, `LeaseRecovery` |
+| `jclaw-application-authority` | application service | `CapabilityHost`, `CapabilityPolicy` (denials, injection, per-tool egress and rate limits), workspace/egress guards |
+| `jclaw-application-usecase` | application service | `EffectInterpreter` — the ONLY place an effect happens |
+| `jclaw-adapter-out-model` | secondary adapter | mock, Anthropic (official SDK), OpenAI-compatible chat + embeddings (OpenAI / OpenRouter / Ollama / local), failover |
+| `jclaw-adapter-out-capability` | secondary adapter | file, shell (host or container), http, memory, skill, trigger, subagent, MCP client + capabilities, WASM |
+| `jclaw-adapter-out-persistence` | secondary adapter | row stores (JSONL files or one SQL table via `RowStore`); `SqlSchema` migrations; file and SQL thread locks; filesystem skill catalog |
+| `jclaw-bootstrap` | composition root + primary adapters | Spring wiring, picocli CLI, `JclawRuntime`, `TurnRunScheduler`, `RoutineRunner`, `RecoveryService`, `RetentionService`, `Attachments`, `JclawHttpServer` |
 
 ### The five ideas worth preserving
 

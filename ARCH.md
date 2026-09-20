@@ -19,44 +19,59 @@ That shape is not decoration. Two rules fall out of it, and between them they ac
 1. **Decisions are separated from effects.** The control flow of an agent — *what to call next, when to stop, what to remember* — lives in `TurnMachine`, a single pure function. Nothing in the decision path performs I/O. One component, `EffectInterpreter`, turns decisions into calls, and it is the only place in the system where an effect happens.
 2. **Authority is a single gate.** A model's request to do something ("read that file", "run that command") is a *claim*. It becomes an effect only after passing one ordered pipeline — the `CapabilityHost` — whose order is itself a security property.
 
-Flattened into Maven modules — the hexagon's rings, innermost first — and named for the role each plays in the pattern rather than for the layer it answers to in IronClaw. The correspondence is still exact, it is just no longer carried by the names: IronClaw's ladder runs contracts → domains → kernel → lanes → loop → product → app, and jclaw's modules below are those seven in order, with `lanes` and `product` folded into the adapter and bootstrap modules. Each module may depend only on those above it in this list:
+Flattened into Maven modules, each named for the role it plays in the pattern rather than for the layer it answers to in IronClaw. The correspondence is still exact, it is just no longer carried by the names: IronClaw's ladder runs contracts → domains → kernel → lanes → loop → product → app, and these are those seven, with `lanes` and `product` folded into the adapter and bootstrap modules. The build graph is the hexagon's rings seen edge-on:
 
+```mermaid
+flowchart TD
+    B["jclaw-bootstrap<br/>composition root · primary adapters"]
+
+    subgraph SEC["secondary (driven) adapters"]
+        direction LR
+        AM["jclaw-adapter-out-model"]
+        AC["jclaw-adapter-out-capability"]
+        AP["jclaw-adapter-out-persistence"]
+    end
+
+    subgraph APP["application"]
+        direction LR
+        AU["jclaw-application-usecase"]
+        AA["jclaw-application-authority"]
+    end
+
+    D["jclaw-domain"]
+    P["jclaw-ports"]
+
+    B --> AM
+    B --> AC
+    B --> AP
+    B --> AU
+    AU --> AA
+    AC --> AA
+    AP --> AA
+    AM --> P
+    AA --> D
+    D --> P
 ```
-ports                      (jackson-annotations only)
-    the 24 secondary ports, and the turn vocabulary that crosses them:
-    Observation, LoopDecision, LoopExit, Result, refs, ThreadLock, content blocks
 
-domain                     depends on: ports
-    PURE: TurnMachine, Budget, Redaction, RrfFusion, MemoryRanking, VectorRanking,
-    ContextCompaction, ContextSummary, InjectionHeuristics, RunScheduling, RateLimit,
-    Retention, RunProjection, SandboxSpec, CronSpec, RoutineSchedule, PromptAssembly,
-    LeaseRecovery
+An arrow means *depends on*, so every one points down the page, toward `jclaw-ports`,
+which depends on nothing but Jackson's annotations. Nothing points back up: that is the
+dependency rule of §2 expressed as a build graph, and `DependencyLawTest` fails the build
+if an import ever contradicts it.
 
-application-authority      depends on: ports, domain
-    CapabilityHost, CapabilityPolicy (denials, injection, per-tool egress and rate
-    limits), Workspace/Egress guards
+The picture is the **transitive reduction** — each module also depends on everything
+reachable below it, and the POMs declare those directly (`jclaw-bootstrap` names all
+seven). Drawing every declared edge would add twelve arrows and no information.
 
-application-usecase        depends on: ports, domain, application-authority
-    EffectInterpreter - the ONLY place an effect happens
-
-adapter-out-model          depends on: ports
-    mock, Anthropic (official SDK), OpenAI-compatible chat + embeddings
-    (OpenAI / OpenRouter / Ollama / local), failover
-
-adapter-out-capability     depends on: ports, domain, application-authority
-    file, shell (host or container), http, memory, skill, trigger, subagent,
-    MCP client + capabilities, WASM
-
-adapter-out-persistence    depends on: ports, domain, application-authority
-    row stores (JSONL files or one SQL table via RowStore): events, transcript,
-    approvals, checkpoints, runs, results, memory, routines, mcp, secrets;
-    SqlSchema migrations; file and SQL thread locks; filesystem skill catalog
-
-bootstrap                  depends on: all of the above
-    the composition root, and the primary (driving) adapters: picocli CLI and the
-    HTTP surface. JclawRuntime, TurnRunScheduler, RoutineRunner, RecoveryService,
-    RetentionService, Attachments, McpRegistry
-```
+| module | role in the pattern | what lives there |
+|---|---|---|
+| `jclaw-ports` | the ports, and the language crossing them | the 24 secondary ports; `Observation`, `LoopDecision`, `LoopExit`, `Result`, refs, content blocks |
+| `jclaw-domain` | domain | PURE: `TurnMachine`, `Budget`, `Redaction`, `ContextCompaction`, `RunScheduling`, `LeaseRecovery`, `PromptAssembly`, … |
+| `jclaw-application-authority` | application service | `CapabilityHost`, `CapabilityPolicy`, the workspace and egress guards |
+| `jclaw-application-usecase` | application service | `EffectInterpreter` — the only place an effect happens |
+| `jclaw-adapter-out-model` | secondary adapter | mock, Anthropic (SDK), OpenAI-compatible chat and embeddings, failover |
+| `jclaw-adapter-out-capability` | secondary adapter | file, shell (host or container), http, memory, skill, trigger, subagent, MCP, WASM |
+| `jclaw-adapter-out-persistence` | secondary adapter | row stores as JSONL files or SQL tables; thread locks; the skill catalog |
+| `jclaw-bootstrap` | composition root + primary adapters | Spring wiring; the picocli CLI and HTTP surface; `JclawRuntime`, `TurnRunScheduler`, `RoutineRunner`, `RecoveryService` |
 
 The layer ladder is not a suggestion, and it is not kept true by anyone remembering it. `DependencyLawTest` (jclaw-bootstrap) enforces 16 rules with ArchUnit — including "the domain may not read a clock or use randomness", "the loop may not name an adapter", "only the anthropic package may import the Anthropic SDK", and "tool lanes may not read the process environment". The rules were verified to fire by planting deliberate violations, not just by passing.
 
