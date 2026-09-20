@@ -291,7 +291,7 @@ Contextual properties worth stating:
 
 ## 4. C4 Level 2 — Containers
 
-Everything ships as one deployable unit — an uber jar or a GraalVM native image (~80 MB, ~78 ms startup). Most commands are short-lived processes; `repl`, `worker`, and `serve` are the long-lived ones, and `serve` adds an HTTP ingress over the same runtime. That is exactly why every store is a durable append-only JSONL file rather than in-process state: a run parks in one process and resumes in another, and a turn enqueued over HTTP is executed by whichever worker claims it.
+Everything ships as one deployable unit — an uber jar or a GraalVM native image (~95 MB, ~50 ms startup). Most commands are short-lived processes; `repl`, `worker`, and `serve` are the long-lived ones, and `serve` adds an HTTP ingress over the same runtime. That is exactly why every store is a durable append-only JSONL file rather than in-process state: a run parks in one process and resumes in another, and a turn enqueued over HTTP is executed by whichever worker claims it.
 
 ```mermaid
 C4Container
@@ -694,7 +694,7 @@ Nothing inside jclaw is a daemon by default. Routines are fired by `jclaw routin
 
 ### Native image
 
-The `native` Maven profile in `jclaw-bootstrap` builds a GraalVM binary (~80 MB, ~78 ms startup vs ~1.2 s for the jar). Two pieces of metadata make it work: `picocli-codegen` generates reflection config for every `@Command`, and the Anthropic SDK's Jackson metadata was *captured* by the GraalVM tracing agent (`META-INF/native-image/io.jclaw/anthropic-sdk/`) and must be regenerated after any SDK upgrade — and, if image attachments are to be sent through the Anthropic adapter from the native binary, captured with a request that carries an image, since the image block types were not exercised by the original capture. Subprocess spawning (MCP servers, `builtin.shell`, the docker sandbox) and the JDK HTTP server are verified to work in the native binary.
+The `native` Maven profile in `jclaw-bootstrap` builds a GraalVM binary (~95 MB, ~50 ms startup against ~1.3 s for the jar; measured on arm64 with GraalVM CE 25, and the size grows with the tree — it was ~80 MB at ~20k lines). Two pieces of metadata make it work: `picocli-codegen` generates reflection config for every `@Command`, and the Anthropic SDK's Jackson metadata was *captured* by the GraalVM tracing agent (`META-INF/native-image/io.jclaw/anthropic-sdk/`) and must be regenerated after any SDK upgrade — and, if image attachments are to be sent through the Anthropic adapter from the native binary, captured with a request that carries an image, since the image block types were not exercised by the original capture. Subprocess spawning (MCP servers, `builtin.shell`, the docker sandbox) and the JDK HTTP server are verified to work in the native binary.
 
 ---
 

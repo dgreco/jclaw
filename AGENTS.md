@@ -119,7 +119,7 @@ measures nothing.
 export JAVA_HOME=/path/to/graalvm        # GraalVM 25+ required
 mvn -B install -DskipTests               # install all modules first
 mvn -B -Pnative -pl jclaw-bootstrap package -DskipTests
-./jclaw-bootstrap/target/jclaw                 # ~80 MB binary, ~78 ms startup vs ~1.2 s for the jar
+./jclaw-bootstrap/target/jclaw                 # ~95 MB binary, ~50 ms startup vs ~1.3 s for the jar
 ```
 
 The `native` profile lives in `jclaw-bootstrap/pom.xml`. The Boot parent contributes only
