@@ -43,7 +43,7 @@
     <picocli.version>4.7.7</picocli.version>
     <anthropic.sdk.version>2.62.0</anthropic.sdk.version>
     <archunit.version>1.5.0</archunit.version>
-    <jline.version>4.4.3</jline.version>
+    <jline.version>4.4.5</jline.version>
     <!-- Native image: the GraalVM toolchain is JDK 25+, while we target release 21 bytecode. -->
     <native.maven.plugin.imageName>jclaw</native.maven.plugin.imageName>
     <jacoco.version>0.8.15</jacoco.version>
