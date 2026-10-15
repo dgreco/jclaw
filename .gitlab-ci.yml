@@ -501,6 +501,20 @@ coverage-wiki:
         echo "    role:  Developer or above — Guest and Reporter are refused with this exact"
         echo "           message, however the scopes are ticked"
         exit 1
+      elif grep -qi 'authentication failed\|HTTP Basic: Access denied' clone.err; then
+        # Rejected, not refused: a 401 means GitLab does not recognise the token at all, whatever
+        # its role or scopes would have been. A project access token is deleted with its bot user
+        # when it expires or is revoked, and the variable holding it lives on. This used to fall
+        # through to "no wiki repository yet", which then pushed with the same dead token and
+        # failed again with the same words -- a credential problem reported as a missing wiki.
+        echo "coverage-wiki: WIKI_TOKEN was rejected. git said:"
+        sed 's/^/    /' clone.err
+        echo
+        echo "  GitLab does not accept this token at all: it has expired, been revoked, or been"
+        echo "  deleted. Create a new one and replace the variable's value:"
+        echo "    Settings > Access tokens      — role Developer, scope write_repository"
+        echo "    Settings > CI/CD > Variables  — WIKI_TOKEN, masked"
+        exit 1
       else
         # Absent rather than refused: a wiki has no git repository until it has a page, and
         # GitLab creates one on the first push.
